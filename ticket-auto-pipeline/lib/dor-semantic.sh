@@ -16,7 +16,8 @@
 #     Prints "blocking" or "advisory". The three bash-owned codes
 #     (SEMANTIC_UNAVAILABLE, SEMANTIC_UNVERIFIED, SEMANTIC_STALE) are always
 #     blocking. A code in the fixed DOR_SEMANTIC_ADVISORY_ONLY_CODES list
-#     (TEST_DATA_GAP) is always advisory, whatever the environment says.
+#     (TEST_DATA_GAP, INCOHERENT_CHANGE) is always advisory, whatever the
+#     environment says.
 #     Every other DOR_SEMANTIC_CODES member is blocking unless listed in the
 #     space-separated env var DOR_SEMANTIC_ADVISORY_CODES (default empty).
 #
@@ -43,7 +44,12 @@
 #     draft-passed policy (no reset; draft-passed / draft-passed-structural).
 #
 #   dor_semantic_assemble <hash> <findings> <unverified-gaps> <scan-json> <audit-json>
-#     Prints the ready.semantic object apply stores.
+#     Prints the ready.semantic object apply stores, with the scan's
+#     paraphrase when it carries one (dor-semantic-paraphrase).
+#
+#   dor_semantic_evaluator_compatible <evaluator>
+#     True when a stored verdict from <evaluator> needs no rescan for the
+#     evaluator change alone (the current one, or a listed earlier one).
 #
 #   dor_semantic_import <TID> <body-file> <semantic-json> <lineage-json> [<token-map>]
 #     Stores a draft verdict on the real ticket with no agent (D13). Prints
@@ -88,6 +94,7 @@ declare -gA DOR_SEMANTIC_CODES=(
   [MISSING_CORE_AC]="requirement_completeness"
   [NEEDS_HUMAN_DECISION]="requirement_completeness"
   [INTENT_AC_MISMATCH]="intent"
+  [INCOHERENT_CHANGE]="intent"
   [CONTRADICTORY_REQUIREMENTS]="acceptance_criteria"
   [SCOPE_AMBIGUOUS]="scope"
   [EDGE_CASE_GAP]="edge_cases"
@@ -103,6 +110,7 @@ DOR_SEMANTIC_CODE_ORDER=(
   MISSING_CORE_AC
   NEEDS_HUMAN_DECISION
   INTENT_AC_MISMATCH
+  INCOHERENT_CHANGE
   CONTRADICTORY_REQUIREMENTS
   SCOPE_AMBIGUOUS
   EDGE_CASE_GAP
@@ -119,8 +127,9 @@ DOR_SEMANTIC_BASH_CODES="SEMANTIC_UNAVAILABLE SEMANTIC_UNVERIFIED SEMANTIC_STALE
 # gap, design.md Decision 4). A fixed constant, deliberately NOT a default for
 # DOR_SEMANTIC_ADVISORY_CODES: a caller that sets that env var would silently
 # drop the default and make the code blocking. Promoting a code to blocking is
-# a one-line change — remove it from this list.
-DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP"
+# a one-line change — remove it from this list. INCOHERENT_CHANGE
+# (dor-semantic-paraphrase) stays here until a live run calibrates it.
+DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP INCOHERENT_CHANGE"
 
 # The four mandatory scan gap verdicts and the dimension/code each is a
 # backstop for (docs/dor-semantic-schema.md § Scan block).
@@ -129,8 +138,18 @@ DOR_SEMANTIC_GAPS="GAP_REQUIREMENT_COMPLETENESS GAP_CONTRADICTORY_REQUIREMENTS G
 # design.md Decision 11 — changes whenever the prompt, code vocabulary, or
 # block schema changes. v3 (planner-refinement-convergence): finding identity
 # and lineage, the scoped-rescan hint; an unchanged v2 verdict is migrated in
-# place by dor_semantic_migrate_v2 rather than rescanned.
-DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"
+# place by dor_semantic_migrate_v2 rather than rescanned. v4
+# (dor-semantic-paraphrase): the scan's required PARAPHRASE line and the
+# advisory-only INCOHERENT_CHANGE code.
+DOR_SEMANTIC_EVALUATOR="dor-semantic-v4"
+
+# Earlier evaluators whose verdict on an unchanged body stays valid without a
+# rescan (dor-semantic-paraphrase design Decision 5). A v3 verdict lacks only
+# the paraphrase and the advisory INCOHERENT_CHANGE code, neither of which can
+# block, so rescanning every v3 ticket would buy nothing. Lineage still resets
+# across the bump (dor_semantic_lineage_from compares the exact evaluator), and
+# a draft import still requires the exact evaluator.
+DOR_SEMANTIC_COMPATIBLE_EVALUATORS="dor-semantic-v3"
 
 # Structural codes (planner-refinement-convergence D2): never demoted by the
 # round limit, drift or converge. A host overrides the effective list with
@@ -170,6 +189,17 @@ declare -gA DOR_AUDIT_CODE_SECTIONS=(
 
 _dor_semantic_in_list() {
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# dor_semantic_evaluator_compatible <evaluator>
+# True when a stored verdict from <evaluator> counts as current: it is
+# DOR_SEMANTIC_EVALUATOR or listed in DOR_SEMANTIC_COMPATIBLE_EVALUATORS.
+# An empty value is never compatible.
+dor_semantic_evaluator_compatible() {
+  local e="${1:-}"
+  [ -n "$e" ] || return 1
+  [ "$e" = "$DOR_SEMANTIC_EVALUATOR" ] && return 0
+  _dor_semantic_in_list "$e" "${DOR_SEMANTIC_COMPATIBLE_EVALUATORS:-}"
 }
 
 # _dor_semantic_severity <code>
@@ -693,7 +723,8 @@ dor_semantic_findings() {
 # dor_semantic_assemble <body-hash> <findings-json> <unverified-gaps-json> <scan-json> <audit-json>
 # Prints the `ready.semantic` object dor_semantic_apply stores: evaluator,
 # checked_at (now), body_hash, the lineage-annotated findings, the scan's
-# gaps, the audit's audit/missed/score fields, and unverified_gaps. Pure.
+# gaps, the audit's audit/missed/score fields, unverified_gaps and, when the
+# scan carries a non-empty one, its paraphrase (the audit carries none). Pure.
 dor_semantic_assemble() {
   local hash="$1" findings_json="$2" unverified_gaps="$3" scan_json="$4" audit_json="$5"
   jq -nc \
@@ -707,10 +738,12 @@ dor_semantic_assemble() {
     --argjson score_plausible "$(echo "$audit_json" | jq -c '.score_plausible // null')" \
     --arg score_reason "$(echo "$audit_json" | jq -r '.score_reason // ""')" \
     --argjson unverified_gaps "$unverified_gaps" \
+    --arg paraphrase "$(echo "$scan_json" | jq -r '.paraphrase // ""')" \
     '{evaluator: $evaluator, checked_at: $checked_at, body_hash: $body_hash,
       findings: $findings, gaps: $gaps, audit: $audit, missed: $missed,
       score_plausible: $score_plausible, score_reason: $score_reason,
-      unverified_gaps: $unverified_gaps}' 2>/dev/null
+      unverified_gaps: $unverified_gaps}
+     + (if $paraphrase != "" then {paraphrase: $paraphrase} else {} end)' 2>/dev/null
 }
 
 # _dor_semantic_json_arg <value> — prints <value>, or the file's content when
@@ -1119,19 +1152,25 @@ applies to an issue, never more than one code per underlying issue:
    make
 3. INTENT_AC_MISMATCH — an acceptance criterion does not serve the stated
    intent
-4. CONTRADICTORY_REQUIREMENTS — two requirements disagree (requires a
+4. INCOHERENT_CHANGE — a part of the ticket (the summary or intent, the
+   scope, an acceptance criterion, a Verification Plan row) describes a
+   different change from the one change the ticket as a whole makes (in a
+   scan, your paraphrase). QUOTE that part; DETAIL says what change it
+   describes instead. A single criterion that misses the intent is
+   INTENT_AC_MISMATCH, not this.
+5. CONTRADICTORY_REQUIREMENTS — two requirements disagree (requires a
    second quote, QUOTE_B)
-5. SCOPE_AMBIGUOUS — the scope is present but not concretely bounded
-6. EDGE_CASE_GAP — a specific, plausible edge case is unaddressed
-7. TEST_DATA_GAP — an acceptance criterion needs records, users, files or
+6. SCOPE_AMBIGUOUS — the scope is present but not concretely bounded
+7. EDGE_CASE_GAP — a specific, plausible edge case is unaddressed
+8. TEST_DATA_GAP — an acceptance criterion needs records, users, files or
    state to exist before it can be verified, and the Test Data Prerequisites
    section neither lists that data nor names its source. Quote the
    criterion. DETAIL names the data (what, in what state, how many). A
    threshold, a timeout, an attempt count or an HTTP status is not data. A
    ticket whose Test Data Prerequisites already covers the need is clear.
-8. UNSTATED_DEPENDENCY — the ticket assumes something (a flag, a service,
+9. UNSTATED_DEPENDENCY — the ticket assumes something (a flag, a service,
    another ticket — not test data; use TEST_DATA_GAP) it never names
-9. AC_NOT_TESTABLE — an acceptance criterion cannot be verified as written
+10. AC_NOT_TESTABLE — an acceptance criterion cannot be verified as written
 
 Proportionality: EDGE_CASE_GAP, TEST_DATA_GAP, UNSTATED_DEPENDENCY, and
 NEEDS_HUMAN_DECISION fire ONLY when you can name a specific, plausible
@@ -1150,16 +1189,24 @@ DORSEMANTIC
     kind_rules=$(
       cat <<'DORSCAN'
 
+Write PARAPHRASE first: the one change this ticket makes, in your own
+words. Then, if the intent, the scope, an acceptance criterion or a
+Verification Plan row describes a different change from your paraphrase,
+that is INCOHERENT_CHANGE — quote that part. A ticket that makes one change
+described consistently is clear. A ticket that legitimately makes two
+related changes is not incoherent if its intent says so.
+
 Write exactly one block to the result file:
 
 === DOR_SEMANTIC_SCAN ===
 SCHEMA_VERSION: 1
 TICKET: <ticket id, copied exactly>
 BODY_HASH: <the **Body hash** value above, copied exactly — do not compute or alter it>
+PARAPHRASE: <required — the one change this ticket makes, in your own words, one line, at most 400 characters>
 FINDING_1_CODE: <code>
 FINDING_1_QUOTE: <verbatim quote>
 FINDING_1_QUOTE_B: <verbatim quote — CONTRADICTORY_REQUIREMENTS only>
-FINDING_1_DETAIL: <specific, plausible failure/decision — required for EDGE_CASE_GAP, TEST_DATA_GAP, UNSTATED_DEPENDENCY, NEEDS_HUMAN_DECISION>
+FINDING_1_DETAIL: <specific, plausible failure/decision — required for EDGE_CASE_GAP, TEST_DATA_GAP, UNSTATED_DEPENDENCY, NEEDS_HUMAN_DECISION; for INCOHERENT_CHANGE, the change the quoted part describes instead>
 GAP_REQUIREMENT_COMPLETENESS: clear|finding|not-applicable
 GAP_REQUIREMENT_COMPLETENESS_REASON: <one line>
 GAP_CONTRADICTORY_REQUIREMENTS: clear|finding|not-applicable

@@ -89,7 +89,8 @@ _scan() {
   out="=== DOR_SEMANTIC_SCAN ===
 SCHEMA_VERSION: 1
 TICKET: ${tid}
-BODY_HASH: ${hash}"
+BODY_HASH: ${hash}
+PARAPHRASE: The ticket makes one change, described consistently."
   for spec in "$@"; do
     n=$((n + 1))
     code="${spec%%|*}"
@@ -335,7 +336,7 @@ _audit "$R_INIT" "PRO-204"
 DOR_SEMANTIC_EVALUATOR="dor-semantic-v2" planner_refinement_apply "$R_INIT" "PRO-204" >/dev/null 2>&1
 needs_mig=$(planner_refinement_scan "$R_INIT")
 if ! grep -qx "PRO-204" <<<"$needs_mig" &&
-  _ready "PRO-204" | jq -e '.semantic.evaluator == "dor-semantic-v3" and .semantic.migrated_from == "dor-semantic-v2"' >/dev/null; then
+  _ready "PRO-204" | jq -e '.semantic.evaluator == "dor-semantic-v4" and .semantic.migrated_from == "dor-semantic-v2"' >/dev/null; then
   pass "planner_refinement_scan migrates an unchanged v2 verdict instead of listing it"
 else
   fail "planner_refinement_scan migrates an unchanged v2 verdict instead of listing it" "needs=$needs_mig sem=$(_ready "PRO-204" | jq -c '.semantic | {evaluator, migrated_from}')"

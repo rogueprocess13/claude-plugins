@@ -17,6 +17,42 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
+
+dor-semantic-paraphrase (next.md Step 18, item 2). A ticket can pass every existing check and
+still not describe one change: the intent says one thing, the scope bounds another, the criteria
+test a third. The DoR semantic scan now writes what the ticket changes in its own words first, and
+flags a part that describes a different change.
+
+### Added
+
+- **`PARAPHRASE` scan line.** Every `=== DOR_SEMANTIC_SCAN ===` block must carry `PARAPHRASE:`,
+  one line of 1 to 400 characters, asked for before any finding. A scan without one is an invalid
+  block (re-spawn once, then `SEMANTIC_UNAVAILABLE`, as for any invalid block). The audit block
+  carries none. `dor_semantic_apply` stores it as `ready.semantic.paraphrase`.
+- **`INCOHERENT_CHANGE`** (dimension `intent`, directly after `INTENT_AC_MISMATCH`): the summary or
+  intent, the scope, a criterion or a Verification Plan row describes a different change from the
+  paraphrase. It is in `DOR_SEMANTIC_ADVISORY_ONLY_CODES`, so it never blocks until a live run
+  calibrates it; its quote is verified like any other.
+- ticket-planner: the Refinement halt report prints each not-ready ticket's `Paraphrase:` above its
+  findings and ends with an `## Advisory incoherent-change findings` section; the advisory summary
+  printed on a gate pass lists each `INCOHERENT_CHANGE` with the ticket's paraphrase.
+  `PLANNER_AC_CHECKLIST_SEMANTIC_NA` lists the new code.
+
+### Changed
+
+- `DOR_SEMANTIC_EVALUATOR` is `dor-semantic-v4`. A v3 verdict on an unchanged body is **not**
+  rescanned: `DOR_SEMANTIC_COMPATIBLE_EVALUATORS` lists `dor-semantic-v3`, and the planner's
+  needs-pass decision and converge check now call `dor_semantic_evaluator_compatible` instead of
+  comparing the evaluator string. Lineage still resets across the bump, and a draft import still
+  needs the exact evaluator. An unchanged v2 verdict now migrates straight to v4.
+
+### Audited, unchanged
+
+- `ticket-critique` never reports `CLEAR` for a critique that did not run: a failed fetch stops the
+  run (or, with `--no-post`, writes `STATUS: UNAVAILABLE`), and the dispatch-rehearsal preflight
+  fails a missing or unavailable result.
+
 ## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
 
 fleet-controller 0.49.2.

@@ -1,4 +1,5 @@
-dor-semantic	88790
+# allow-growth: dor-semantic-paraphrase — scan PARAPHRASE line and INCOHERENT_CHANGE in the prompt, schema doc and evaluator compatibility (+5,393 bytes, 0.115.0)
+dor-semantic	94183
 guidance-extractor	94938
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 ticket-appraise	154917

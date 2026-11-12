@@ -112,7 +112,7 @@ _demote "DEM-1"
     .demoted.VPLAN_ROW_GAP.by == "dor-semantic-audit"
     and .demoted.VPLAN_ROW_GAP.quote == $q
     and .demoted.VPLAN_ROW_GAP.body_hash == $h
-    and .demoted.VPLAN_ROW_GAP.evaluator == "dor-semantic-v3"
+    and .demoted.VPLAN_ROW_GAP.evaluator == "dor-semantic-v4"
     and (.demoted.VPLAN_ROW_GAP.reason | length > 0)
     and ((.advisory // []) | index("VPLAN_ROW_GAP") != null)
     and .status == "ready"' >/dev/null &&

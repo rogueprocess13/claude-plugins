@@ -2,6 +2,7 @@
 SCHEMA_VERSION: 1
 TICKET: @TICKET@
 BODY_HASH: @BODY_HASH@
+PARAPHRASE: Add a Duplicate action to the handover list that creates a draft copy of the chosen handover.
 FINDING_1_CODE: TEST_DATA_GAP
 FINDING_1_QUOTE: Duplicating a handover from the list creates a draft copy with the same line items
 FINDING_1_DETAIL: one handover with at least two line items on the supervisor's site; Test Data Prerequisites lists only 25 handovers and says nothing about their line items
