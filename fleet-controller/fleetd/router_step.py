@@ -46,6 +46,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 
+from fleetd import log_dir as _log_dir_mod
 from fleetd import phase_dispatch
 
 FLAG = 'FLEET_ROUTER_STEP_SHELL'
@@ -117,12 +118,39 @@ def _timeout(default):
     return value if value > 0 else default
 
 
+_LOGS_MISMATCH_NOTED = set()
+
+
+def _note_logs_mismatch(logs_dir):
+    """Log once per pair when `logs_dir` is not the resolved log dir.
+
+    state-root-anchor D6: the scripts write `./logs/<tid>-<phase>-agent.log`
+    cwd-relative, so `project_dir_for`'s `logs` must be the anchored dir. On
+    a host that passed fleetd's boot gate they agree; a difference is logged
+    on stderr, never raised, so dispatch carries on as it did before.
+    """
+    try:
+        resolved = _log_dir_mod.resolve_log_dir()
+        if resolved is None or _log_dir_mod.same_dir(resolved, logs_dir):
+            return
+        key = (str(logs_dir), resolved)
+        if key in _LOGS_MISMATCH_NOTED:
+            return
+        _LOGS_MISMATCH_NOTED.add(key)
+        print(f'router_step: {logs_dir} differs from the resolved log dir '
+              f'{resolved}; scripts run with cwd {Path(logs_dir).parent}',
+              file=sys.stderr)
+    except Exception:  # advisory only
+        return
+
+
 def project_dir_for(log_file):
     """The directory whose `./logs` holds `log_file`, else None (inherit cwd)."""
     if not log_file:
         return None
     parent = Path(log_file).parent
     if parent.name == 'logs':
+        _note_logs_mismatch(parent)
         return str(parent.parent)
     return None
 
