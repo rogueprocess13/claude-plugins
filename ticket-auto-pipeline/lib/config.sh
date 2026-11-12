@@ -36,10 +36,22 @@ PIPELINE_LOGS_DIR="${PIPELINE_LOGS_DIR:-./logs}"
 # declared inconsistency and the live behaviour in one edit.
 SENTINEL_DIR="${SENTINEL_DIR:-$HOME/.claude/state/ticket-flow}"
 
-# Pipeline log directory scanned by fleet controller. Override when pipeline
-# logs live in a different directory than the fleet controller's own logs.
-# Defaults to PIPELINE_LOGS_DIR, then ./logs as final fallback.
-FLEET_PIPELINE_LOG_DIR="${FLEET_PIPELINE_LOG_DIR:-${PIPELINE_LOGS_DIR:-./logs}}"
+# Per-ticket log directory (pipeline logs, outbox, cursors) — scanned by the
+# fleet controller. Resolved by lib/log-dir.sh (state-root-anchor, review
+# ARCH-5): an absolute FLEET_PIPELINE_LOG_DIR, else the anchor at
+# $REPOS_ROOT/.ticket-auto/log-dir. The resolved absolute value is exported;
+# when nothing resolves, the variable is left exactly as it came (usually
+# unset), and every reader keeps its own ./logs fallback. It used to be set
+# to a relative ./logs here, so "set" never meant "absolute".
+_cfg_log_dir_lib="$(dirname "${BASH_SOURCE[0]}")/log-dir.sh"
+if ! declare -f ticket_log_dir >/dev/null 2>&1 && [ -f "$_cfg_log_dir_lib" ]; then
+  source "$_cfg_log_dir_lib"
+fi
+if declare -f ticket_log_dir >/dev/null 2>&1 && _cfg_log_dir=$(ticket_log_dir 2>/dev/null); then
+  FLEET_PIPELINE_LOG_DIR="$_cfg_log_dir"
+  export FLEET_PIPELINE_LOG_DIR
+fi
+unset _cfg_log_dir _cfg_log_dir_lib
 
 # ── Git defaults ──────────────────────────────────────────────────────────────
 # Consumed by: branch-resolve.sh, ticket-implement, ticket-verify, ticket-document.

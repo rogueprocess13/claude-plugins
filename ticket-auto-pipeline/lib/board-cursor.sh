@@ -44,16 +44,39 @@ fi
 
 _BC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The cursor dir is the outbox's dir, resolved by lib/log-dir.sh
+# (state-root-anchor): an absolute FLEET_PIPELINE_LOG_DIR, else the
+# $REPOS_ROOT/.ticket-auto/log-dir anchor, else (legacy, with a warning)
+# ./logs, or rc 13 under STATE_ROOT_STRICT=true. A stale lib copy without
+# log-dir.sh keeps the old ${FLEET_PIPELINE_LOG_DIR:-./logs}.
+declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1 ||
+  source "$_BC_LIB_DIR/log-dir.sh" 2>/dev/null || true
+
+# _board_cursor_resolve — sets _BC_DIR in the calling shell (no subshell, so
+# the legacy warning prints once per shell); rc 13 when the dir is
+# unresolvable in strict mode. Every public function calls it first and
+# returns 13 on failure, before it creates anything; the path helpers below
+# read _BC_DIR and are only valid after that call.
+_board_cursor_resolve() {
+  _BC_DIR=""
+  if declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1; then
+    ticket_log_dir_or_legacy_set || return 13
+    _BC_DIR="$TICKET_LOG_DIR_RESOLVED"
+  else
+    _BC_DIR="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  fi
+}
+
 _board_cursor_dir() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  printf '%s\n' "$_BC_DIR"
 }
 
 _board_cursor_file() {
-  echo "$(_board_cursor_dir)/.${1}-cursor-${2}.json"
+  echo "${_BC_DIR}/.${1}-cursor-${2}.json"
 }
 
 _board_cursor_lock_file() {
-  echo "$(_board_cursor_dir)/.${1}-cursor-${2}.lock"
+  echo "${_BC_DIR}/.${1}-cursor-${2}.lock"
 }
 
 # board_cursor_lock <tid> <board_id>
@@ -73,6 +96,7 @@ board_cursor_lock() {
     echo "board_cursor_lock: TID and BOARD_ID are required" >&2
     return 2
   fi
+  _board_cursor_resolve || return 13
   local dir lock_file
   dir=$(_board_cursor_dir)
   mkdir -p "$dir" 2>/dev/null || true
@@ -145,6 +169,7 @@ board_cursor_get() {
     echo "board_cursor_get: TID and BOARD_ID are required" >&2
     return 2
   fi
+  _board_cursor_resolve || return 13
   local file
   file=$(_board_cursor_file "$tid" "$board_id")
   [ -f "$file" ] || {
@@ -169,6 +194,7 @@ board_cursor_get_attempts() {
     echo "board_cursor_get_attempts: TID and BOARD_ID are required" >&2
     return 2
   fi
+  _board_cursor_resolve || return 13
   local file
   file=$(_board_cursor_file "$tid" "$board_id")
   [ -f "$file" ] || {
@@ -203,6 +229,7 @@ board_cursor_advance() {
     echo "board_cursor_advance: NEW_SEQ must be a non-negative integer: ${new_seq}" >&2
     return 2
   }
+  _board_cursor_resolve || return 13
   local dir file tmp
   dir=$(_board_cursor_dir)
   mkdir -p "$dir" 2>/dev/null || true
@@ -239,9 +266,10 @@ board_cursor_note_failure() {
     echo "board_cursor_note_failure: TID and BOARD_ID are required" >&2
     return 2
   fi
+  _board_cursor_resolve || return 13
   local current_seq current_attempts
-  current_seq=$(board_cursor_get "$tid" "$board_id")
-  current_attempts=$(board_cursor_get_attempts "$tid" "$board_id")
+  current_seq=$(board_cursor_get "$tid" "$board_id") || return 13
+  current_attempts=$(board_cursor_get_attempts "$tid" "$board_id") || return 13
   local dir file tmp
   dir=$(_board_cursor_dir)
   mkdir -p "$dir" 2>/dev/null || true

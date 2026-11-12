@@ -44,6 +44,9 @@ _EV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _source_if_missing() { declare -f "$1" >/dev/null 2>&1 || source "$2"; }
 _source_if_missing check_generation_fence "$_EV_LIB_DIR/fence-check.sh" 2>/dev/null || true
+# log-dir.sh (state-root-anchor): the one per-ticket dir resolver. A stale
+# lib copy without it falls back to the old ${FLEET_PIPELINE_LOG_DIR:-./logs}.
+_source_if_missing ticket_log_dir_or_legacy_set "$_EV_LIB_DIR/log-dir.sh" 2>/dev/null || true
 
 # ── workflow.json resolution ─────────────────────────────────────────────────
 # Same monorepo → installed skill → plugin-cache fallback chain
@@ -73,14 +76,30 @@ _events_resolve_workflow_json() {
 # ── outbox path resolution ───────────────────────────────────────────────────
 # Every writer for a given ticket MUST resolve the same file, or per-ticket
 # seq monotonicity (guarded by the matching lock file below) silently breaks.
-# FLEET_PIPELINE_LOG_DIR is the existing convention for this ticket's whole
-# log-family ({tid}-pipeline.log, {tid}-heartbeat.log, {tid}-activity.log,
-# {tid}-tool-errors.log) — fleet_kill_pipeline (fleet-intervene.sh) uses the
-# identical "${FLEET_PIPELINE_LOG_DIR:-./logs}" fallback, so a fleet-initiated
-# kill and an in-pipeline emission for the same ticket always land in the same
-# directory.
+# The directory comes from lib/log-dir.sh (state-root-anchor, review ARCH-5):
+# an absolute FLEET_PIPELINE_LOG_DIR, else the $REPOS_ROOT/.ticket-auto/log-dir
+# anchor, else (legacy, with a warning) ./logs, or rc 13 under
+# STATE_ROOT_STRICT=true. It used to be ${FLEET_PIPELINE_LOG_DIR:-./logs},
+# so an emit from a repo subdirectory wrote a stray outbox no pusher reads.
+# emit_event resolves once and holds the answer in _EV_OUTBOX_DIR (dynamic
+# scope), so the helpers below all name the same directory.
+_events_resolve_dir() {
+  _EV_RESOLVED_DIR=""
+  if declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1; then
+    ticket_log_dir_or_legacy_set || return $?
+    _EV_RESOLVED_DIR="$TICKET_LOG_DIR_RESOLVED"
+  else
+    _EV_RESOLVED_DIR="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  fi
+}
+
 _events_outbox_dir() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  if [ -n "${_EV_OUTBOX_DIR:-}" ]; then
+    printf '%s\n' "$_EV_OUTBOX_DIR"
+    return 0
+  fi
+  _events_resolve_dir || return $?
+  printf '%s\n' "$_EV_RESOLVED_DIR"
 }
 
 _events_outbox_file() {
@@ -160,6 +179,7 @@ _events_write_origin() {
 #   9  fence guard — missing generation token on a fenced ticket
 #   10 fence guard — superseded generation
 #   1  lock/write failure
+#   13 per-ticket log dir unresolvable under STATE_ROOT_STRICT=true (no file written)
 emit_event() {
   local _idem=""
   while [ "${1:-}" = "--idem" ]; do
@@ -227,8 +247,17 @@ emit_event() {
   fi
 
   # ── flock-guarded seq assignment + JSON Lines append ────────────────────
+  # Resolved once, before anything is created: strict + unresolved is rc 13
+  # with no file written.
+  local _EV_OUTBOX_DIR _EV_RESOLVED_DIR _rd_rc=0
+  _events_resolve_dir || _rd_rc=$?
+  if [ "$_rd_rc" -ne 0 ]; then
+    echo "emit_event: per-ticket log dir unresolvable for ${tid} — nothing written" >&2
+    return 13
+  fi
+  _EV_OUTBOX_DIR="$_EV_RESOLVED_DIR"
   local _outbox_dir _outbox_file _lock_file
-  _outbox_dir=$(_events_outbox_dir)
+  _outbox_dir="$_EV_OUTBOX_DIR"
   mkdir -p "$_outbox_dir" 2>/dev/null || true
   _outbox_file=$(_events_outbox_file "$tid")
   _lock_file=$(_events_lock_file "$tid")
@@ -241,6 +270,13 @@ emit_event() {
     echo "emit_event: lock timeout acquiring outbox lock for ${tid}" >&2
     exec 7>&-
     return 1
+  fi
+
+  # A stray ./logs/{tid}-outbox.jsonl outside the resolved dir is reported
+  # once per (tid, path) in the resolved pipeline log (D4). Under FD 7, so two
+  # concurrent emits cannot both note it.
+  if declare -f ticket_log_dir_note_stray >/dev/null 2>&1; then
+    ticket_log_dir_note_stray "$tid" "$_outbox_dir" || true
   fi
 
   # ── Torn-line tolerance (review ARCH-10) ────────────────────────────────
