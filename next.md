@@ -5,6 +5,12 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
+**Overnight 2026-11-12 (autonomous, 01:10–05:00):** merged #699 (drift report, Step 18 item 3),
+#700 (ARCH-8), #701 (triage), #702 (PO-9), #703/#710 (DET-SU-1/2), #704 (ARCH-3), #705
+(paraphrase, Step 18 item 2), #706/#709 (Step 12 item 7), #707 (DET-AP-5), #708 (ARCH-4), #711
+(CRITIQUE_NOT_RUN), #712 (goldfish lens PR A, dormant). Step 9 item 5 was already fixed by #528.
+Every merged change's live check is on the tickets host. Still needs design: ARCH-5, ARCH-9.
+
 Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
@@ -1257,8 +1263,12 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       `planner-seed-numbers` only if the live check shows the need); wildcard accept
       `--accept CODE@*:"reason"` records one accept per current instance. Open: `framework:` names
       configurable per host (recommend a code constant for now); headless accept deferred.
-- [ ] 7. `planner-ac-code-precondition` (ticket-planner) — **specced 2026-11-11, reviewed (3
-      reviewers), revised; not started.** Change at `openspec/changes/planner-ac-code-precondition/`
+- [ ] 7. `planner-ac-code-precondition` (ticket-planner) — **MERGED 2026-11-12: PR 1 #706
+      (dormant, 0.40.0), PR 2 #709 (prompts + `ac-precondition-v1` marker, 0.41.0) — new
+      initiatives now get the checks.** Open: task 0.2 (grep the tickets host for prose
+      `## Preconditions`) and group 7 live check (sandbox idea text in tasks.md 7.1, one real
+      project, stop-ship at >2 accepted false positives), then 6.1 follow-ups, then archive.
+      Earlier status: specced 2026-11-11, reviewed (3 reviewers), revised. Change at `openspec/changes/planner-ac-code-precondition/`
       (local; validates `--strict`; design.md § Review round 1 records every finding). Checks that
       each acceptance criterion's starting state is reachable in the real code. Each spec declares a
       `## Preconditions` table (Criterion, Key, Mode, Requires, Basis): `Mode` `state` rows are
@@ -1346,11 +1356,17 @@ network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd
 - ARCH-9 — live, **needs design**. The review's "missing cursor → start at outbox max seq" would
   also skip a brand-new ticket's first event (its first drain has no cursor either), so it needs a
   host-level marker or similar.
-- PO-9 (fleetd always `--auto`) — live; `FLEET_WORKER_AUTONOMY` in progress (2026-11-12).
+- PO-9 — **fixed, PR #702** (fleet-controller 0.49.0): `FLEET_WORKER_AUTONOMY`; phase dispatch
+  unchanged unless it is set. Follow-up: reuse a ticket's recorded `META|autonomy` on restart;
+  `semi-auto` currently behaves exactly like `auto`.
+- ARCH-3 **fixed, PR #704** (lock at `$REPOS_ROOT/.ticket-auto/locks`; fleet-intervene also checks
+  the legacy `~/.claude/skills/ticket-flow/locks` file — remove that one release later). ARCH-4
+  **fixed, PR #708** (every manifest writer under one lock; idem key from the written rev).
 - Determinism backlog: DET-RV-1, DET-IP-1/RV-20, DET-IP-2, DET-AP-6, DET-PL-26 fixed; DET-AP-1
-  partial (score still LLM); DET-PL-20 moot (knowledge-curator removed). Live: DET-SU-1
-  (`inspect_verifiers` unused) and DET-SU-2 (`retro.sh` has no `failure_tickets`) — in progress
-  2026-11-12; DET-AP-5 (`complexity-score.sh`), DET-PL-4 (render `COMPLETED.md`; waits for Step 12
+  partial (score still LLM); DET-PL-20 moot (knowledge-curator removed). DET-SU-1 and DET-SU-2
+  **fixed, PR #703**, hardened in #710 (inspector-done recomputes the verdict); DET-AP-5 **fixed,
+  PR #707** (`complexity-score.sh`). Also fixed: a crashed critique passed the entry gate
+  (`CRITIQUE_NOT_RUN`, PR #711). Still live: DET-PL-4 (render `COMPLETED.md`; waits for Step 12
   item 7 PR 2 and Step 18 item 1, same prompt file), DET-PL-2 (TicketGen script, own PR, needs
   care). DET-AP-2 unclear (critique may still check by eye).
 
@@ -1760,7 +1776,13 @@ Which plugins each item touches (bump the version of every plugin an item edits)
 | 2 | ticket-planner + ticket-auto-pipeline | spawned from planner `lib/planner-refinement.sh`; `dor-semantic-agent` and `ticket-critique` live in ticket-auto-pipeline |
 | 3 | none (repo tooling) | a script under `scripts/`, run on demand or nightly; packaging it as a skill for other projects is a separate decision |
 
-- [ ] 1. **Goldfish lens for the planner's Review phase.** `planner_prompt_review`
+- [ ] 1. **Goldfish lens for the planner's Review phase.** Specced 2026-11-12 as openspec
+      `planner-goldfish-review` (local; reviewed once, revised): an extra agent before Review via
+      the spawn-list loop, `goldfish/review-goldfish.md`, max 8 findings, not-run never zero,
+      warn-only `GOLDFISH_UNADDRESSED`, flag `PLANNER_GOLDFISH_REVIEW` default **false**. PR A
+      (dormant) #712; PR B (wiring) see status below. **Operator questions Q1–Q5 in design.md**
+      (default on/off, warn vs block, read specs too, serial vs parallel, the `clarified` rule).
+      Original note: `planner_prompt_review`
       (`ticket-planner/lib/planner-phase-prompts.sh`) tells the reviewer to re-read
       appraisal, discovery and architecture, so it reviews with the generator's framing. Add a
       second, context-withheld lens that reads only `artifacts/proposal.md` and the code, and
@@ -1768,10 +1790,11 @@ Which plugins each item touches (bump the version of every plugin an item edits)
       questions: one extra agent spawn per run (cost), and whether Consensus treats goldfish-only
       findings differently. Copy EGM's rule: a lens that fails or times out is recorded as
       "not run", never as zero findings.
-- [ ] 2. **Paraphrase test on planned tickets.** Specced 2026-11-12 as openspec
-      `dor-semantic-paraphrase` (local): required `PARAPHRASE` scan line, new advisory-only code
-      `INCOHERENT_CHANGE`, evaluator v4 without forced rescan, critique not-run audit; epic/intent
-      comparison deferred. Implementation in progress. Original note: From EGM's comprehension reviewer: before
+- [ ] 2. **Paraphrase test on planned tickets.** **MERGED 2026-11-12, PR #705**
+      (ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0): required `PARAPHRASE` scan line,
+      advisory-only `INCOHERENT_CHANGE`, evaluator v4 (v3 verdicts stay valid). The critique audit
+      found a fail-open, fixed in #711. Open: live check (read stored paraphrases, judge
+      `INCOHERENT_CHANGE` hits before promoting to blocking); epic/intent comparison deferred. Original note: From EGM's comprehension reviewer: before
       listing findings, the reviewer writes what the ticket proposes in its own words; a
       paraphrase that disagrees with the sealed intent / epic is a finding. A document whose
       terms are all defined but whose parts don't connect passes a definitions check and fails
