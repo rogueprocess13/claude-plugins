@@ -88,5 +88,6 @@ ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58408	952
 ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	19979	345
 # allow-growth: no-source decisions become ASSUMED Scope assumptions; the agent must know the disposition and that security findings are excluded
 ticket-planner/agents/draft-revise-agent.md	1598	8
+ticket-planner/agents/goldfish-review-agent.md	1588	8
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-planner/skills/ticket-planner/SKILL.md	44768	789

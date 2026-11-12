@@ -94,6 +94,10 @@ exercises.
 - `contracts` — optional. Artifact-contract markers the initiative carries,
   each written as `META|contract|start|<name>` before the run (for example
   `spec-ownership-v1`, which turns on the ownership family).
+- `log_lines` — optional. State-log lines an earlier phase already wrote,
+  each `<PHASE>|<step>|<status>|<message>` and appended before the run (for
+  example `META|goldfish|done|<sha12> findings=3 bm=G1,G2`, which turns on the
+  goldfish family).
 - `idempotent` — optional, `true`: run `planner_crosscheck_run` a second time
   and assert no file under `artifacts/` changed (content, size or mtime).
 - `notes` — free text. Say what real false-positive class this is modeled

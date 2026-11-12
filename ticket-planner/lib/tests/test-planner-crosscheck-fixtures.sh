@@ -150,6 +150,13 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
     [ -n "$contract" ] || continue
     planner_state_write "$init_id" META contract start "$contract" >/dev/null 2>&1
   done < <(jq -r '.contracts // [] | .[]' "$expected_file")
+  # log_lines — optional state.log lines the fixture's run already wrote
+  # (`<PHASE>|<step>|<status>|<message>`, e.g. a META|goldfish terminal line),
+  # appended through planner_state_write.
+  while IFS='|' read -r ll_phase ll_step ll_status ll_msg; do
+    [ -n "$ll_phase" ] || continue
+    planner_state_write "$init_id" "$ll_phase" "$ll_step" "$ll_status" "$ll_msg" >/dev/null 2>&1
+  done < <(jq -r '.log_lines // [] | .[]' "$expected_file")
 
   planner_crosscheck_run "$init_id" >/dev/null 2>&1
   rc=$?
