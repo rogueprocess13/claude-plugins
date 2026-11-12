@@ -281,6 +281,81 @@ ticket_preamble_parse_arg() {
     "$id" "$autonomy" "$planned" "$branch"
 }
 
+# ── Log-dir anchor (state-root-anchor, design D3/D4) ─────────────────────────
+#
+# _tp_log_dir_anchor PROJECT_DIR LOGS_DIR
+#
+# Runs before anything is written. Writes $REPOS_ROOT/.ticket-auto/log-dir
+# with the physical path of LOGS_DIR when it is absent, and refuses (rc 1,
+# the caller returns TP_USAGE) when LOGS_DIR is not the dir every other
+# writer resolves to:
+#   * an absolute FLEET_PIPELINE_LOG_DIR naming another dir (emit_event would
+#     write there while this run's pipeline log lands here);
+#   * an anchor naming another dir. The router's ./logs/{TID}-agent-return.txt
+#     and capture/router-step files are cwd-relative, so a router in the wrong
+#     cwd would split them even with the resolver.
+# Paths are compared after `realpath -m`, so a symlinked spelling of the same
+# dir passes. REPOS_ROOT comes from the project context (env, then
+# CLAUDE.md); when that is empty (a wrong cwd usually has no CLAUDE.md) the
+# anchor is looked for in the cwd's ancestors, for the check only. No
+# REPOS_ROOT and no anchor: nothing to check, today's behaviour. A present
+# but unusable anchor (not an absolute path) warns and is never replaced.
+_tp_log_dir_anchor() {
+  local project_dir="$1" logs_dir="$2" repos_root here other anchor_file value walk
+  if ! declare -f ticket_log_dir_anchor_write >/dev/null 2>&1; then
+    source "$_TP_LIB_DIR/log-dir.sh"
+  fi
+  here=$(realpath -m -- "$logs_dir")
+
+  case "${FLEET_PIPELINE_LOG_DIR:-}" in
+  /*)
+    other=$(realpath -m -- "$FLEET_PIPELINE_LOG_DIR")
+    if [ "$other" != "$here" ]; then
+      echo "ticket_preamble_run: log dir is FLEET_PIPELINE_LOG_DIR=${FLEET_PIPELINE_LOG_DIR}, not ${here}; run /ticket-auto from $(dirname "$other")" >&2
+      return 1
+    fi
+    ;;
+  esac
+
+  repos_root="$(_tp_context_field REPOS_ROOT "$project_dir")"
+  if [ -n "$repos_root" ]; then
+    anchor_file="${repos_root%/}/.ticket-auto/log-dir"
+  else
+    walk=$(realpath -m -- "$PWD")
+    anchor_file=""
+    while :; do
+      if [ -f "$walk/.ticket-auto/log-dir" ]; then
+        anchor_file="$walk/.ticket-auto/log-dir"
+        break
+      fi
+      [ "$walk" != "/" ] || break
+      walk=$(dirname "$walk")
+    done
+    [ -n "$anchor_file" ] || return 0
+  fi
+
+  if value=$(_tld_anchor_read "$anchor_file"); then
+    :
+  elif [ -e "$anchor_file" ]; then
+    echo "ticket_preamble_run: warning: ${anchor_file} does not hold an absolute path; fix or remove it" >&2
+    return 0
+  elif [ -n "$repos_root" ]; then
+    if ! value=$(REPOS_ROOT="$repos_root" ticket_log_dir_anchor_write "$here"); then
+      echo "ticket_preamble_run: warning: could not write ${anchor_file}" >&2
+      return 0
+    fi
+  else
+    return 0
+  fi
+
+  other=$(realpath -m -- "$value")
+  if [ "$other" != "$here" ]; then
+    echo "ticket_preamble_run: log dir anchored at ${value}; run /ticket-auto from $(dirname "$value")" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Usage:
 #   ticket_preamble_run TICKET_ID=CRE-123 \
 #     [AUTONOMY=auto] [FROM_PLANNED=true] [BRANCH_FLAG=epic/x] \
@@ -367,7 +442,11 @@ ticket_preamble_run() {
   esac
   [ -n "$FROM_PLANNED" ] || FROM_PLANNED="false"
 
+  # The logs dir defaults to $PROJECT_DIR/logs, which the anchor check below
+  # requires to be the anchored dir, so the router's cwd-relative
+  # ./logs/{TID}-* files and the resolver's answer are the same directory.
   LOGS_DIR="${LOGS_DIR:-$PROJECT_DIR/logs}"
+  _tp_log_dir_anchor "$PROJECT_DIR" "$LOGS_DIR" || return $TP_USAGE
   mkdir -p "$LOGS_DIR"
   local LOG_FILE="$LOGS_DIR/${TICKET_ID}-pipeline.log"
   local HB_LOG_FILE="$LOGS_DIR/${TICKET_ID}-heartbeat.log"

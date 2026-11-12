@@ -22,6 +22,10 @@ TICKET_TMP_DIR=$(mktemp -d)
 export TICKET_TMP_DIR
 trap 'rm -rf "$TICKET_TMP_DIR"' EXIT
 PREAMBLE_SH="$LIB_DIR/ticket-preamble.sh"
+# The preamble writes $REPOS_ROOT/.ticket-auto/log-dir when it is absent
+# (state-root-anchor): never let an operator's exported REPOS_ROOT or log dir
+# reach it from here. Anchor cases live in test-state-root-anchor.sh.
+unset REPOS_ROOT FLEET_PIPELINE_LOG_DIR
 
 PASS=0
 FAIL=0

@@ -10,6 +10,14 @@
 #   --mode full|validate  Output mode: full=pipe-delimited (default), validate=colored pass/fail
 #   --summary-file PATH   Write delimited block to PATH; print only "Written to PATH"
 #   --show                Also print a human-readable table to stdout
+#   --anchor-log-dir PATH Write the log-dir anchor ($REPOS_ROOT/.ticket-auto/log-dir,
+#                         state-root-anchor) with PATH's absolute form, print
+#                         "LOG_DIR_ANCHOR: <value now anchored>" and exit: 0 when
+#                         the anchor holds PATH, 1 when it already names another
+#                         dir (never replaced), 2 when REPOS_ROOT is unknown.
+# Full mode reports the anchor as the LOG_DIR_ANCHOR row; when it is absent and
+# stdin is a terminal (or ENV_CHECK_INTERACTIVE=1) it asks before anchoring
+# PROJECT_DIR/logs.
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
@@ -31,7 +39,15 @@ SHOW=""
 PROJECT_DIR=""
 _MODE="full"
 _EXPECTING_SUMMARY_PATH=false
+ANCHOR_PATH=""
+_ANCHOR_FLAG=false
+_EXPECTING_ANCHOR_PATH=false
 for arg in "${@}"; do
+  if $_EXPECTING_ANCHOR_PATH; then
+    ANCHOR_PATH="$arg"
+    _EXPECTING_ANCHOR_PATH=false
+    continue
+  fi
   if $_EXPECTING_SUMMARY_PATH; then
     if [[ "$arg" == --* ]]; then
       echo "env-check: --summary-file requires a path argument (got flag: $arg)" >&2
@@ -47,6 +63,14 @@ for arg in "${@}"; do
   --summary-file) _EXPECTING_SUMMARY_PATH=true ;;
   --summary-file=*) SUMMARY_FILE="${arg#*=}" ;;
   --show) SHOW="1" ;;
+  --anchor-log-dir)
+    _ANCHOR_FLAG=true
+    _EXPECTING_ANCHOR_PATH=true
+    ;;
+  --anchor-log-dir=*)
+    _ANCHOR_FLAG=true
+    ANCHOR_PATH="${arg#*=}"
+    ;;
   *)
     if [ "$_MODE" = "" ]; then
       _MODE="$arg"
@@ -64,7 +88,44 @@ if $_EXPECTING_SUMMARY_PATH; then
   echo "env-check: --summary-file requires a path argument" >&2
   error_exit 12 "env-check: required configuration missing"
 fi
+if $_ANCHOR_FLAG && [ -z "$ANCHOR_PATH" ]; then
+  echo "env-check: --anchor-log-dir requires a path argument" >&2
+  exit 2
+fi
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+
+source "$SCRIPT_DIR/log-dir.sh"
+
+# REPOS_ROOT for the anchor: env first, then the project's CLAUDE.md (the same
+# order ticket-preamble.sh uses).
+_env_check_repos_root() {
+  if [ -n "${REPOS_ROOT:-}" ]; then
+    printf '%s\n' "$REPOS_ROOT"
+    return 0
+  fi
+  claude_md_field "$PROJECT_DIR/CLAUDE.md" REPOS_ROOT 2>/dev/null || true
+}
+
+if [ -n "$ANCHOR_PATH" ]; then
+  _rr=$(_env_check_repos_root)
+  if [ -z "$_rr" ]; then
+    echo "env-check: --anchor-log-dir needs REPOS_ROOT (env or CLAUDE.md in ${PROJECT_DIR})" >&2
+    exit 2
+  fi
+  _want=$(realpath -m -- "$ANCHOR_PATH")
+  _rc=0
+  _have=$(REPOS_ROOT="$_rr" ticket_log_dir_anchor_write "$_want") || _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    echo "env-check: could not write the anchor under ${_rr}/.ticket-auto" >&2
+    exit 1
+  fi
+  echo "LOG_DIR_ANCHOR: ${_have}"
+  if [ "$(realpath -m -- "$_have")" != "$_want" ]; then
+    echo "env-check: already anchored at ${_have}; the anchor is never replaced. To move: stop the fleet, mv the dir, rewrite ${_rr}/.ticket-auto/log-dir, start the fleet" >&2
+    exit 1
+  fi
+  exit 0
+fi
 
 # Reject unknown --mode values
 case "${_MODE:-full}" in
@@ -517,6 +578,36 @@ else
       _var "REPOS_ROOT" "missing" "" "CLAUDE.md" "parent directory of all project repos"
     fi
     issues=$((issues + 1))
+  fi
+
+  # LOG_DIR_ANCHOR (state-root-anchor): informational, never an issue.
+  _rr=$(_env_check_repos_root)
+  if [ -n "$_rr" ]; then
+    _af="${_rr%/}/.ticket-auto/log-dir"
+    if _av=$(_tld_anchor_read "$_af"); then
+      _var "LOG_DIR_ANCHOR" "ok" "$_av" "$_af" ""
+    elif [ -e "$_af" ]; then
+      _var "LOG_DIR_ANCHOR" "warn" "" "$_af" "first line is not an absolute path — fix it by hand"
+    else
+      _want=$(realpath -m -- "$PROJECT_DIR/logs")
+      _reply=""
+      if [ "${ENV_CHECK_INTERACTIVE:-}" = "1" ] || [ -t 0 ]; then
+        printf 'Anchor the pipeline log dir at %s? [y/N] ' "$_want" >&2
+        IFS= read -r _reply || true
+      fi
+      case "$_reply" in
+      y | Y | yes | YES)
+        if _av=$(REPOS_ROOT="$_rr" ticket_log_dir_anchor_write "$_want"); then
+          _var "LOG_DIR_ANCHOR" "ok" "$_av" "$_af" ""
+        else
+          _var "LOG_DIR_ANCHOR" "warn" "" "$_af" "could not write the anchor"
+        fi
+        ;;
+      *)
+        _var "LOG_DIR_ANCHOR" "warn" "" "$_af" "not anchored — run env-check.sh --anchor-log-dir $_want, or one /ticket-auto from the project dir"
+        ;;
+      esac
+    fi
   fi
 
   if [ -n "${LOCAL_URL:-}" ]; then

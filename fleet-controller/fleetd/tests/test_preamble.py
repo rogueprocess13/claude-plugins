@@ -243,8 +243,24 @@ class TestAgainstTheRealScript(unittest.TestCase):
             shutil.copy(src, self.lib / src.name)
         (self.lib / 'branch-resolve.sh').write_text(BRANCH_STUB)
         (Path(self.tmp) / 'logs').mkdir()
+        # state-root-anchor: the preamble refuses a logs dir that differs
+        # from an absolute FLEET_PIPELINE_LOG_DIR or from the REPOS_ROOT
+        # anchor, and writes that anchor on first run. Give every test the
+        # configuration a real host has (the env names this project's logs
+        # dir) and its own REPOS_ROOT, so one test's anchor never meets the
+        # next test's project.
+        self._saved_env = {k: os.environ.get(k)
+                           for k in ('FLEET_PIPELINE_LOG_DIR', 'REPOS_ROOT')}
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = str(Path(self.tmp) / 'logs')
+        os.environ['REPOS_ROOT'] = str(Path(self.tmp) / 'repos')
+        (Path(self.tmp) / 'repos').mkdir()
 
     def tearDown(self):
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         if self._saved_tmp_dir is None:
             os.environ.pop('TICKET_TMP_DIR', None)
         else:
@@ -279,6 +295,23 @@ class TestAgainstTheRealScript(unittest.TestCase):
             'PYPRE-2', lib_dir=self.lib, project_dir=self.tmp,
             logs_dir=str(Path(self.tmp) / 'logs'), skip_preflight=True)
         self.assertEqual(set(result.fields), set(preamble._RESULT_FIELDS))
+
+    def test_a_log_dir_anchored_elsewhere_defers_and_writes_nothing(self):
+        # state-root-anchor D4: a project whose logs dir is not the anchored
+        # one is refused with the usage code, which fleetd reads as
+        # retry-later, before any log file is created.
+        os.environ.pop('FLEET_PIPELINE_LOG_DIR', None)
+        anchor = Path(self.tmp) / 'repos' / '.ticket-auto' / 'log-dir'
+        anchor.parent.mkdir(parents=True)
+        anchor.write_text(str(Path(self.tmp) / 'elsewhere' / 'logs') + '\n')
+        result = preamble.run_preamble(
+            'PYPRE-3', lib_dir=self.lib, project_dir=self.tmp,
+            logs_dir=str(Path(self.tmp) / 'logs'), skip_preflight=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.action, preamble.ACTION_RETRY_LATER)
+        self.assertIn('log dir anchored at', result.detail)
+        self.assertFalse(
+            (Path(self.tmp) / 'logs' / 'PYPRE-3-pipeline.log').exists())
 
 
 if __name__ == '__main__':
