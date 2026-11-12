@@ -23,6 +23,9 @@
 #   - planner-crosscheck-ownership.sh   (planner-crosscheck-ownership — the
 #                                        ## Writes / ## Reads tables judged
 #                                        against each other)
+#   - planner-crosscheck-ac-precondition.sh (planner-ac-code-precondition —
+#                                        ## Preconditions rows judged against
+#                                        the pinned schema)
 #
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
@@ -101,6 +104,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_params" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-params.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_ownership" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ownership.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_ac_precondition" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-precondition.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -129,7 +134,9 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # TEST_DATA_SYNTH_FAILED (the synthesis sub-step could not write its specs).
 # planner-crosscheck-ownership: OWN_NEAR_MATCH, OWN_UNDECLARED_REF,
 # OWN_EXTERNAL_UNANCHORED and OWN_EDGES_DIVERGED are tripwires, warn-level.
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED"
+# planner-ac-code-precondition: AC_PRECONDITION_PLANNED (another spec writes
+# the key) and AC_PRECONDITION_NO_SOURCE (an unsupported stack) never block.
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED AC_PRECONDITION_PLANNED AC_PRECONDITION_NO_SOURCE"
 
 # Per-instance codes (planner-crosscheck-ownership D10). A listed code is
 # accepted one instance at a time and never code-wide: emit matches each
@@ -168,6 +175,8 @@ PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_WRITER:planner_crosscheck_ownersh
 PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_NO_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
 PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_FIRE:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
 PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_TRIGGER_UNOWNED:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+# planner-ac-code-precondition D10: token <slug>/<key>/<requires>.
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" AC_PRECONDITION_UNREACHABLE:planner_crosscheck_acpre_instance:planner_crosscheck_acpre_accept_parse:_planner_stop_acpre_question:planner-crosscheck-ac-precondition.sh:"
 
 # Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib|detail>
 # Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is
@@ -535,6 +544,17 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  # AC precondition family (planner-ac-code-precondition): silent without the
+  # ac-precondition-v1 marker. Its output is captured before it is emitted,
+  # so its one META|ac-precondition info line always lands ahead of its
+  # findings.
+  local acpre_out
+  acpre_out=$(planner_crosscheck_ac_precondition "$initiative_id" 2>/dev/null) || true
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" printf '%s\n' "$acpre_out")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -693,6 +713,12 @@ planner_crosscheck_fix_hint() {
     ;;
   OWN_TRIGGER_UNOWNED | OWN_TRIGGER_UNOWNED@*)
     echo "a spec triggers a side effect no spec owns — add a fire row to the spec that delivers the effect, or remove the trigger"
+    ;;
+  AC_PRECONDITION_TABLE_INVALID)
+    echo "a spec's ## Preconditions section is missing or malformed — write None. or one table (Criterion | Key | Mode | Requires | Basis) right under the heading, repeat each Criterion verbatim from ## Acceptance Criteria, and fix the named rows; a spec: Basis needs a ## Writes row for the key in that spec, and that spec in blocked-by"
+    ;;
+  AC_PRECONDITION_UNREACHABLE | AC_PRECONDITION_UNREACHABLE@*)
+    echo "a criterion needs a starting state the pinned code forbids — change the criterion, mark the row Mode input if the test submits the value, or set Basis spec:<slug> for a spec of this initiative that changes the schema; accept a genuine case with the per-instance --accept the message prints"
     ;;
   OWN_EDGES_FAILED)
     echo "Crosscheck could not write artifacts/ownership-edges.json — check the artifacts directory is writable, then resume"

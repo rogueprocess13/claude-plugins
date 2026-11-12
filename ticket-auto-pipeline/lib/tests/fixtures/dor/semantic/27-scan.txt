@@ -2,6 +2,7 @@
 SCHEMA_VERSION: 1
 TICKET: @TICKET@
 BODY_HASH: @BODY_HASH@
+PARAPHRASE: Let supervisors duplicate a handover as a draft copy and archive old handovers from the detail page.
 FINDING_1_CODE: TEST_DATA_GAP
 FINDING_1_QUOTE: Duplicating a handover from the list creates a draft copy with the same line items
 FINDING_1_DETAIL: one handover with at least two line items on the supervisor's site; Test Data Prerequisites says no criterion needs test data

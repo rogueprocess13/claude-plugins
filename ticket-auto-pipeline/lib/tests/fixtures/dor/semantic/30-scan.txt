@@ -2,6 +2,7 @@
 SCHEMA_VERSION: 1
 TICKET: @TICKET@
 BODY_HASH: @BODY_HASH@
+PARAPHRASE: Validate every row of a bulk client upload against the shared row schema and reject an invalid file with per-row errors.
 FINDING_1_CODE: INTENT_AC_MISMATCH
 FINDING_1_QUOTE: - [ ] A user without the ops role does not see the Upload menu item
 FINDING_1_DETAIL: The stated intent and Proposed Behaviour cover only pre-import row validation; role-gating of the Upload menu item is neither motivated nor described, so this criterion does not serve the stated intent (either out of scope or an undescribed behaviour).

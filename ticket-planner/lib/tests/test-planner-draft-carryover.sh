@@ -168,6 +168,7 @@ _scan_result() {
 SCHEMA_VERSION: 1
 TICKET: ${tid}
 BODY_HASH: ${hash}
+PARAPHRASE: The ticket makes one change, described consistently.
 ${findings}
 GAP_REQUIREMENT_COMPLETENESS: ${rc}
 GAP_REQUIREMENT_COMPLETENESS_REASON: see findings

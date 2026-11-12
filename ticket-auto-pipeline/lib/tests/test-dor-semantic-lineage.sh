@@ -384,10 +384,10 @@ _ready AUD-1 | jq -e '.lineage.first_audit.audit[0].reason == "third"' >/dev/nul
   _pass "first_audit: a new body hash records a new first audit" ||
   _fail "first_audit: should be replaced on a new body (got $(_ready AUD-1 | jq -c .lineage.first_audit))"
 
-# ── 7. v2 → v3 migration ───────────────────────────────────────────────────
+# ── 7. v2 migration (to the current evaluator) ─────────────────────────────
 
-[ "$DOR_SEMANTIC_EVALUATOR" = "dor-semantic-v3" ] && _pass "evaluator: DOR_SEMANTIC_EVALUATOR is dor-semantic-v3" ||
-  _fail "evaluator: expected dor-semantic-v3 (got $DOR_SEMANTIC_EVALUATOR)"
+[ "$DOR_SEMANTIC_EVALUATOR" = "dor-semantic-v4" ] && _pass "evaluator: DOR_SEMANTIC_EVALUATOR is dor-semantic-v4" ||
+  _fail "evaluator: expected dor-semantic-v4 (got $DOR_SEMANTIC_EVALUATOR)"
 
 _needs_pass() {
   local r h
@@ -413,12 +413,12 @@ rc=0
 dor_semantic_migrate_v2 "MIG-1" "$TMP_ROOT/MIG-1.md" >/dev/null 2>&1 || rc=$?
 r=$(_ready MIG-1)
 [ "$rc" = "0" ] &&
-  echo "$r" | jq -e '.semantic.evaluator == "dor-semantic-v3" and .semantic.migrated_from == "dor-semantic-v2"
+  echo "$r" | jq -e '.semantic.evaluator == "dor-semantic-v4" and .semantic.migrated_from == "dor-semantic-v2"
      and .semantic.findings[0].lineage == "new" and (.semantic.findings[0].id | startswith("f-"))
-     and .lineage.round == 1 and .lineage.evaluator == "dor-semantic-v3" and .lineage.migrated_from == "dor-semantic-v2"
+     and .lineage.round == 1 and .lineage.evaluator == "dor-semantic-v4" and .lineage.migrated_from == "dor-semantic-v2"
      and (.missing | index("SEMANTIC_EDGE_CASES") != null)' >/dev/null &&
   [ "$(_needs_pass MIG-1)" = "false" ] &&
-  _pass "migrate: an unchanged v2 verdict becomes v3 in place, round 1, no pass needed" ||
+  _pass "migrate: an unchanged v2 verdict becomes current (v4) in place, round 1, no pass needed" ||
   _fail "migrate: unchanged v2 should migrate (rc=$rc, got $(echo "$r" | jq -c '{s: .semantic, l: .lineage, m: .missing}'))"
 
 _write_body "MIG-2" "$base_body"
@@ -434,8 +434,8 @@ dor_semantic_migrate_v2 "MIG-2" "$TMP_ROOT/MIG-2.md" >/dev/null 2>&1 || rc=$?
 
 rc=0
 dor_semantic_migrate_v2 "MIG-1" "$TMP_ROOT/MIG-1.md" >/dev/null 2>&1 || rc=$?
-[ "$rc" = "2" ] && _pass "migrate: an already-v3 verdict is a no-op (rc 2)" ||
-  _fail "migrate: v3 verdict should be a no-op (rc=$rc)"
+[ "$rc" = "2" ] && _pass "migrate: an already-migrated verdict is a no-op (rc 2)" ||
+  _fail "migrate: migrated verdict should be a no-op (rc=$rc)"
 
 # ── 8. Scoped-rescan prompt hint ───────────────────────────────────────────
 

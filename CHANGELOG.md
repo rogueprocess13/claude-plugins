@@ -23,6 +23,82 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 - **Manifest writes no longer lose updates (review ARCH-4).** Every writer in `lib/manifest-write.sh` now reads and rewrites the manifest under one lock per manifest (`_manifest_lock`, renamed from `_manifest_readiness_lock`). Before, only the readiness writers locked, so a transition, approval or dispatch stamp overlapping a readiness re-scan could drop either update. The lock is re-entrant within one process only. `set_ticket_transition` bumps `rev` under the lock and reports it in `MANIFEST_TRANSITION_REV`. `flow.sh` builds its `{tid}:{rev}` idempotency key from that value, or logs `META|flow-warn|warn|REV_UNREPORTED` when no rev comes back. Running `write_ticket_manifest`/`write_epic_manifest` again on an existing manifest (a planner resume) now keeps `rev`, stage, flags, pending event, approval, readiness and the dispatch stamp; before, `rev` restarted at 1 and a later idempotency key could collide with an event already in the outbox. `clear_pending_event` accepts an expected rev. **Behaviour change:** if the lock stays busy past `MANIFEST_LOCK_TIMEOUT_SECS` (15s), `flow.sh` exits 1 with `MANIFEST_WRITE_FAILED` instead of writing unlocked. New `lib/tests/test-manifest-write-lock.sh` (24 checks, including 13 parallel writers of 6 kinds against one manifest).
 
+## ticket-auto-pipeline 0.115.1 (2026-11-12) — complexity arithmetic moves into `lib/complexity-score.sh`
+
+### Changed
+
+- ticket-appraise's complexity arithmetic moves into `lib/complexity-score.sh` (review finding DET-AP-5). The agent now only judges which axes fire. `write <dir> --axes <list> --reason <s>` adds up the weights, applies the threshold of 3 and writes or replaces the `## Complexity` block in the shape `get_complexity` reads. It refuses an unknown or repeated axis, `none` combined with another axis, and a double-counted `cross-layer` (exit 2, file untouched). `blast <dir>` applies the Step 2.8 blast-radius override once per ticket. The notes.md format and scoring outcomes are unchanged; `lib/tests/test-complexity-score.sh` (27 cases) replays the rubric examples and the Blast Radius tables `test-notes-parse.sh` pins.
+
+## ticket-planner 0.40.0 (2026-11-12) — AC preconditions: table, schema facts, Crosscheck family (dormant)
+
+planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controller unchanged.
+(0.39.0 is taken by the dor-semantic-paraphrase branch.)
+
+### Added, dormant until the Specify prompt change
+
+- `lib/planner-ac-precondition.sh`: the `## Preconditions` table (Criterion, Key, Mode `state` or
+  `input`, Requires `null` / `value:<v>` / `number:<n>`, Basis `code:<path>` / `spec:<slug>` / `—`)
+  and its Basis rules (a `spec:` Basis needs a matching `## Writes` row in that spec, and that spec
+  as a dependency). Strong schema facts from JPA entities and Liquibase XML changelogs only
+  (NOT NULL, `@Id`, `STRING` enum constants, integer column ranges), with comments, rollback
+  blocks and build directories ignored. A decision per row: `reachable`, `unreachable` or
+  `unchecked` with a reason. Numbers are compared as decimal strings.
+- `lib/planner-crosscheck-ac-precondition.sh`: the Crosscheck family, gated on
+  `META|contract|start|ac-precondition-v1`. `AC_PRECONDITION_TABLE_INVALID` and
+  `AC_PRECONDITION_UNREACHABLE` block; `AC_PRECONDITION_PLANNED` (another spec writes the key) and
+  `AC_PRECONDITION_NO_SOURCE` (no JPA or Liquibase found) warn. Unchecked rows are never findings:
+  each run writes one `META|ac-precondition|done` info line with counts and nearest names.
+  `AC_PRECONDITION_UNREACHABLE` is accepted one instance at a time
+  (`--accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:"<reason>"`) or with `@*`.
+- The stop describer asks one `ac-precondition-findings` note for `AC_PRECONDITION_UNREACHABLE`
+  instead of a blanket accept. Draft revise may update a Preconditions row's Criterion cell when
+  it extends that AC, and refuses any other change to the rows (`FROZEN_CHANGED preconditions
+  changed`). A new `ac-precondition` halt golden.
+- Nothing writes the `ac-precondition-v1` marker yet, so no initiative changes behaviour. The one
+  unconditional change: ticket bodies drop a `## Preconditions` section (none exists today).
+
+### Changed
+
+- The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
+  `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
+  ownership anchor behaves as before for all three.
+
+## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
+
+dor-semantic-paraphrase (next.md Step 18, item 2). A ticket can pass every existing check and
+still not describe one change: the intent says one thing, the scope bounds another, the criteria
+test a third. The DoR semantic scan now writes what the ticket changes in its own words first, and
+flags a part that describes a different change.
+
+### Added
+
+- **`PARAPHRASE` scan line.** Every `=== DOR_SEMANTIC_SCAN ===` block must carry `PARAPHRASE:`,
+  one line of 1 to 400 characters, asked for before any finding. A scan without one is an invalid
+  block (re-spawn once, then `SEMANTIC_UNAVAILABLE`, as for any invalid block). The audit block
+  carries none. `dor_semantic_apply` stores it as `ready.semantic.paraphrase`.
+- **`INCOHERENT_CHANGE`** (dimension `intent`, directly after `INTENT_AC_MISMATCH`): the summary or
+  intent, the scope, a criterion or a Verification Plan row describes a different change from the
+  paraphrase. It is in `DOR_SEMANTIC_ADVISORY_ONLY_CODES`, so it never blocks until a live run
+  calibrates it; its quote is verified like any other.
+- ticket-planner: the Refinement halt report prints each not-ready ticket's `Paraphrase:` above its
+  findings and ends with an `## Advisory incoherent-change findings` section; the advisory summary
+  printed on a gate pass lists each `INCOHERENT_CHANGE` with the ticket's paraphrase.
+  `PLANNER_AC_CHECKLIST_SEMANTIC_NA` lists the new code.
+
+### Changed
+
+- `DOR_SEMANTIC_EVALUATOR` is `dor-semantic-v4`. A v3 verdict on an unchanged body is **not**
+  rescanned: `DOR_SEMANTIC_COMPATIBLE_EVALUATORS` lists `dor-semantic-v3`, and the planner's
+  needs-pass decision and converge check now call `dor_semantic_evaluator_compatible` instead of
+  comparing the evaluator string. Lineage still resets across the bump, and a draft import still
+  needs the exact evaluator. An unchanged v2 verdict now migrates straight to v4.
+
+### Audited, unchanged
+
+- `ticket-critique` never reports `CLEAR` for a critique that did not run: a failed fetch stops the
+  run (or, with `--no-post`, writes `STATUS: UNAVAILABLE`), and the dispatch-rehearsal preflight
+  fails a missing or unavailable result.
+
 ## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
 
 fleet-controller 0.49.2.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog>
+    <changeSet id="900" author="decoy">
+        <addNotNullConstraint tableName="invoice" columnName="note"/>
+    </changeSet>
+</databaseChangeLog>

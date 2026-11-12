@@ -829,6 +829,104 @@ sec=$(jq -c "$(planner_draft_security_def)"' map(pdr_security)' <<<'[
 [ "$sec" = '[true,true,true,true,true,true,true,true,false]' ] && pass "pdr_security: authorization/role checks, IDOR, secrets in config/logs, unsanitised input, ../, raw user input" ||
   fail "wider security rule" "$sec"
 
+# ── planner-ac-code-precondition D10: ## Preconditions (task 3.4) ──────────
+echo "--- ## Preconditions (planner-ac-code-precondition) ---"
+PRE_H='| Criterion | Key | Mode | Requires | Basis |
+|-----------|-----|------|----------|-------|'
+PRE_R1='| Export responds with 200 | `invoice.status` | state | value:sent | code:billing/src |'
+PRE_R2='| The Export button appears on the invoice list | `invoice.customer_id` | input | null | — |'
+PRE_DIR="${TMP_ROOT}/pre/specs"
+mkdir -p "$PRE_DIR"
+# _pre <file> <preconditions-body> [extend] — a.base plus a Preconditions
+# section; with "extend", the first AC (and its notes row) is extended.
+_pre() {
+  {
+    if [ "${3:-}" = extend ]; then
+      sed -e 's/^- \[ \] Export responds with 200$/- [ ] Export responds with 200 within 2 seconds/' \
+        -e 's/^| Export responds with 200 | finance user/| Export responds with 200 within 2 seconds | finance user/' "${TMP_ROOT}/a.base"
+    else
+      cat "${TMP_ROOT}/a.base"
+    fi
+    printf '\n## Preconditions\n\n%s\n' "$2"
+  } >"$1"
+}
+_frozen_pre() { grep -q '^FROZEN_CHANGED preconditions changed$' <<<"$1"; }
+if [[ "|${PLANNER_DRAFT_EDITABLE_SECTIONS}|" == *"|Preconditions|"* ]]; then
+  pass "Preconditions is an editable section"
+else
+  fail "editable sections" "$PLANNER_DRAFT_EDITABLE_SECTIONS"
+fi
+_pre "${PRE_DIR}/before.md" "${PRE_H}
+${PRE_R1}
+${PRE_R2}"
+# An AC extension with the row's Criterion cell updated is accepted.
+_pre "${PRE_DIR}/a-export.md" "${PRE_H}
+${PRE_R1/Export responds with 200/Export responds with 200 within 2 seconds}
+${PRE_R2}" extend
+out=$(planner_draft_revise_check_text "${PRE_DIR}/before.md" "${PRE_DIR}/a-export.md" "" "" contract)
+[ -z "$out" ] && pass "contract: an AC extension with its Criterion cell updated is accepted" || fail "criterion follows" "$out"
+if declare -f planner_acpre_invalid >/dev/null || source "${LIB_DIR}/planner-ac-precondition.sh"; then
+  got=$(planner_acpre_invalid "$INIT" "${PRE_DIR}/a-export.md" | cut -f2)
+  [ -z "$got" ] && pass "contract: the extended criterion is found by the next Crosscheck" || fail "criterion found" "$got"
+  # A stale Criterion cell passes the revise guard; Crosscheck catches it.
+  _pre "${PRE_DIR}/a-export.md" "${PRE_H}
+${PRE_R1}
+${PRE_R2}" extend
+  out=$(planner_draft_revise_check_text "${PRE_DIR}/before.md" "${PRE_DIR}/a-export.md" "" "" contract)
+  ! _frozen_pre "$out" && ! _has "$out" FROZEN_CHANGED && pass "contract: a stale Criterion cell passes the revise guard" || fail "stale cell guard" "$out"
+  got=$(planner_acpre_invalid "$INIT" "${PRE_DIR}/a-export.md" | cut -f2)
+  [ "$got" = "criterion not found" ] && pass "contract: the stale cell is AC_PRECONDITION_TABLE_INVALID (criterion not found)" || fail "stale cell crosscheck" "$got"
+fi
+# Dropping, adding or changing a (Key, Mode, Requires, Basis) row is refused.
+for change in drop add requires basis mode none; do
+  case "$change" in
+  drop) body="${PRE_H}
+${PRE_R1}" ;;
+  add) body="${PRE_H}
+${PRE_R1}
+${PRE_R2}
+| Export responds with 200 | \`invoice.number\` | state | number:5 | code:billing/src |" ;;
+  requires) body="${PRE_H}
+${PRE_R1/value:sent/value:paid}
+${PRE_R2}" ;;
+  basis) body="${PRE_H}
+${PRE_R1/code:billing\/src/spec:b-other}
+${PRE_R2}" ;;
+  mode) body="${PRE_H}
+${PRE_R1/| state |/| input |}
+${PRE_R2}" ;;
+  none) body="None." ;;
+  esac
+  _pre "${PRE_DIR}/after.md" "$body"
+  out=$(planner_draft_revise_check_text "${PRE_DIR}/before.md" "${PRE_DIR}/after.md" "" "" contract)
+  _frozen_pre "$out" && pass "contract: preconditions changed (${change}) is FROZEN_CHANGED" || fail "preconditions ${change}" "$out"
+done
+_pre "${PRE_DIR}/none.md" "None."
+_pre "${PRE_DIR}/after.md" "${PRE_H}
+${PRE_R1}"
+out=$(planner_draft_revise_check_text "${PRE_DIR}/none.md" "${PRE_DIR}/after.md" "" "" contract)
+_frozen_pre "$out" && pass "contract: None. to a table is FROZEN_CHANGED" || fail "None. to table" "$out"
+out=$(planner_draft_revise_check_text "${PRE_DIR}/none.md" "${PRE_DIR}/none.md" "" "" contract)
+[ -z "$out" ] && pass "contract: an unchanged None. passes" || fail "None. unchanged" "$out"
+# Legacy (no contract): the section stays frozen, as before this change.
+_pre "${PRE_DIR}/a-export.md" "${PRE_H}
+${PRE_R1/Export responds with 200/Export responds with 200 within 2 seconds}
+${PRE_R2}" extend
+out=$(planner_draft_revise_check_text "${PRE_DIR}/before.md" "${PRE_DIR}/a-export.md")
+grep -q '^FROZEN_CHANGED ## Preconditions changed$' <<<"$out" && pass "legacy: any ## Preconditions edit stays FROZEN_CHANGED" || fail "legacy frozen" "$out"
+out=$(planner_draft_revise_check_text "${PRE_DIR}/before.md" "${PRE_DIR}/before.md")
+[ -z "$out" ] && pass "legacy: an unchanged ## Preconditions passes" || fail "legacy unchanged" "$out"
+# The mode follows the ac-precondition-v1 marker.
+if declare -f _pdrv_acpre_mode >/dev/null; then
+  [ "$(_pdrv_acpre_mode "$INIT")" = legacy ] && pass "mode: legacy without the marker" || fail "mode legacy" "$(_pdrv_acpre_mode "$INIT")"
+  INIT_PRE="INIT-DRV2"
+  mkdir -p "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_PRE}"
+  printf '2026-10-01T00:00:00Z|META|contract|start|ac-precondition-v1\n' >"${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_PRE}/state.log"
+  [ "$(_pdrv_acpre_mode "$INIT_PRE")" = contract ] && pass "mode: contract with the marker" || fail "mode contract" "$(_pdrv_acpre_mode "$INIT_PRE")"
+else
+  fail "mode" "_pdrv_acpre_mode missing"
+fi
+
 echo
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
