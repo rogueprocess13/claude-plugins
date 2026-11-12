@@ -172,6 +172,7 @@ test-lib:
 	# tracker-local-facts-read-migration
 	bash ticket-auto-pipeline/lib/tests/test-manifest-read.sh
 	bash ticket-auto-pipeline/lib/tests/test-manifest-write.sh
+	bash ticket-auto-pipeline/lib/tests/test-manifest-write-lock.sh
 	# dor-readiness-gate-foundation
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh

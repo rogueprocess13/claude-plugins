@@ -22,9 +22,16 @@
 #
 # Functions:
 #   planner_acpre_contract_mark <INIT>        append META|contract|start|
-#                                             ac-precondition-v1 once (not wired:
-#                                             the router call is task 5.3)
+#                                             ac-precondition-v1 once; called by
+#                                             _planner_dispatch_contract_mark on
+#                                             the first Specify dispatch, after
+#                                             spec-ownership-v1
 #   planner_acpre_contract_initiative <INIT>  rc 0 when that line is present
+#   planner_acpre_prompt_rules                the Specify rules (design D12),
+#                                             after the Writes/Reads rules
+#   planner_acpre_consensus_rule              one Consensus step-3 rule
+#   planner_acpre_revise_rule                 one editable-region bullet of the
+#                                             draft revise prompt
 #   planner_acpre_rows <spec>                 one line per grammar-valid row:
 #                                             <line>\t<criterion>\t<key>\t<mode>\t
 #                                             <requires>\t<basis>; criterion with
@@ -112,6 +119,63 @@ planner_acpre_contract_mark() {
   local init="$1"
   planner_acpre_contract_initiative "$init" && return 0
   planner_state_write "$init" META contract start "$PLANNER_ACPRE_CONTRACT"
+}
+
+# ── Prompt wording (design D12) ───────────────────────────────────────────────
+
+# planner_acpre_prompt_rules — the Specify rules for the table, inserted right
+# after planner_ownership_prompt_rules. Starts with a blank line. The key
+# grammar is item 6's, named by reference, never restated.
+planner_acpre_prompt_rules() {
+  cat <<'RULES'
+
+### Preconditions (planner-ac-code-precondition)
+
+Every spec also declares the stored state each acceptance criterion starts
+from: under `## Preconditions`, `None.` or exactly one table directly under the
+heading.
+
+```
+## Preconditions
+
+| Criterion | Key | Mode | Requires | Basis |
+|-----------|-----|------|----------|-------|
+| An invoice with no due date is listed on the Needs date page. | `invoice.due_date` | state | null | code:billing/src/main/resources/db/changelog |
+| Saving the invoice form without a customer shows "Customer is required". | `invoice.customer_id` | input | null | — |
+```
+
+- **Criterion** — one acceptance criterion, verbatim; several rows may share one.
+- **Key** — backticked `entity.field`, in the key grammar of `## Writes` and
+  `## Reads`.
+- **Mode** — `state`: a stored record holds Requires before the check.
+  `input`: the test submits the value and expects it rejected.
+- **Requires** — `null`, `value:<v>` (lower case) or `number:<n>`.
+- **Basis** — for `state`, `code:<path>` (the entity file or the changelog
+  directory) or `spec:<slug>` (a spec this one depends on whose `## Writes`
+  declares the key); for `input`, `—`.
+- Declare every stored starting state a criterion needs. Crosscheck reads the
+  pinned schema and blocks when it definitely forbids one.
+RULES
+}
+
+# planner_acpre_consensus_rule — one Consensus rule, inserted after the
+# ownership rule in step 3.
+planner_acpre_consensus_rule() {
+  cat <<'RULE'
+   When an edit changes an acceptance criterion, a key or a schema change,
+   update that spec's `## Preconditions` rows in the same edit. Never delete a
+   row alone to clear a Crosscheck finding.
+RULE
+}
+
+# planner_acpre_revise_rule — one bullet of the draft revise prompt's
+# editable-region list, after the Verification Notes bullet (design D10).
+planner_acpre_revise_rule() {
+  cat <<'RULE'
+- `## Preconditions`: when you extend a criterion that has rows there, extend
+  each such row's Criterion cell with the same appended text, and change
+  nothing else in that section.
+RULE
 }
 
 # ── Table parse ───────────────────────────────────────────────────────────────

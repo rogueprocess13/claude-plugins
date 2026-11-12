@@ -23,6 +23,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 - **Inspector verdict recompute (DET-SU-1 hardening).** `router-step.sh inspector-done` recomputes the deterministic phase-inspector verdict (`compute_inspector_verdict`, the same inputs as `assemble_inspector_context`) instead of trusting a log line's `"source":"bash"`, which an agent could also write. It re-asserts bash's verdict (`agent_overridden:true`) when the phase's last verdict line is missing, malformed or differs in `.verdict`/`.signals` (typed jq comparison). Validation failures fail closed. `validate_phase_inspector` builds its output in one jq program from `--argjson` values. Flagged by an automated security review of #703.
 
+## ticket-planner 0.41.0 (2026-11-12) — AC precondition checks switched on for new initiatives
+
+planner-ac-code-precondition, PR 2 of 2. ticket-auto-pipeline and fleet-controller unchanged.
+
+### Changed
+
+- New initiatives now get AC precondition checks. The Specify prompt asks every spec for a `## Preconditions` table, Consensus keeps it in step with its edits, and the draft revise prompt updates a row's Criterion cell when it extends that criterion. The first Specify dispatch writes `ac-precondition-v1` after `spec-ownership-v1`. Initiatives that already ran Specify stay legacy. `SPECIFY_PROMPT_SHA` is re-captured; new intermediate pins `SPECIFY_PRE_ACPRE_SHA`/`CONSENSUS_PRE_ACPRE_SHA`; the no-residue tests strip items 5, 6 and 7. The pre-gate error message names all three contracts.
+
+## ticket-auto-pipeline 0.115.2 (2026-11-12) — manifest writes no longer lose updates (ARCH-4)
+
+### Fixed
+
+- **Manifest writes no longer lose updates (review ARCH-4).** Every writer in `lib/manifest-write.sh` now reads and rewrites the manifest under one lock per manifest (`_manifest_lock`, renamed from `_manifest_readiness_lock`). Before, only the readiness writers locked, so a transition, approval or dispatch stamp overlapping a readiness re-scan could drop either update. The lock is re-entrant within one process only. `set_ticket_transition` bumps `rev` under the lock and reports it in `MANIFEST_TRANSITION_REV`. `flow.sh` builds its `{tid}:{rev}` idempotency key from that value, or logs `META|flow-warn|warn|REV_UNREPORTED` when no rev comes back. Running `write_ticket_manifest`/`write_epic_manifest` again on an existing manifest (a planner resume) now keeps `rev`, stage, flags, pending event, approval, readiness and the dispatch stamp; before, `rev` restarted at 1 and a later idempotency key could collide with an event already in the outbox. `clear_pending_event` accepts an expected rev. **Behaviour change:** if the lock stays busy past `MANIFEST_LOCK_TIMEOUT_SECS` (15s), `flow.sh` exits 1 with `MANIFEST_WRITE_FAILED` instead of writing unlocked. New `lib/tests/test-manifest-write-lock.sh` (24 checks, including 13 parallel writers of 6 kinds against one manifest).
+
 ## ticket-auto-pipeline 0.115.1 (2026-11-12) — complexity arithmetic moves into `lib/complexity-score.sh`
 
 ### Changed
@@ -62,6 +76,8 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
+
+
 
 ## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
 

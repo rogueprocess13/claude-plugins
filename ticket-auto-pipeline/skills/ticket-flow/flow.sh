@@ -346,12 +346,28 @@ _manifest_set_transition() {
   fi
 }
 
+# _manifest_clear_pending <EXPECTED_REV> — clears pending_event only while the
+# manifest's rev is still the one the event was written with (review ARCH-4).
 _manifest_clear_pending() {
   if $IS_EPIC; then
-    clear_epic_pending_event "$TICKET_ID"
+    clear_epic_pending_event "$TICKET_ID" "$1"
   else
-    clear_pending_event "$TICKET_ID"
+    clear_pending_event "$TICKET_ID" "$1"
   fi
+}
+
+# _manifest_pending_snapshot — prints `{pending_event, rev}` read from the
+# manifest in one jq call, so the replayed event's idem key comes from the
+# rev written in the same atomic write as the event itself.
+_manifest_pending_snapshot() {
+  local _p
+  if $IS_EPIC; then
+    _p=$(get_epic_manifest_path "$TICKET_ID" 2>/dev/null) || return 1
+  else
+    _p=$(get_ticket_manifest_path "$TICKET_ID" 2>/dev/null) || return 1
+  fi
+  [ -f "$_p" ] || return 1
+  jq -c '{pending: (.pending_event // null), rev: ((.rev // 0) | tostring)}' "$_p" 2>/dev/null
 }
 
 # Guarded with `|| true` — get_ticket_manifest_field/get_epic_manifest_field
@@ -475,8 +491,8 @@ _ensure_manifest
 # crashed between writing the transition and the emission returning (or
 # between the emission returning and clearing the marker — the idem key
 # makes that re-emission a no-op), or ran emit_event and it failed (see
-# "Write the transition" below). Its idem key is derived from CURRENT_REV,
-# the exact revision it was written alongside.
+# "Write the transition" below). Its idem key is derived from the rev read
+# in the same jq snapshot as the event — the revision it was written with.
 #
 # The marker is cleared only once the event is in the outbox. If the replay
 # fails, flow.sh refuses this invocation with exit 12 and changes nothing:
@@ -485,14 +501,17 @@ _ensure_manifest
 # exception is exit 3 (event not in workflow.json's vocabulary any more),
 # which no retry can fix — that is logged as EMIT_DROPPED and cleared, so a
 # vocabulary edit cannot wedge a ticket.
-_PENDING_JSON=$(_manifest_get pending_event) || true
+_PENDING_SNAPSHOT=$(_manifest_pending_snapshot) || true
+_PENDING_JSON=$(echo "${_PENDING_SNAPSHOT:-null}" | jq -c '.pending // empty' 2>/dev/null) || true
+_PENDING_REV=$(echo "${_PENDING_SNAPSHOT:-null}" | jq -r '.rev // empty' 2>/dev/null) || true
+[[ "$_PENDING_REV" =~ ^[0-9]+$ ]] || _PENDING_REV="$CURRENT_REV"
 if ! $DRY_RUN && [ -n "$_PENDING_JSON" ] && [ "$_PENDING_JSON" != "null" ]; then
   _pending_event=$(echo "$_PENDING_JSON" | jq -r '.event // empty' 2>/dev/null)
   _pending_data=$(echo "$_PENDING_JSON" | jq -c '.data // {}' 2>/dev/null)
   _replay_rc=0
   if [ -n "$_pending_event" ]; then
     if declare -f emit_event >/dev/null 2>&1; then
-      emit_event --idem "${TICKET_ID}:${CURRENT_REV}" "$TICKET_ID" "$_pending_event" "$_pending_data" || _replay_rc=$?
+      emit_event --idem "${TICKET_ID}:${_PENDING_REV}" "$TICKET_ID" "$_pending_event" "$_pending_data" || _replay_rc=$?
     else
       _replay_rc=127
     fi
@@ -500,18 +519,18 @@ if ! $DRY_RUN && [ -n "$_PENDING_JSON" ] && [ "$_PENDING_JSON" != "null" ]; then
   case "$_replay_rc" in
   0) ;;
   3)
-    _log "META|flow-warn|warn|EMIT_DROPPED event=${_pending_event} rev=${CURRENT_REV} rc=3 (not in vocabulary)"
+    _log "META|flow-warn|warn|EMIT_DROPPED event=${_pending_event} rev=${_PENDING_REV} rc=3 (not in vocabulary)"
     _hb_gate "flow-warn" "warn" "EMIT_DROPPED" "$(_hb_detail ticket "$TICKET_ID" event "$_pending_event" rc 3)"
     ;;
   *)
-    echo "flow.sh: pending event '${_pending_event}' (rev ${CURRENT_REV}) for ${TICKET_ID} could not be emitted (rc ${_replay_rc}); refusing '${TRIGGER}' so it is not overwritten — retry" >&2
-    _log "META|flow-warn|warn|EMIT_FAILED replay event=${_pending_event} rev=${CURRENT_REV} rc=${_replay_rc}; ${TRIGGER} refused"
+    echo "flow.sh: pending event '${_pending_event}' (rev ${_PENDING_REV}) for ${TICKET_ID} could not be emitted (rc ${_replay_rc}); refusing '${TRIGGER}' so it is not overwritten — retry" >&2
+    _log "META|flow-warn|warn|EMIT_FAILED replay event=${_pending_event} rev=${_PENDING_REV} rc=${_replay_rc}; ${TRIGGER} refused"
     _hb_gate "flow-warn" "warn" "EMIT_FAILED" \
       "$(_hb_detail ticket "$TICKET_ID" event "$_pending_event" rc "$_replay_rc" refused "$TRIGGER")"
     exit 12
     ;;
   esac
-  _manifest_clear_pending 2>/dev/null || true
+  _manifest_clear_pending "$_PENDING_REV" 2>/dev/null || true
 fi
 
 # ── Compute the new (stage, flags) from the manifest and the trigger ───────
@@ -544,6 +563,8 @@ if [ -n "$_EVENT_NAME" ]; then
        else . end))')
 fi
 
+# A prediction, for --dry-run only. The real rev and idem key are the ones
+# the manifest write below reports (MANIFEST_TRANSITION_REV, review ARCH-4).
 NEXT_REV=$((CURRENT_REV + 1))
 IDEM_KEY="${TICKET_ID}:${NEXT_REV}"
 
@@ -594,6 +615,18 @@ if [ "$_set_rc" -ne 0 ]; then
   _log "META|flow-refused|fail|MANIFEST_WRITE_FAILED trigger=${TRIGGER} rc=${_set_rc}"
   exit 1
 fi
+# The rev set_*_transition computed and wrote under the manifest lock. Every
+# later use (idem key, EMIT_FAILED line, the JSON result) names this rev, so
+# the outbox event and the manifest always agree on it.
+if [[ "${MANIFEST_TRANSITION_REV:-}" =~ ^[0-9]+$ ]]; then
+  NEXT_REV="$MANIFEST_TRANSITION_REV"
+  IDEM_KEY="${TICKET_ID}:${NEXT_REV}"
+else
+  # An older manifest-write.sh (a stale synced copy) does not report the rev.
+  # Fall back to the pre-read prediction, but say so: under concurrency it
+  # may not be the rev that was written.
+  _log "META|flow-warn|warn|REV_UNREPORTED trigger=${TRIGGER} using predicted rev=${NEXT_REV}"
+fi
 
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
@@ -618,7 +651,7 @@ if [ -n "$_EVENT_NAME" ]; then
   fi
 fi
 if [ "$_EMIT_RC" -eq 0 ]; then
-  _manifest_clear_pending 2>/dev/null || true
+  _manifest_clear_pending "$NEXT_REV" 2>/dev/null || true
 else
   echo "flow.sh: event '${_EVENT_NAME}' for ${TICKET_ID} rev ${NEXT_REV} was not emitted (rc ${_EMIT_RC}); kept as pending_event for replay" >&2
   _log "META|flow-warn|warn|EMIT_FAILED event=${_EVENT_NAME} rev=${NEXT_REV} rc=${_EMIT_RC}; kept as pending_event"

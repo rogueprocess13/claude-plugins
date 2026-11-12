@@ -32,12 +32,15 @@ _manifest_atomic_write() {
   local dir
   dir=$(dirname "$path")
   mkdir -p "$dir" || return 1
-  local tmp="$dir/.$(basename "$path").tmp.$$"
+  local tmp="$dir/.$(basename "$path").tmp.${BASHPID:-$$}"
   printf '%s\n' "$content" >"$tmp" || {
     rm -f "$tmp"
     return 1
   }
-  mv -f "$tmp" "$path"
+  mv -f "$tmp" "$path" || {
+    rm -f "$tmp"
+    return 1
+  }
 }
 
 # write_initiative_index <TID> <INIT>
@@ -84,12 +87,28 @@ write_ticket_manifest() {
   write_initiative_index "$tid" "$init" || return 1
 
   local manifest_path="$repos_root/.ticket-auto/initiatives/$init/tickets/$tid/planner/manifest.json"
-  local content
-  content=$(jq -nc \
+  # A re-run on an existing manifest (planner resume) refreshes only the
+  # fields creation owns and keeps everything the pipeline has written since
+  # — rev, stage, flags, pending_event, approved, ready, a dispatch stamp.
+  # Replacing the whole file restarted rev at 1, and the next `{tid}:1` idem
+  # key then collided with an event already in the outbox (review ARCH-4).
+  # The jq runs on the file read under the lock, or on `{}` for a new one.
+  local rc=0 base content
+  _manifest_lock "$manifest_path" || return 1
+  base='{}'
+  if [ -f "$manifest_path" ]; then
+    base=$(jq -c 'if type == "object" then . else {} end' "$manifest_path" 2>/dev/null) || base='{}'
+  fi
+  if content=$(jq -c \
     --arg type "$type" --arg init "$init" --argjson blocked_by "$blocked_by" \
-    '{type: $type, initiative: $init, blocked_by: $blocked_by, dispatch: false}') || return 1
-
-  _manifest_atomic_write "$manifest_path" "$content"
+    '. + {type: $type, initiative: $init, blocked_by: $blocked_by}
+     | .dispatch = (.dispatch // false)' <<<"$base"); then
+    _manifest_atomic_write "$manifest_path" "$content" || rc=$?
+  else
+    rc=1
+  fi
+  _manifest_unlock
+  return "$rc"
 }
 
 # write_epic_manifest <EPIC> <BRANCH> <UAT_POLICY> <MERGE_POLICY> [children_json_array]
@@ -105,27 +124,39 @@ write_epic_manifest() {
     return 3
   }
 
-  # Preserve existing children[] on refresh unless explicitly overridden —
-  # ensure_epic_branch's drift-refresh (task 2.3) rewrites branch/uat/merge
-  # without truncating a children list Ticket Gen has been appending to.
-  if [ -z "$children" ]; then
-    children=$(get_epic_manifest_field "$epic" children 2>/dev/null)
-    [ -n "$children" ] || children='[]'
-  fi
-
-  if ! echo "$children" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  if [ -n "$children" ] && ! echo "$children" | jq -e 'type == "array"' >/dev/null 2>&1; then
     echo "manifest-write: children must be a JSON array, got '$children'" >&2
     return 3
   fi
 
   local manifest_path="$repos_root/.ticket-auto/initiatives/$epic/epic/manifest.json"
-  local content
-  content=$(jq -nc \
+  _manifest_lock "$manifest_path" || return 1
+
+  # Preserve existing children[] on refresh unless explicitly overridden —
+  # ensure_epic_branch's drift-refresh (task 2.3) rewrites branch/uat/merge
+  # without truncating a children list Ticket Gen has been appending to.
+  # Read under the lock, so a concurrent add_epic_manifest_child is kept.
+  if [ -z "$children" ]; then
+    children=$(jq -c '.children // [] | if type == "array" then . else [] end' "$manifest_path" 2>/dev/null) || children='[]'
+    [ -n "$children" ] || children='[]'
+  fi
+
+  # Like write_ticket_manifest, a refresh merges the fields this writer owns
+  # into the existing object and keeps dispatch/stage/rev/pending_event.
+  local base='{}' content rc=0
+  if [ -f "$manifest_path" ]; then
+    base=$(jq -c 'if type == "object" then . else {} end' "$manifest_path" 2>/dev/null) || base='{}'
+  fi
+  content=$(jq -c \
     --arg branch "$branch" --arg uat "$uat_policy" --arg merge "$merge_policy" \
     --argjson children "$children" \
-    '{branch: $branch, uat_policy: $uat, merge_policy: $merge, children: $children}') || return 1
+    '. + {branch: $branch, uat_policy: $uat, merge_policy: $merge, children: $children}' <<<"$base") || rc=1
 
-  _manifest_atomic_write "$manifest_path" "$content"
+  if [ "$rc" -eq 0 ]; then
+    _manifest_atomic_write "$manifest_path" "$content" || rc=$?
+  fi
+  _manifest_unlock
+  return "$rc"
 }
 
 # add_epic_manifest_child <EPIC> <CHILD_TID>
@@ -141,12 +172,8 @@ add_epic_manifest_child() {
   local manifest_path="$repos_root/.ticket-auto/initiatives/$epic/epic/manifest.json"
   [ -f "$manifest_path" ] || return 1
 
-  local content
-  content=$(jq -c --arg child "$child" \
-    '.children = ((.children // []) + [$child] | unique)' \
-    "$manifest_path") || return 1
-
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.children = ((.children // []) + [$child] | unique)' \
+    --arg child "$child"
 }
 
 # stamp_ticket_dispatch <TID>
@@ -163,9 +190,7 @@ stamp_ticket_dispatch() {
   current=$(get_ticket_manifest_field "$tid" dispatch 2>/dev/null)
   [ "$current" = "true" ] && return 0
 
-  local content
-  content=$(jq -c '.dispatch = true' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.dispatch = true'
 }
 
 # stamp_epic_dispatch <EPIC>
@@ -182,9 +207,7 @@ stamp_epic_dispatch() {
   current=$(get_epic_manifest_field "$epic" dispatch 2>/dev/null)
   [ "$current" = "true" ] && return 0
 
-  local content
-  content=$(jq -c '.dispatch = true' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.dispatch = true'
 }
 
 # backfill_ticket_fields <TID> <TYPE> <INITIATIVE> <BLOCKED_BY_JSON> <FLAGS_JSON>
@@ -215,16 +238,13 @@ backfill_ticket_fields() {
     return 3
   fi
 
-  local content
-  content=$(jq -c \
-    --arg type "$type" --arg init "$init" \
-    --argjson blocked_by "$blocked_by" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+  _manifest_update "$manifest_path" \
     '(if $type != "" then .type = $type else . end)
      | (if $init != "" then .initiative = $init else . end)
      | .blocked_by = $blocked_by
      | .flags = $flags' \
-    "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+    --arg type "$type" --arg init "$init" \
+    --argjson blocked_by "$blocked_by" --argjson flags "$(echo "$flags" | jq -c 'sort')"
 }
 
 # backfill_epic_manifest <EPIC> <BRANCH> <UAT_POLICY> <MERGE_POLICY> <CHILDREN_JSON>
@@ -263,9 +283,7 @@ write_ticket_outcome_label() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local content
-  content=$(jq -c --arg o "$outcome" '.outcome_label = $o' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.outcome_label = $o' --arg o "$outcome"
 }
 
 # ensure_ticket_manifest <TID>
@@ -301,8 +319,16 @@ ensure_ticket_manifest() {
   manifest_path=$(get_ticket_manifest_path "$tid") || return 1
   [ -f "$manifest_path" ] && return 0
 
-  _manifest_atomic_write "$manifest_path" \
-    '{"type":null,"initiative":null,"blocked_by":[],"dispatch":false}'
+  # Re-check under the lock: two first callers must not both create it, the
+  # second overwriting whatever the first's caller already wrote.
+  local rc=0
+  _manifest_lock "$manifest_path" || return 1
+  if [ ! -f "$manifest_path" ]; then
+    _manifest_atomic_write "$manifest_path" \
+      '{"type":null,"initiative":null,"blocked_by":[],"dispatch":false}' || rc=$?
+  fi
+  _manifest_unlock
+  return "$rc"
 }
 
 # set_ticket_stage <TID> <STAGE>
@@ -322,9 +348,7 @@ set_ticket_stage() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local content
-  content=$(jq -c --arg s "$stage" '.stage = $s' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.stage = $s' --arg s "$stage"
 }
 
 # set_epic_stage <EPIC_ID> <STAGE>
@@ -340,9 +364,7 @@ set_epic_stage() {
   manifest_path=$(get_epic_manifest_path "$epic" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local content
-  content=$(jq -c --arg s "$stage" '.stage = $s' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.stage = $s' --arg s "$stage"
 }
 
 # set_ticket_approval <TID> <true|false> [provenance]
@@ -369,7 +391,6 @@ set_ticket_approval() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local content
   if [ "$approved" = "true" ]; then
     case "$provenance" in
     human | policy) ;;
@@ -378,11 +399,10 @@ set_ticket_approval() {
       return 3
       ;;
     esac
-    content=$(jq -c --arg p "$provenance" '.approved = true | .approval_provenance = $p' "$manifest_path") || return 1
+    _manifest_update "$manifest_path" '.approved = true | .approval_provenance = $p' --arg p "$provenance"
   else
-    content=$(jq -c 'del(.approved, .approval_provenance)' "$manifest_path") || return 1
+    _manifest_update "$manifest_path" 'del(.approved, .approval_provenance)'
   fi
-  _manifest_atomic_write "$manifest_path" "$content"
 }
 
 # set_ticket_transition <TID> <STAGE> <FLAGS_JSON> <PENDING_JSON>
@@ -393,8 +413,55 @@ set_ticket_approval() {
 # is either a JSON object (the event about to be emitted) or an empty string
 # to clear `pending_event`. No-op (exit 1) if no manifest exists yet —
 # callers call ensure_ticket_manifest first.
+#
+# `rev` is read and bumped under the manifest lock, and the rev actually
+# written is left in the global MANIFEST_TRANSITION_REV (review ARCH-4).
+# flow.sh builds its idempotency key `{tid}:{rev}` from that value, never
+# from a rev it read earlier: two overlapping transitions computing the same
+# "current + 1" would otherwise share an idem key, and emit_event would drop
+# the second one as a duplicate. It is a variable, not stdout, because
+# flow.sh's stdout is its JSON result. Unset/empty on any failure.
 set_ticket_transition() {
-  local tid="$1" stage="$2" flags="$3" pending="${4:-}"
+  MANIFEST_TRANSITION_REV=""
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$1" 2>/dev/null) || return 1
+  _manifest_write_transition "$manifest_path" "$2" "$3" "${4:-}"
+}
+
+# clear_pending_event <TID> [EXPECTED_REV]
+# Single atomic write removing `pending_event` once its emission has
+# returned (tracker-flow-projection-cutover). With EXPECTED_REV, removes it
+# only while the manifest's `rev` still equals EXPECTED_REV — the rev the
+# emitted event was written with — so a clear can never remove a newer
+# transition's pending event (exit 0 either way). No-op (exit 1) if no
+# manifest exists yet.
+clear_pending_event() {
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$1" 2>/dev/null) || return 1
+  _manifest_drop_pending "$manifest_path" "${2:-}"
+}
+
+# set_epic_transition <EPIC> <STAGE> <FLAGS_JSON> <PENDING_JSON>
+# Epic-manifest equivalent of set_ticket_transition (also sets
+# MANIFEST_TRANSITION_REV).
+set_epic_transition() {
+  MANIFEST_TRANSITION_REV=""
+  local manifest_path
+  manifest_path=$(get_epic_manifest_path "$1" 2>/dev/null) || return 1
+  _manifest_write_transition "$manifest_path" "$2" "$3" "${4:-}"
+}
+
+# clear_epic_pending_event <EPIC> [EXPECTED_REV]
+clear_epic_pending_event() {
+  local manifest_path
+  manifest_path=$(get_epic_manifest_path "$1" 2>/dev/null) || return 1
+  _manifest_drop_pending "$manifest_path" "${2:-}"
+}
+
+# _manifest_write_transition <manifest_path> <STAGE> <FLAGS_JSON> <PENDING_JSON>
+# Shared body of set_ticket_transition/set_epic_transition.
+_manifest_write_transition() {
+  local manifest_path="$1" stage="$2" flags="$3" pending="${4:-}"
   # An empty stage means "leave stage as it currently is" — a trigger
   # declaring to:null on a ticket that has never had a stage set at all
   # (e.g. needs-info hand-applied to an ad-hoc ticket before appraise-start
@@ -408,134 +475,151 @@ set_ticket_transition() {
     echo "manifest-write: pending_event must be a JSON object, got '$pending'" >&2
     return 3
   fi
-
-  local manifest_path
-  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local current_rev next_rev
-  current_rev=$(get_ticket_manifest_field "$tid" rev 2>/dev/null)
-  [[ "$current_rev" =~ ^[0-9]+$ ]] || current_rev=0
-  next_rev=$((current_rev + 1))
-
+  local sorted_flags
+  sorted_flags=$(echo "$flags" | jq -c 'sort') || return 1
   local stage_filter='.'
   [ -n "$stage" ] && stage_filter='.stage = $s'
+  local pending_filter='del(.pending_event)'
+  [ -n "$pending" ] && pending_filter='.pending_event = $pending'
+  [ -n "$pending" ] || pending='null'
 
-  local content
-  if [ -n "$pending" ]; then
-    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
-      --argjson rev "$next_rev" --argjson pending "$pending" \
-      "$stage_filter"' | .flags = $flags | .rev = $rev | .pending_event = $pending' \
-      "$manifest_path") || return 1
-  else
-    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
-      --argjson rev "$next_rev" \
-      "$stage_filter"' | .flags = $flags | .rev = $rev | del(.pending_event)' \
-      "$manifest_path") || return 1
-  fi
-  _manifest_atomic_write "$manifest_path" "$content"
-}
-
-# clear_pending_event <TID>
-# Single atomic write removing `pending_event` once its emission has
-# returned (tracker-flow-projection-cutover). No-op (exit 1) if no manifest
-# exists yet.
-clear_pending_event() {
-  local tid="$1"
-  local manifest_path
-  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
-  [ -f "$manifest_path" ] || return 1
-
-  local content
-  content=$(jq -c 'del(.pending_event)' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
-}
-
-# set_epic_transition <EPIC> <STAGE> <FLAGS_JSON> <PENDING_JSON>
-# Epic-manifest equivalent of set_ticket_transition.
-set_epic_transition() {
-  local epic="$1" stage="$2" flags="$3" pending="${4:-}"
-  # See set_ticket_transition's identical comment — an empty stage means
-  # "leave stage as it currently is".
-  if ! echo "$flags" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    echo "manifest-write: flags must be a JSON array, got '$flags'" >&2
-    return 3
-  fi
-  if [ -n "$pending" ] && ! echo "$pending" | jq -e 'type == "object"' >/dev/null 2>&1; then
-    echo "manifest-write: pending_event must be a JSON object, got '$pending'" >&2
-    return 3
-  fi
-
-  local manifest_path
-  manifest_path=$(get_epic_manifest_path "$epic" 2>/dev/null) || return 1
-  [ -f "$manifest_path" ] || return 1
-
-  local current_rev next_rev
-  current_rev=$(get_epic_manifest_field "$epic" rev 2>/dev/null)
+  _manifest_lock "$manifest_path" || return 1
+  local current_rev content rc=0
+  current_rev=$(jq -r '.rev // 0' "$manifest_path" 2>/dev/null) || current_rev=0
   [[ "$current_rev" =~ ^[0-9]+$ ]] || current_rev=0
-  next_rev=$((current_rev + 1))
-
-  local stage_filter='.'
-  [ -n "$stage" ] && stage_filter='.stage = $s'
-
-  local content
-  if [ -n "$pending" ]; then
-    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
-      --argjson rev "$next_rev" --argjson pending "$pending" \
-      "$stage_filter"' | .flags = $flags | .rev = $rev | .pending_event = $pending' \
-      "$manifest_path") || return 1
+  local next_rev=$((current_rev + 1))
+  if content=$(jq -c --arg s "$stage" --argjson flags "$sorted_flags" \
+    --argjson rev "$next_rev" --argjson pending "$pending" \
+    "$stage_filter"' | .flags = $flags | .rev = $rev | '"$pending_filter" \
+    "$manifest_path"); then
+    _manifest_atomic_write "$manifest_path" "$content" || rc=$?
   else
-    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
-      --argjson rev "$next_rev" \
-      "$stage_filter"' | .flags = $flags | .rev = $rev | del(.pending_event)' \
-      "$manifest_path") || return 1
+    rc=1
   fi
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_unlock
+  [ "$rc" -eq 0 ] && MANIFEST_TRANSITION_REV="$next_rev"
+  return "$rc"
 }
 
-# clear_epic_pending_event <EPIC>
-clear_epic_pending_event() {
-  local epic="$1"
-  local manifest_path
-  manifest_path=$(get_epic_manifest_path "$epic" 2>/dev/null) || return 1
+# _manifest_drop_pending <manifest_path> [EXPECTED_REV]
+_manifest_drop_pending() {
+  local manifest_path="$1" expected="${2:-}"
   [ -f "$manifest_path" ] || return 1
-
-  local content
-  content=$(jq -c 'del(.pending_event)' "$manifest_path") || return 1
-  _manifest_atomic_write "$manifest_path" "$content"
+  if [ -n "$expected" ]; then
+    [[ "$expected" =~ ^[0-9]+$ ]] || {
+      echo "manifest-write: expected rev must be an integer, got '$expected'" >&2
+      return 3
+    }
+    _manifest_update "$manifest_path" \
+      'if ((.rev // 0) | tostring) == $rev then del(.pending_event) else . end' --arg rev "$expected"
+  else
+    _manifest_update "$manifest_path" 'del(.pending_event)'
+  fi
 }
 
-# ── Readiness lock (blocking flock, FD 200) ─────────────────────────────────
-# Serializes set_ticket_readiness/waive_ticket_readiness_code's
-# read-modify-write on a per-ticket `{manifest_path}.lock` file
-# (dor-readiness-gate-foundation). FD 200 is deliberately distinct from
-# every flock FD already in use in this codebase (events.sh FD 7,
-# board-cursor.sh/run-summary.sh FD 8, adr-store.sh/corrections-parse.sh/
-# guidance-store.sh/verify-lock.sh/flow.sh FD 9) because flow.sh holds FD 9
-# open for its own ticket-flow lock for its entire process lifetime, not
-# transiently like the other FD-9 users above — reusing 9 here would
-# silently steal and then close flow.sh's own lock the instant either
-# readiness writer runs inside the same sourced shell.
-_manifest_readiness_lock() {
-  local lock_file="$1"
+# ── Manifest lock (blocking flock, FD 200) ──────────────────────────────────
+# Every whole-file writer below serialises its read-modify-write on one
+# per-manifest `{manifest_path}.lock` file (review ARCH-4; first introduced
+# for the readiness writers by dor-readiness-gate-foundation). Without it a
+# readiness re-scan overlapping a transition wrote back a stale stage/rev, or
+# a transition wiped a fresh verdict, because each writer reads the file and
+# writes the whole object back. The lock file sits beside the manifest, not
+# in it: `_manifest_atomic_write` replaces the manifest's inode on every write.
+#
+# FD 200 is deliberately distinct from every flock FD already in use in this
+# codebase (events.sh FD 7, board-cursor.sh/run-summary.sh FD 8,
+# adr-store.sh/corrections-parse.sh/guidance-store.sh/verify-lock.sh/flow.sh
+# FD 9) because flow.sh holds FD 9 open for its own ticket-flow lock for its
+# entire process lifetime — reusing 9 here would silently steal and then
+# close flow.sh's own lock the instant a manifest writer runs inside the same
+# sourced shell.
+#
+# Re-entrant per shell. flock locks belong to an open file description, so a
+# writer that re-opened the lock file while its caller already held it would
+# wait on its own lock until the timeout, and its unlock would close the
+# caller's FD. A nested `_manifest_lock` on the same manifest therefore only
+# counts depth, and the lock is released when the depth returns to 0. A
+# nested lock on a *different* manifest is refused (rc 1): FD 200 holds one
+# lock at a time. No writer in this file calls another writer while holding
+# the lock, so neither case arises today; the guard keeps a future one safe.
+# Re-entrancy is per process (the holder's BASHPID is recorded): a subshell,
+# `( writer ) &` or `$(writer)` alike, takes the lock afresh on a new open
+# file description, so it waits while its parent holds the lock — a
+# `$(writer)` called under a held lock therefore times out instead of
+# writing concurrently. Nothing in this file does that.
+_MANIFEST_LOCK_DEPTH=0
+_MANIFEST_LOCK_HELD=""
+_MANIFEST_LOCK_PID=""
+
+# _manifest_lock <manifest_path>
+_manifest_lock() {
+  local lock_file="${1}.lock"
+  # The hold belongs to the process that took it. A subshell copies the
+  # depth counter but is another process: `( writer ) &` must take the lock
+  # itself, never ride on a parent that may release it mid-write.
+  if [ "${_MANIFEST_LOCK_PID:-}" != "${BASHPID:-$$}" ]; then
+    _MANIFEST_LOCK_DEPTH=0
+    _MANIFEST_LOCK_HELD=""
+  fi
+  if [ "${_MANIFEST_LOCK_DEPTH:-0}" -gt 0 ]; then
+    if [ "$_MANIFEST_LOCK_HELD" = "$lock_file" ]; then
+      _MANIFEST_LOCK_DEPTH=$((_MANIFEST_LOCK_DEPTH + 1))
+      return 0
+    fi
+    echo "manifest-write: refusing to lock ${lock_file} while ${_MANIFEST_LOCK_HELD} is held" >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
   exec 200>"$lock_file" || {
     echo "manifest-write: failed to open lock file ${lock_file}" >&2
     return 1
   }
   if ! flock -w "${MANIFEST_LOCK_TIMEOUT_SECS:-15}" 200; then
-    echo "manifest-write: lock timeout acquiring readiness lock (${lock_file})" >&2
-    exec 200>&-
+    echo "manifest-write: lock timeout acquiring manifest lock (${lock_file})" >&2
+    { exec 200>&-; } 2>/dev/null || true
     return 1
   fi
+  _MANIFEST_LOCK_HELD="$lock_file"
+  _MANIFEST_LOCK_PID="${BASHPID:-$$}"
+  _MANIFEST_LOCK_DEPTH=1
 }
 
-# _manifest_readiness_unlock — releases the lock acquired by
-# _manifest_readiness_lock.
-_manifest_readiness_unlock() {
+# _manifest_unlock — releases one level of _manifest_lock; closes FD 200
+# (dropping the flock) only at depth 0.
+_manifest_unlock() {
+  # A depth inherited from a parent process is not ours to release.
+  [ "${_MANIFEST_LOCK_PID:-}" = "${BASHPID:-$$}" ] || return 0
+  [ "${_MANIFEST_LOCK_DEPTH:-0}" -gt 0 ] || return 0
+  _MANIFEST_LOCK_DEPTH=$((_MANIFEST_LOCK_DEPTH - 1))
+  [ "$_MANIFEST_LOCK_DEPTH" -eq 0 ] || return 0
+  _MANIFEST_LOCK_HELD=""
+  _MANIFEST_LOCK_PID=""
   # The group scopes 2>/dev/null to the close. A bare `exec 200>&- 2>/dev/null`
   # would also redirect the caller shell's own stderr to /dev/null for good.
   { exec 200>&-; } 2>/dev/null || true
+}
+
+# _manifest_update <manifest_path> <jq_filter> [jq args...]
+# The shared locked read-modify-write: under the manifest lock, runs jq with
+# the given filter and args over the current file and writes the result back
+# atomically. Returns 1 when the manifest is missing, jq fails or the write
+# fails; the file is left untouched on any failure.
+_manifest_update() {
+  local manifest_path="$1" filter="$2"
+  shift 2
+  _manifest_lock "$manifest_path" || return 1
+  local content rc=0
+  if [ ! -f "$manifest_path" ]; then
+    rc=1
+  elif content=$(jq -c "$@" "$filter" "$manifest_path"); then
+    _manifest_atomic_write "$manifest_path" "$content" || rc=$?
+  else
+    rc=1
+  fi
+  _manifest_unlock
+  return "$rc"
 }
 
 # set_ticket_readiness <TID> <status|ready|not-ready> <missing_json> <advisory_json> [<extras_json>]
@@ -550,7 +634,7 @@ _manifest_readiness_unlock() {
 # clear a waiver because this function never receives one (design.md
 # Decision 2, revised 2026-09-27 — the original draft's single `[waived_json]`
 # parameter let a re-scan silently clobber an operator's waiver). Serializes
-# under the readiness lock with waive_ticket_readiness_code so the two
+# under the manifest lock with waive_ticket_readiness_code so the two
 # writers cannot lose one another's update. No-op (exit 1) if no manifest
 # exists yet — callers call ensure_ticket_manifest first.
 #
@@ -643,7 +727,7 @@ set_ticket_readiness() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+  _manifest_lock "$manifest_path" || return 1
 
   local waived
   waived=$(jq -c '.ready.waived // {}' "$manifest_path" 2>/dev/null) || waived='{}'
@@ -730,12 +814,12 @@ set_ticket_readiness() {
        + (if $lineage != null then {lineage: $lineage} else {} end)
        + (if ($dem_codes | length) > 0 then {demoted: $demoted} else {} end))' \
     "$manifest_path") || {
-    _manifest_readiness_unlock
+    _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
-  _manifest_readiness_unlock
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
+  _manifest_unlock
   return "$write_rc"
 }
 
@@ -743,7 +827,7 @@ set_ticket_readiness() {
 # The only writer that adds to `ready.waived`. Merges one waiver in and
 # recomputes `status` from the manifest's own current `ready.missing` against
 # the updated waiver set — never touches `missing`, `advisory`, or any other
-# code's waiver. Serializes under the same readiness lock as
+# code's waiver. Serializes under the same manifest lock as
 # set_ticket_readiness. No-op (exit 1) if no manifest exists yet.
 waive_ticket_readiness_code() {
   local tid="$1" code="$2" by="$3" reason="${4:-}"
@@ -769,7 +853,7 @@ waive_ticket_readiness_code() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+  _manifest_lock "$manifest_path" || return 1
 
   local content write_rc
   content=$(jq -c \
@@ -777,12 +861,12 @@ waive_ticket_readiness_code() {
     '.ready.waived = ((.ready.waived // {}) + {($code): {by: $by, reason: $reason}})
      | .ready.status = (if (((.ready.missing // []) - (.ready.waived | keys)) == []) then "ready" else "not-ready" end)' \
     "$manifest_path") || {
-    _manifest_readiness_unlock
+    _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
-  _manifest_readiness_unlock
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
+  _manifest_unlock
   return "$write_rc"
 }
 
@@ -846,10 +930,10 @@ set_ticket_semantic() {
   local new_semantic_codes
   new_semantic_codes=$(dor_semantic_blocking_codes "$semantic_json") || return 1
 
-  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+  _manifest_lock "$manifest_path" || return 1
 
   if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
-    _manifest_readiness_unlock
+    _manifest_unlock
     echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
     return 3
   fi
@@ -863,12 +947,12 @@ set_ticket_semantic() {
      | .ready.semantic = $semantic
      | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
     "$manifest_path") || {
-    _manifest_readiness_unlock
+    _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
-  _manifest_readiness_unlock
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
+  _manifest_unlock
   return "$write_rc"
 }
 
@@ -879,7 +963,7 @@ set_ticket_semantic() {
 # first_audit, policy}`. Called only by dor-semantic.sh (dor_semantic_apply,
 # dor_semantic_migrate_v2). Requires an existing `ready` object (exit 3,
 # nothing written, when absent — same as set_ticket_semantic). Replaces
-# `ready.lineage` wholesale under the readiness lock and touches nothing else:
+# `ready.lineage` wholesale under the manifest lock and touches nothing else:
 # not `missing`, not `status`, not `semantic`. set_ticket_semantic never
 # touches lineage and set_ticket_readiness copies it forward, so a fresh
 # `unavailable` verdict (planner_refinement_unavailable) keeps the rounds.
@@ -895,22 +979,22 @@ set_ticket_lineage() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+  _manifest_lock "$manifest_path" || return 1
 
   if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
-    _manifest_readiness_unlock
+    _manifest_unlock
     echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
     return 3
   fi
 
   local content write_rc
   content=$(jq -c --argjson lineage "$lineage_json" '.ready.lineage = $lineage' "$manifest_path") || {
-    _manifest_readiness_unlock
+    _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
-  _manifest_readiness_unlock
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
+  _manifest_unlock
   return "$write_rc"
 }
 
@@ -918,7 +1002,7 @@ set_ticket_lineage() {
 # The only writer of `ready.demoted` (planner-refinement-convergence D5).
 # <demotions_json> is an object `{CODE: {by, reason, quote, body_hash,
 # evaluator}}`; `by` and `body_hash` are required strings. Under the
-# readiness lock it merges the entries into `ready.demoted`, moves each code
+# manifest lock it merges the entries into `ready.demoted`, moves each code
 # from `missing` to `advisory` (appended once, only when it was in
 # `missing`) and recomputes `status` against the existing waivers. Exit 3,
 # nothing written, when the argument is malformed, when there is no `ready`
@@ -949,17 +1033,17 @@ set_ticket_demotions() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+  _manifest_lock "$manifest_path" || return 1
 
   if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
-    _manifest_readiness_unlock
+    _manifest_unlock
     echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
     return 3
   fi
   if ! jq -e --argjson d "$demotions_json" \
     '(.ready.body_hash // null) as $h | $h != null and all($d[]; .body_hash == $h)' \
     "$manifest_path" >/dev/null 2>&1; then
-    _manifest_readiness_unlock
+    _manifest_unlock
     echo "manifest-write: ticket $tid demotion body_hash does not match ready.body_hash" >&2
     return 3
   fi
@@ -975,12 +1059,12 @@ set_ticket_demotions() {
      | .ready.missing = ($m - $codes)
      | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
     "$manifest_path") || {
-    _manifest_readiness_unlock
+    _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
-  _manifest_readiness_unlock
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
+  _manifest_unlock
   return "$write_rc"
 }
 
@@ -996,12 +1080,8 @@ add_ticket_blocked_by() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
-  local content
-  content=$(jq -c --arg blocker "$blocker" \
-    '.blocked_by = ((.blocked_by // []) + [$blocker] | unique)' \
-    "$manifest_path") || return 1
-
-  _manifest_atomic_write "$manifest_path" "$content"
+  _manifest_update "$manifest_path" '.blocked_by = ((.blocked_by // []) + [$blocker] | unique)' \
+    --arg blocker "$blocker"
 }
 
 # ── Self-test mode ────────────────────────────────────────────────────────
