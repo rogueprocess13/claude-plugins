@@ -318,6 +318,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-linear-api.sh
 	bash ticket-planner/lib/tests/test-planner-linear-transport.sh
 	bash ticket-planner/lib/tests/test-planner-stop-conditions.sh
+	bash ticket-planner/lib/tests/test-planner-completed-render.sh
 	bash ticket-planner/lib/tests/test-planner-project-gate.sh
 	bash ticket-planner/lib/tests/test-planner-config-durability.sh
 	bash ticket-planner/lib/tests/test-planner-transitions.sh

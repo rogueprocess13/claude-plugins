@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.43.1 (2026-11-12) — COMPLETED.md rendered by bash (DET-PL-4)
+
+### Changed
+
+- COMPLETED.md is now rendered deterministically by `lib/planner-completed.sh` (`planner_completed_render <INIT>`, also a CLI; review finding DET-PL-4) from the state log, the epic manifest and `fleet-features.sh --json --no-env`, under the same six headings. The Completed agent only runs the renderer, and `FLEET_AUTO_DISPATCH` is no longer read from the agent's environment. With no EPIC_ID it writes nothing and exits 1, so `planner_completion_verify` still fails. The planner now runs one fleet-controller script; if neither the checkout nor the plugin cache has it, the summary reports "unknown" with a warning.
+
 ## ticket-planner 0.43.0 (2026-11-12) — goldfish review wired (off by default)
 
 planner-goldfish-review PR B of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.
