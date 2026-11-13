@@ -250,6 +250,33 @@ planner_sibling_citation_rule() {
 RULE
 }
 
+# planner_sibling_citation_consensus_section <initiative_id> — the Consensus
+# prompt's section on citations: the sibling marker rule, and a re-run of the
+# citation linter after Consensus edits a spec (rehearsal F38: Consensus moved
+# a script to an earlier ticket and nothing re-linted the later spec).
+planner_sibling_citation_consensus_section() {
+  local initiative_id="$1"
+  cat <<SECTION
+## A spec edit keeps its citations valid
+
+When an edit adds or changes an entry in a spec's \`## Signals\` \`TargetSymbols\`
+(a new file, a file moved to another ticket, a script a sibling now owns), the
+entry follows the Specify grammar: annotations on the \`Name\` side, and
+
+$(planner_sibling_citation_rule)
+
+After your last spec edit, run the citation linter Crosscheck runs and fix
+what it reports in the files you edited (up to 3 passes):
+
+\`\`\`bash
+$(_planner_prompt_repos_root_export)
+CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-citations.sh"
+planner_crosscheck_citations "${initiative_id}"
+\`\`\`
+SECTION
+}
+
 # ── Appraisal ────────────────────────────────────────────────────────────────
 
 planner_prompt_appraisal() {
@@ -1402,23 +1429,7 @@ Every criterion you add or change passes this checklist:
 
 $(planner_ac_checklist)
 
-## A spec edit keeps its citations valid
-
-When an edit adds or changes an entry in a spec's \`## Signals\` \`TargetSymbols\`
-(a new file, a file moved to another ticket, a script a sibling now owns), the
-entry follows the Specify grammar: annotations on the \`Name\` side, and
-
-$(planner_sibling_citation_rule)
-
-After your last spec edit, run the citation linter Crosscheck runs and fix
-what it reports in the files you edited (up to 3 passes):
-
-\`\`\`bash
-$(_planner_prompt_repos_root_export)
-CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
-source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-citations.sh"
-planner_crosscheck_citations "${initiative_id}"
-\`\`\`
+$(planner_sibling_citation_consensus_section "${initiative_id}")
 
 ## Cited artifacts the operator must answer for (#504)
 
