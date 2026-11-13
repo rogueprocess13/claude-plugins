@@ -12,7 +12,7 @@ Profiles are JSON files in `profiles/`. Each profile declares:
 - **Flags** — qualitative flags with a numeric penalty and an optional tier `cap`
 - **Probes** — per-dimension evaluation criteria given to the model
 
-grill-me ships exactly one profile, `product-idea` (1.1.0), with 11 dimensions. Version 1.1.0 added `test_data` (weight 6, not critical): where realistic data for testing comes from — an existing seed or fixture set, a named supplier, or synthetic data. An idea that needs no prepared data marks it present with the exact evidence `_No prepared data needed_`. To keep every weight even, constraints and dependencies went from 8 to 6 and edge_cases from 6 to 4.
+grill-me ships exactly one profile, `product-idea` (1.2.0), with 11 dimensions. Version 1.2.0 (no weight change) renamed Assumptions to "Assumptions & Defaults" and added two probes to it: what already exists in the repository (only what the brief states; never inferred), and tagging chosen defaults as `Default: ...` and unstated codebase claims as `Unverified: ...`. It also added a failure-behaviour probe to Edge Cases: what the user sees when an operation fails, and what state is left behind. A rehearsal intent had claimed an "existing scaffold/test runner" in a repository that held only a README. Version 1.1.0 added `test_data` (weight 6, not critical): where realistic data for testing comes from — an existing seed or fixture set, a named supplier, or synthetic data. An idea that needs no prepared data marks it present with the exact evidence `_No prepared data needed_`. To keep every weight even, constraints and dependencies went from 8 to 6 and edge_cases from 6 to 4.
 
 Adding a consumer (e.g., `code-review`, `incident-analysis`) requires only a new profile file — no engine changes. The renderer has fixed sections for the ten original dimensions; any other profile dimension renders as a generic `## <label>` section between Edge Cases and Assumptions, in profile order. The label has CR/LF and leading `#`/spaces removed. A result with only the ten original dimensions renders byte-identically to before.
 
@@ -104,7 +104,7 @@ The rendered document follows a fixed section order (see `intent-document` capab
 ## Intent Seal
 ```
 
-A profile dimension that is not one of the ten fixed ones above (in `product-idea` 1.1.0,
+A profile dimension that is not one of the ten fixed ones above (in `product-idea` 1.2.0,
 `test_data`) renders generically as `## <label>` with its evidence and clarified answers, in
 profile order, after Edge Cases. A result with no such dimension renders no extra block at all.
 

@@ -17,6 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## grill-me 0.6.0 (2026-11-13) — starting state, defaults and failure behaviour in the product-idea profile
+
+Profile `product-idea` 1.2.0, no weight or critical-set change. A dispatch-rehearsal intent claimed an
+"existing scaffold/test runner" in a repository that held only a README and CLAUDE.md, and the planner
+built on it.
+
+- The Assumptions dimension is now "Assumptions & Defaults". A new probe asks what already exists in
+  the repository the work builds on, accepts only what the brief states, and forbids inferring code
+  the brief does not name.
+- A second probe has the assessor record defaults an answer chose as `Default: ...` and any codebase
+  claim the brief does not state as `Unverified: ...`, never as a fact. They still render under
+  `## Assumptions (require validation)`, which the planner's Appraisal already treats as unknowns.
+- Edge Cases asks what the user sees when an operation fails, and what state is left behind.
+- The dispatch-rehearsal runbook now says to set `GRILL_WORK_DIR` before the grill-me step.
+
 ## 0.117.1 (2026-11-13) — state-root-doctor skips test fixtures, plugin copies and worktrees
 
 `state-root-doctor.sh` scans all of `REPOS_ROOT`. When that folder also holds checkouts with test

@@ -1,7 +1,7 @@
 {
   "id": "product-idea",
   "label": "Product Idea Readiness",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "thresholds": {
     "ready": 80,
     "warn": 55
@@ -111,7 +111,8 @@
         "What happens with empty data?",
         "What happens at scale extremes?",
         "What happens when a dependency is unavailable?",
-        "What are the concurrency and race-condition scenarios?"
+        "What are the concurrency and race-condition scenarios?",
+        "When an operation fails (invalid input, a dependency unavailable, a server error), what does the user see, and what state is left behind?"
       ]
     },
     {
@@ -128,13 +129,15 @@
     },
     {
       "id": "assumptions",
-      "label": "Assumptions",
+      "label": "Assumptions & Defaults",
       "weight": 4,
       "critical": false,
       "probes": [
         "What are you assuming to be true?",
         "Which assumptions, if wrong, would invalidate the approach?",
-        "Have any assumptions been validated?"
+        "Have any assumptions been validated?",
+        "What already exists in the repository this builds on (code, scaffold, test runner, build tooling)? Name only what the brief states, and record it as such. Never infer existing code the brief does not name; if the brief is silent, say the starting state is unstated.",
+        "Where the brief is silent and an answer chose a default, record it in `assumptions` as `Default: ...`. Record any claim about the codebase that the brief does not state as `Unverified: ...`, never as a fact."
       ]
     }
   ],

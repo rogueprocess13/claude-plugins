@@ -15,7 +15,7 @@
     },
     {
       "name": "grill-me",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "source": "./grill-me",
       "description": "Pre-work readiness gate — assesses business ideas against profile-driven dimensions, asks ranked clarification questions interactively, scores readiness deterministically, and produces cryptographically sealed Validated Business Intent documents. Any agent can invoke it before acting."
     },

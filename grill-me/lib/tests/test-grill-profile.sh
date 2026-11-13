@@ -49,10 +49,10 @@ fi
 # ── Shipped profile: test_data dimension (grill-test-data-dimension) ─────────
 echo "=== Shipped profile test_data dimension ==="
 
-if [ "$(echo "$PROFILE_JSON" | jq -r '.version')" = "1.1.0" ]; then
-  pass "shipped profile version is 1.1.0"
+if [ "$(echo "$PROFILE_JSON" | jq -r '.version')" = "1.2.0" ]; then
+  pass "shipped profile version is 1.2.0"
 else
-  fail "shipped profile version is 1.1.0" "got $(echo "$PROFILE_JSON" | jq -r '.version')"
+  fail "shipped profile version is 1.2.0" "got $(echo "$PROFILE_JSON" | jq -r '.version')"
 fi
 
 if [ "$(echo "$PROFILE_JSON" | jq '.dimensions | length')" -eq 11 ]; then
@@ -87,6 +87,32 @@ if echo "$TD_DIM" | jq -e '.probes | any(contains("_No prepared data needed_"))'
   pass "test_data probe carries the _No prepared data needed_ sentinel"
 else
   fail "test_data probe carries the _No prepared data needed_ sentinel" "no matching probe"
+fi
+
+# ── Shipped profile: starting state, defaults, failure behaviour ─────────────
+# A rehearsal brief said nothing about the repo, and the sealed intent still
+# claimed an "existing scaffold/test runner" in an empty repo.
+AS_DIM=$(echo "$PROFILE_JSON" | jq -c '.dimensions[] | select(.id == "assumptions")')
+if [ "$(echo "$AS_DIM" | jq -r '.label')" = "Assumptions & Defaults" ]; then
+  pass "assumptions: label Assumptions & Defaults"
+else
+  fail "assumptions: label Assumptions & Defaults" "got: $(echo "$AS_DIM" | jq -r '.label')"
+fi
+if echo "$AS_DIM" | jq -e '.probes | any(contains("already exists in the repository") and contains("Never infer existing code"))' >/dev/null 2>&1; then
+  pass "assumptions probe asks for the starting state and forbids inferring code"
+else
+  fail "assumptions probe asks for the starting state and forbids inferring code" "no matching probe"
+fi
+if echo "$AS_DIM" | jq -e '.probes | any(contains("`Default: ...`") and contains("`Unverified: ...`"))' >/dev/null 2>&1; then
+  pass "assumptions probe tags defaults and unverified codebase claims"
+else
+  fail "assumptions probe tags defaults and unverified codebase claims" "no matching probe"
+fi
+EC_DIM=$(echo "$PROFILE_JSON" | jq -c '.dimensions[] | select(.id == "edge_cases")')
+if echo "$EC_DIM" | jq -e '.probes | any(contains("When an operation fails") and contains("what does the user see"))' >/dev/null 2>&1; then
+  pass "edge_cases probe asks what the user sees when an operation fails"
+else
+  fail "edge_cases probe asks what the user sees when an operation fails" "no matching probe"
 fi
 
 CRIT_SET=$(echo "$PROFILE_JSON" | jq -r '[.dimensions[] | select(.critical) | .id] | sort | join(",")')
