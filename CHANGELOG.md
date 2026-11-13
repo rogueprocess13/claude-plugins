@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.117.2 (2026-11-13) — dispatch-rehearsal iteration 05 findings (ticket-planner 0.43.2)
+
+Six findings from the fifth dispatch-rehearsal run and its same-intent rerun.
+
+- **Scan prompt names each gap's codes (F47).** A scan marked `GAP_REQUIREMENT_COMPLETENESS: finding`
+  and backed it with a `TEST_DATA_GAP` finding. The evidence check accepts only that gap's own codes,
+  so the spec got `SEMANTIC_UNVERIFIED`, which no revision can clear, and the initiative halted. The
+  prompt now lists the codes per gap (`_dor_semantic_gap_rule`, built from `DOR_SEMANTIC_CODES`). The
+  check itself is unchanged and the evaluator stays `dor-semantic-v4`.
+- **ticket-planner 0.43.2.** Synthesized test-data specs get the foreign-key criterion only for
+  record-shaped data (F42). "The file does not contain `<literal>`" is a statement about a document,
+  not implied test data (F39). Specify and Consensus list every sibling a spec builds on as a direct
+  blocker (F43), cite a file a sibling creates as `Name (new in <slug>):path`, and Consensus re-runs
+  the citation linter after its spec edits (F38).
+- **Rehearsal runbook (F46).** The rehearsal folder lives outside `REPOS_ROOT`. Under it, a planner
+  agent read the earlier findings and shaped its specs to them. The runbook also says how to rerun
+  the same intent when the run halted before `--create`.
+
 ## grill-me 0.6.0 (2026-11-13) — starting state, defaults and failure behaviour in the product-idea profile
 
 Profile `product-idea` 1.2.0, no weight or critical-set change. A dispatch-rehearsal intent claimed an

@@ -140,7 +140,9 @@ position on every semantic question, and `dor_semantic_apply` checks that a gap 
 ↔ `requirement_completeness`/`MISSING_CORE_AC` or `NEEDS_HUMAN_DECISION`,
 `GAP_CONTRADICTORY_REQUIREMENTS` ↔ `acceptance_criteria`/`CONTRADICTORY_REQUIREMENTS`,
 `GAP_DEEP_SCOPE_AMBIGUITY` ↔ `scope`/`SCOPE_AMBIGUOUS`, `GAP_EDGE_CASE_SUFFICIENCY` ↔
-`edge_cases`/`EDGE_CASE_GAP`) — a mismatch adds `SEMANTIC_UNVERIFIED`.
+`edge_cases`/`EDGE_CASE_GAP`) — a mismatch adds `SEMANTIC_UNVERIFIED`. The scan prompt
+lists the same pairs (`_dor_semantic_gap_rule`) and says a finding with any other code does
+not back a gap. It changes no code, schema or verdict, so the evaluator stays `dor-semantic-v4`.
 
 ### Audit block (Schema-Version 1)
 

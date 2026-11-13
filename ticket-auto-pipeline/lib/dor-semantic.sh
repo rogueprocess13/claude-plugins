@@ -140,7 +140,8 @@ DOR_SEMANTIC_GAPS="GAP_REQUIREMENT_COMPLETENESS GAP_CONTRADICTORY_REQUIREMENTS G
 # and lineage, the scoped-rescan hint; an unchanged v2 verdict is migrated in
 # place by dor_semantic_migrate_v2 rather than rescanned. v4
 # (dor-semantic-paraphrase): the scan's required PARAPHRASE line and the
-# advisory-only INCOHERENT_CHANGE code.
+# advisory-only INCOHERENT_CHANGE code. The scan's gap rule (rehearsal F47)
+# did not bump it: no code, schema or verdict changed.
 DOR_SEMANTIC_EVALUATOR="dor-semantic-v4"
 
 # Earlier evaluators whose verdict on an unchanged body stays valid without a
@@ -237,6 +238,33 @@ _dor_semantic_gap_dimension() {
   deep_scope_ambiguity) echo "scope" ;;
   edge_case_sufficiency) echo "edge_cases" ;;
   esac
+}
+
+# _dor_semantic_gap_rule
+# Prints the scan prompt's list of the codes that back each GAP_* line, built
+# from the tables dor_semantic_findings' evidence check reads. Without it a
+# scan backs a gap with another dimension's finding: SEMANTIC_UNVERIFIED.
+_dor_semantic_gap_rule() {
+  local g gap dim code codes
+  printf '%s\n' \
+    'A GAP_* line says `finding` only when this block carries a finding with' \
+    "one of that gap's own codes:" ''
+  for g in $DOR_SEMANTIC_GAPS; do
+    gap=$(printf '%s' "${g#GAP_}" | tr '[:upper:]' '[:lower:]')
+    dim=$(_dor_semantic_gap_dimension "$gap")
+    codes=""
+    for code in "${DOR_SEMANTIC_CODE_ORDER[@]}"; do
+      [ "${DOR_SEMANTIC_CODES[$code]:-}" = "$dim" ] || continue
+      codes="${codes:+${codes} or }${code}"
+    done
+    printf -- '- %s: %s\n' "$g" "$codes"
+  done
+  printf '%s\n' '' \
+    'If a gap is real, first write a finding with one of its codes (quote and' \
+    'detail), then mark the gap `finding`. A finding with any other code does' \
+    'not back a gap: keep that finding, and judge the gap on its own codes' \
+    'alone. Mark a gap `clear` only when none of its codes applies. Never' \
+    'change a verdict to `clear` to satisfy this rule.'
 }
 
 # _dor_semantic_normalise <text>
@@ -1222,9 +1250,12 @@ findings — take an explicit position on each. Number findings FINDING_1,
 FINDING_2, ... in the precedence order above; omit FINDING_n_QUOTE_B unless
 the code is CONTRADICTORY_REQUIREMENTS.
 
+@@GAP_RULE@@
+
 Then return exactly one line: DOR_SEMANTIC scan written <result-file path>
 DORSCAN
     ) || kind_rules=""
+    kind_rules="${kind_rules//@@GAP_RULE@@/"$(_dor_semantic_gap_rule)"}"
   else
     kind_rules=$(
       cat <<'DORAUDIT'
