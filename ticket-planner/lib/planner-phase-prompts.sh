@@ -219,6 +219,37 @@ planner_ac_checklist() {
   done
 }
 
+# planner_sibling_blocker_rule — a spec that takes a file, module, route or
+# page from a sibling ticket names that sibling as a direct blocker (rehearsal
+# F43). The Definition-of-Ready evaluator reads one ticket body: a blocker
+# reached only through another blocker reads as UNSTATED_DEPENDENCY there,
+# and that code is structural, so no revise round can clear it.
+planner_sibling_blocker_rule() {
+  cat <<'RULE'
+   **Every sibling a spec builds on is a direct blocker.** When a spec's prose
+   (behaviour, `## Technical Context`, `## Proposed Changes`) says a file,
+   module, route, page or script comes from another ticket in this initiative,
+   that spec carries `blocked-by:<that sibling's slug>` — also when one of its
+   other blockers already depends on that sibling. The readiness evaluator
+   reads one ticket at a time and cannot follow a chain; a blocker that is only
+   transitive halts the ticket as an unstated dependency.
+RULE
+}
+
+# planner_sibling_citation_rule — how TargetSymbols cites a file an earlier
+# ticket in this initiative creates (rehearsal F38): `(new)` is for the
+# ticket's own new file; a sibling's is `(new in <slug>)`.
+planner_sibling_citation_rule() {
+  cat <<'RULE'
+- A file this ticket creates is `Name (new):path`. A file an earlier ticket in
+  this initiative creates, which this ticket then reads or extends, is
+  `Name (new in <sibling-slug>):path` — for example
+  `envStart (new in backend-foundation):scripts/env-start.sh`. With no marker
+  the linter looks for the file in the repository today and reports
+  `CITATION_UNRESOLVED`.
+RULE
+}
+
 # ── Appraisal ────────────────────────────────────────────────────────────────
 
 planner_prompt_appraisal() {
@@ -853,6 +884,8 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    \`blocked-by:<ref>\` entry per dependency. \`<ref>\` is either:
    - a **sibling spec slug** in this initiative — the spec filename minus \`.md\`, or an unambiguous \`-\`-bounded prefix of one (\`blocked-by:exc-1\` for \`exc-1-something.md\`); or
    - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
+
+$(planner_sibling_blocker_rule)
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
 5. **## Verification Notes** — a table keyed by each acceptance criterion's verbatim
    text: role, test data, where that data comes from (Source), expected value,
@@ -1129,6 +1162,7 @@ location := [path ':'] line ['-' line2]
   (the latter folds the annotation into the literal filename, which never
   resolves). This one mistake alone caused the majority of Crosscheck
   findings across prior initiatives.
+$(planner_sibling_citation_rule)
 - \`(new ...)\` on the Name side skips the unresolved-path check only — it
   does not skip line-range or symbol-proximity checks once the file exists.
 - Do not cite two symbols against two different line ranges in one compound
@@ -1339,6 +1373,7 @@ sweep would misread.
 $(planner_params_consensus_rule)
 $(planner_ownership_consensus_rule)
 $(planner_acpre_consensus_rule)
+$(planner_sibling_blocker_rule)
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
      and what changed (if anything), naming the acceptance criterion you added or
@@ -1366,6 +1401,24 @@ pass: if a sentence is wrong, change it for that reason and say so in
 Every criterion you add or change passes this checklist:
 
 $(planner_ac_checklist)
+
+## A spec edit keeps its citations valid
+
+When an edit adds or changes an entry in a spec's \`## Signals\` \`TargetSymbols\`
+(a new file, a file moved to another ticket, a script a sibling now owns), the
+entry follows the Specify grammar: annotations on the \`Name\` side, and
+
+$(planner_sibling_citation_rule)
+
+After your last spec edit, run the citation linter Crosscheck runs and fix
+what it reports in the files you edited (up to 3 passes):
+
+\`\`\`bash
+$(_planner_prompt_repos_root_export)
+CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-citations.sh"
+planner_crosscheck_citations "${initiative_id}"
+\`\`\`
 
 ## Cited artifacts the operator must answer for (#504)
 
