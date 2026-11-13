@@ -123,6 +123,12 @@ for s in 'alice' 'welcome-post' 'line item' 'npm' 'make' 'bin/seed' 'GET /api/pr
 done
 _planner_testdata_crit_is_doc_text 'The README states that `x` is local only' &&
   pass "README + states is doc text" || fail "README + states is doc text" "not doc text"
+_planner_testdata_crit_is_doc_text '`dexter-sandbox/CLAUDE.md` does not contain the text `intentionally empty at the start`' &&
+  pass "F39: file + does not contain is doc text" || fail "F39: file + does not contain is doc text" "not doc text"
+_planner_testdata_crit_is_doc_text 'The README lists the commands `npm install` and `npm start`' &&
+  pass "F39: README + lists is doc text" || fail "F39: README + lists is doc text" "not doc text"
+assert_eq "F39: a quoted literal a file must not contain implies no data" \
+  "$(_planner_testdata_implied_match '`dexter-sandbox/CLAUDE.md` does not contain the text `intentionally empty at the start`' "" | cut -d$'\037' -f1)" "none"
 _planner_testdata_crit_is_doc_text 'The `welcome-post` article is listed' &&
   fail "no document named is not doc text" "doc text" || pass "no document named is not doc text"
 _planner_testdata_crit_is_doc_text 'The README states that `jake` logs in and the feed shows' &&

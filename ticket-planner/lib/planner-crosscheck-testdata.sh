@@ -1318,7 +1318,8 @@ _planner_testdata_span_args() {
 # names a document (README, CHANGELOG, docs, documentation, runbook) or a
 # docs/config file (*.md, *.json, *.yml, *.toml, *.env, ...), a content verb
 # follows that name (states, mentions, documents, describes, says,
-# explains, labelled, reads, names, warns, tells, defines, declares), and no
+# explains, labelled, reads, names, warns, tells, defines, declares,
+# contains, includes, lists — rehearsal F39), and no
 # app-behaviour clause is present (shows, returns, renders, displays,
 # appears, loads, responds, redirects, log/sign in). Its quoted spans
 # are then quoted content, not data.
@@ -1327,7 +1328,7 @@ _planner_testdata_crit_is_doc_text() {
   lower=$(_planner_testdata_lower "$1")
   [[ "$lower" =~ (^|[^a-z0-9_])(readme|changelog|docs|documentation|runbook|[a-z0-9_.-]*\.(md|json|ya?ml|toml|ini|cfg|conf|env|txt|xml|properties|lock))([^a-z0-9_]|$) ]] || return 1
   after="${lower#*"${BASH_REMATCH[0]}"}"
-  [[ " $after" =~ [^a-z](states?|stated|mentions?|mentioned|documents?|documented|describes?|described|says|said|explains?|explained|labell?ed|labels?|reads|names|named|warns?|warned|tells?|instructs?|defines?|defined|declares?|declared)([^a-z]|$) ]] || return 1
+  [[ " $after" =~ [^a-z](states?|stated|mentions?|mentioned|documents?|documented|describes?|described|says|said|explains?|explained|labell?ed|labels?|reads|names|named|warns?|warned|tells?|instructs?|defines?|defined|declares?|declared|contains?|contained|containing|includes?|included|lists?|listed)([^a-z]|$) ]] || return 1
   [[ " $lower" =~ [^a-z](shows?|showing|returns?|renders?|rendered|displays?|appears?|loads?|responds?|redirects?|logs?[[:space:]]+in|logging[[:space:]]+in|signs?[[:space:]]+in|signing[[:space:]]+in)([^a-z]|$) ]] && return 1
   return 0
 }
