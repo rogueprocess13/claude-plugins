@@ -9,14 +9,19 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 #700 (ARCH-8), #701 (triage), #702 (PO-9), #703/#710 (DET-SU-1/2), #704 (ARCH-3), #705
 (paraphrase, Step 18 item 2), #706/#709 (Step 12 item 7), #707 (DET-AP-5), #708 (ARCH-4), #711
 (CRITIQUE_NOT_RUN), #712/#714 (goldfish review lens, wired, flag off), #715 (DET-PL-4). Step 9 item 5 was already fixed by #528.
-Every merged change's live check is on the tickets host. Still needs design: ARCH-5, ARCH-9.
+Every merged change's live check is on the tickets host. ARCH-5 and ARCH-9 have since been designed and merged (see below).
 
 **Evening 2026-11-12:** ARCH-9 **merged #717** (board cursors start at the outbox origin sidecar;
 ticket-auto-pipeline 0.116.0 / fleet-controller 0.50.0). Its live check (tasks 5.2–5.4) passed on a
 demo Linear project, so the board pusher now defaults **on**: **merged #718** (fleet-controller
 0.51.0). ARCH-5 design decided by the operator (fleetd fails its boot gate on an anchor mismatch;
 no relocation tool, manual move documented; `FLEET_STATE_DIR` out of scope; strays re-projected by
-hand) and is being built as two PRs (`fix/state-root-anchor`, then `fix/state-root-anchor-fleetd`).
+hand). ARCH-5 **merged #720** (resolver, writers, router preamble, `state-root-doctor.sh`;
+ticket-auto-pipeline 0.117.0 / fleet-controller 0.52.0) and **#721** (fleetd exports the anchored
+log dir and fails its boot gate on an anchor mismatch; fleet-controller 0.53.0). Before upgrading a
+host, run `state-root-doctor.sh` and `fleet-env-check.sh --log-dir`, and confirm fleetd starts with
+`--state-dir` (unchecked in the dexter container). `STATE_ROOT_STRICT` stays off until hosts are
+anchored; flipping it is a later PR.
 
 Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
@@ -1361,8 +1366,9 @@ network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd
   PR each is plausible, ARCH-4 needs a concurrency test.
 - ARCH-5 (cwd-relative `./logs` state root) — **designed** (`openspec/changes/state-root-anchor`,
   anchor file `$REPOS_ROOT/.ticket-auto/log-dir`, nothing moves), operator questions decided
-  2026-11-12, **in progress**: PR A (resolver, writers, preamble, doctor) then PR B (fleetd export
-  and boot gate). Live check on the tickets host after PR B.
+  2026-11-12, **merged**: PR A **#720** (resolver, writers, preamble, doctor) and PR B **#721**
+  (fleetd export and boot gate). Open: live check group 6 on the tickets host, the dexter
+  container's fleetd start config, and the `STATE_ROOT_STRICT=true` flip (later PR).
 - ARCH-9 — **fixed, PR #717** (`board-cursor-first-drain`): `emit_event` writes a per-outbox
   origin sidecar; a board with no cursor starts there (or at the outbox tail), so no drain replays
   pre-0.55.0 history and a new ticket still projects from seq 1. Live check passed (demo Linear
