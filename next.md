@@ -23,6 +23,14 @@ host, run `state-root-doctor.sh` and `fleet-env-check.sh --log-dir`, and confirm
 `--state-dir` (unchecked in the dexter container). `STATE_ROOT_STRICT` stays off until hosts are
 anchored; flipping it is a later PR.
 
+**2026-11-13:** tickets host upgraded to ticket-auto-pipeline 0.117.1 / fleet-controller 0.53.0.
+**#723** (0.117.1): `state-root-doctor.sh` skips test fixtures, plugin copies and pipeline worktrees
+(it reported 16 state dirs on a clean host). ARCH-5 live check: anchor = `tickets/logs` (written by
+fleetd at boot, nothing moved), boot gate passes, a trigger fired from a repo subfolder landed in the
+anchored outbox and moved a throwaway TetrisOne ticket in Linear, a router from the wrong cwd is
+refused. Open: 6.4's worker-environ check rides on the next real dispatch. ARCH-9 task 0.2: the
+tickets host has no outboxes at all, so the pusher has nothing to replay.
+
 Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
@@ -1366,13 +1374,14 @@ network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd
   PR each is plausible, ARCH-4 needs a concurrency test.
 - ARCH-5 (cwd-relative `./logs` state root) — **designed** (`openspec/changes/state-root-anchor`,
   anchor file `$REPOS_ROOT/.ticket-auto/log-dir`, nothing moves), operator questions decided
-  2026-11-12, **merged**: PR A **#720** (resolver, writers, preamble, doctor) and PR B **#721**
-  (fleetd export and boot gate). Open: live check group 6 on the tickets host, the dexter
-  container's fleetd start config, and the `STATE_ROOT_STRICT=true` flip (later PR).
+  2026-11-12, **merged**: PR A **#720** (resolver, writers, preamble, doctor), PR B **#721**
+  (fleetd export and boot gate), doctor fix **#723**. Tickets-host live check passed 2026-11-13
+  except 6.4's worker-environ read (next real dispatch). Open: the `STATE_ROOT_STRICT=true` flip
+  (later PR, once other hosts are anchored).
 - ARCH-9 — **fixed, PR #717** (`board-cursor-first-drain`): `emit_event` writes a per-outbox
   origin sidecar; a board with no cursor starts there (or at the outbox tail), so no drain replays
   pre-0.55.0 history and a new ticket still projects from seq 1. Live check passed (demo Linear
-  project). Pusher default flipped on in **#718**. Open: tickets-host inventory (task 0.2).
+  project). Pusher default flipped on in **#718**. Tickets-host inventory (task 0.2) done 2026-11-13: no outboxes, nothing at risk.
 - PO-9 — **fixed, PR #702** (fleet-controller 0.49.0): `FLEET_WORKER_AUTONOMY`; phase dispatch
   unchanged unless it is set. Follow-up: reuse a ticket's recorded `META|autonomy` on restart;
   `semi-auto` currently behaves exactly like `auto`.
