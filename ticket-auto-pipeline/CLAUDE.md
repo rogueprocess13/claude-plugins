@@ -236,7 +236,7 @@ Both new hooks deliberately avoid two payload assumptions the observed `SessionS
 
 ## Log dir anchor
 
-The per-ticket log dir is recorded once in `$REPOS_ROOT/.ticket-auto/log-dir` (one line, an absolute path). The first router run writes it with the dir it already uses, so nothing moves on upgrade. `skills/ticket-flow/state-root-doctor.sh [--repos-root DIR]` is read-only: it prints the anchor and the resolved dir, lists every `*-outbox.jsonl` and `*-pipeline.log` under `REPOS_ROOT` outside that dir as `STRAY:` (exit 1 when any), and with no anchor lists each `STATE_DIR:` (exit 1 when two or more). Strays are re-projected by hand; there is no merge tool, because a merge would renumber seqs and break idem keys and board cursors.
+The per-ticket log dir is recorded once in `$REPOS_ROOT/.ticket-auto/log-dir` (one line, an absolute path). The first router run writes it with the dir it already uses, so nothing moves on upgrade. `skills/ticket-flow/state-root-doctor.sh [--repos-root DIR] [--all]` is read-only: it prints the anchor and the resolved dir, lists every `*-outbox.jsonl` and `*-pipeline.log` under `REPOS_ROOT` outside that dir (skipping, unless `--all`, test `fixtures` dirs, `*/.claude/plugins` copies and `.ticket-auto/worktrees`, which hold such files but never live state) as `STRAY:` (exit 1 when any), and with no anchor lists each `STATE_DIR:` (exit 1 when two or more). Strays are re-projected by hand; there is no merge tool, because a merge would renumber seqs and break idem keys and board cursors.
 
 To move the log dir (manual, no tool):
 

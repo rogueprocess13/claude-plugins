@@ -401,6 +401,37 @@ else
   else
     fail "doctor: unanchored one dir" "rc=$DR_RC out=$DR_OUT"
   fi
+  # test fixtures, plugin caches and pipeline worktrees are not state dirs
+  for d in "repo-c/tests/fixtures/ws/logs" "dotfiles/.claude/plugins/cache/p/1.0/lib/tests/fixtures" \
+    ".ticket-auto/worktrees/w1/logs"; do
+    mkdir -p "$RR/$d"
+    echo '{}' >"$RR/$d/T-5-outbox.jsonl"
+  done
+  _doctor "$RR" REPOS_ROOT="$RR"
+  if [ "$DR_RC" -eq 0 ] && [ "$(grep -c '^STATE_DIR:' <<<"$DR_OUT")" -eq 1 ] &&
+    grep -q '^SKIPPED: ' <<<"$DR_OUT"; then
+    pass "doctor: skips fixtures, plugin caches and worktrees; one state dir exits 0"
+  else
+    fail "doctor: skip noise" "rc=$DR_RC out=$DR_OUT"
+  fi
+  DR_RC=0
+  DR_OUT=$(cd "$RR" && REPOS_ROOT="$RR" bash "$DOCTOR_SH" --all 2>&1) || DR_RC=$?
+  if [ "$DR_RC" -eq 1 ] && [ "$(grep -c '^STATE_DIR:' <<<"$DR_OUT")" -eq 4 ] &&
+    ! grep -q '^SKIPPED:' <<<"$DR_OUT"; then
+    pass "doctor: --all scans the skipped trees too"
+  else
+    fail "doctor: --all" "rc=$DR_RC out=$DR_OUT"
+  fi
+  printf '%s\n' "$RR/tickets/logs" >"$(_anchor_file "$RR")"
+  _doctor "$RR" REPOS_ROOT="$RR"
+  if [ "$DR_RC" -eq 0 ] && ! grep -q '^STRAY:' <<<"$DR_OUT"; then
+    pass "doctor: anchored, skipped trees are not strays"
+  else
+    fail "doctor: anchored skip" "rc=$DR_RC out=$DR_OUT"
+  fi
+  rm -f "$(_anchor_file "$RR")"
+  rm -rf "$RR/repo-c" "$RR/dotfiles" "$RR/.ticket-auto/worktrees"
+
   mkdir -p "$RR/repo-b/logs"
   echo '{}' >"$RR/repo-b/logs/T-9-outbox.jsonl"
   _doctor "$RR" REPOS_ROOT="$RR"

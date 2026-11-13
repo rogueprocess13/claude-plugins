@@ -2,7 +2,7 @@
 # state-root-doctor.sh — read-only check for split per-ticket state
 # (state-root-anchor, review ARCH-5).
 #
-# Usage: state-root-doctor.sh [--repos-root DIR]
+# Usage: state-root-doctor.sh [--repos-root DIR] [--all]
 #
 # REPOS_ROOT is --repos-root, else $REPOS_ROOT, else the REPOS_ROOT field of
 # ./CLAUDE.md. Prints, one per line:
@@ -10,8 +10,12 @@
 #   ANCHOR_FILE: <dir>/.ticket-auto/log-dir
 #   ANCHOR: <value> | (none) | (invalid)
 #   RESOLVED: <dir> | (unresolved)        what lib/log-dir.sh resolves now
-# then scans REPOS_ROOT (skipping .git and node_modules) for *-outbox.jsonl
-# and *-pipeline.log files:
+# then scans REPOS_ROOT for *-outbox.jsonl and *-pipeline.log files. It
+# skips .git and node_modules, and, unless --all, three kinds of tree that
+# hold such files but never live state: test data (any dir named fixtures),
+# installed plugin copies (*/.claude/plugins) and pipeline worktrees
+# ($REPOS_ROOT/.ticket-auto/worktrees). A shared REPOS_ROOT that also holds
+# these checkouts otherwise looks split on a clean host. Findings:
 #   resolved:   STRAY: <file>   for every one outside the resolved dir
 #   unresolved: STATE_DIR: <dir> for every directory holding any (the
 #               pre-upgrade run: one dir is the one to anchor; two or more is
@@ -35,6 +39,7 @@ source "$_SRD_LIB_DIR/log-dir.sh"
 source "$_SRD_LIB_DIR/claude-md-field.sh"
 
 rr=""
+all=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --repos-root)
@@ -49,8 +54,12 @@ while [ $# -gt 0 ]; do
     rr="${1#*=}"
     shift
     ;;
+  --all)
+    all=1
+    shift
+    ;;
   -h | --help)
-    sed -n '2,25p' "${BASH_SOURCE[0]}"
+    sed -n '2,30p' "${BASH_SOURCE[0]}"
     exit 0
     ;;
   *)
@@ -95,6 +104,11 @@ fi
 
 strays=0
 declare -A state_dirs=()
+prune=(-name .git -o -name node_modules)
+if [ "$all" -eq 0 ]; then
+  prune+=(-o -name fixtures -o -path '*/.claude/plugins' -o -path "$rr/.ticket-auto/worktrees")
+  echo "SKIPPED: fixtures, */.claude/plugins, $rr/.ticket-auto/worktrees (--all scans them)"
+fi
 while IFS= read -r -d '' f; do
   d=$(cd "$(dirname "$f")" 2>/dev/null && pwd -P) || continue
   if [ -n "$resolved_phys" ]; then
@@ -105,7 +119,7 @@ while IFS= read -r -d '' f; do
   else
     state_dirs["$d"]=1
   fi
-done < <(find "$rr" \( -name .git -o -name node_modules \) -prune -o \
+done < <(find "$rr" \( "${prune[@]}" \) -prune -o \
   -type f \( -name '*-outbox.jsonl' -o -name '*-pipeline.log' \) -print0 2>/dev/null | sort -z)
 
 if [ -n "$resolved_phys" ]; then
