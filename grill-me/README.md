@@ -108,6 +108,8 @@ See [docs/grill-me.md](docs/grill-me.md) for the full architecture, determinism 
 
 ## Version
 
+0.6.0 — profile `product-idea` 1.2.0: the Assumptions dimension (now "Assumptions & Defaults") asks what already exists in the repository and never infers code the brief does not name, and tags chosen defaults `Default: ...` and unstated codebase claims `Unverified: ...`; Edge Cases asks what the user sees when an operation fails.
+
 0.4.0 — the sealed intent carries the input verbatim as `## Original Brief` (inside the seal); input over `GRILL_INPUT_MAX_LENGTH` (now 16000) is refused instead of truncated.
 
 0.3.0 — `test_data` dimension (profile `product-idea` 1.1.0).

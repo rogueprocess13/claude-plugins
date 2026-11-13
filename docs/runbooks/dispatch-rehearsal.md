@@ -41,7 +41,7 @@ Without these rules, the loop converges by making the input easier or the gates 
 
 Put each iteration's output in `$WORK/rehearsal/iter-NN/`.
 
-- [ ] **grill-me** (full runs only). Run `/grill-me --file idea.md --emit-questions <dir>`. Answer each round with an `--answers` file as the product owner, and archive the round files. Target: verdict `ready`, score ≥ 80.
+- [ ] **grill-me** (full runs only). Set `GRILL_WORK_DIR=$WORK/rehearsal/iter-NN/grill` first: grill-me needs `GRILL_WORK_DIR` or `REPOS_ROOT` in every mode and has no default output path (F37). Run `/grill-me --file idea.md --emit-questions <dir>`. Answer each round with an `--answers` file as the product owner, and archive the round files. Target: verdict `ready`, score ≥ 80.
 - [ ] **Plan.** Run `/ticket-planner plan <intent.md>`, then `/ticket-planner resume <INIT> --create --team <T> --project "<P>"`. Any halt is a finding.
 - [ ] **Collect.** Copy the following into the iteration folder:
   - `state.log`;
