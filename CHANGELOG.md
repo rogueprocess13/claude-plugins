@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.117.1 (2026-11-13) — state-root-doctor skips test fixtures, plugin copies and worktrees
+
+`state-root-doctor.sh` scans all of `REPOS_ROOT`. When that folder also holds checkouts with test
+fixtures, a dotfiles copy of `~/.claude/plugins`, or pipeline worktrees, their sample outboxes and
+pipeline logs were listed as extra `STATE_DIR:` or `STRAY:` lines, and the doctor exited 1 on a
+clean host. It now skips any directory named `fixtures`, any `*/.claude/plugins` tree and
+`$REPOS_ROOT/.ticket-auto/worktrees`, and prints one `SKIPPED:` line naming them. `--all` scans
+them again. Nothing else changes: the anchor, the resolver and the mismatch checks (which already
+compare real paths, so a symlinked `REPOS_ROOT` is fine) are as in 0.117.0.
+
 ## fleet-controller 0.53.0 (2026-11-12) — fleetd resolves, exports and checks the anchored log dir (state-root-anchor, PR B)
 
 Review finding ARCH-5, second half. Needs ticket-auto-pipeline 0.117.0 (`lib/log-dir.sh`).
