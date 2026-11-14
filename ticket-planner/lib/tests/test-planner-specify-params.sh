@@ -704,6 +704,9 @@ if need "$name" planner_params_prompt_rules planner_ownership_prompt_rules plann
   source "${LIB_DIR}/planner-phase-prompts.sh"
   sp=$(planner_prompt_specify "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   sp="${sp//$REPOS_ROOT/<REPOS_ROOT>}"
+  # The sibling rules (rehearsal F38/F43, test-planner-sibling-rules.sh) came
+  # after every capture below: strip them first so the earlier pins hold.
+  sp=$(_strip_inserted_blocks "$sp" "inline:"$'\n\n'"$(planner_sibling_blocker_rule)" "$(planner_sibling_citation_rule)")
   own_specify_blocks
   acpre_specify_blocks
   st=$(_strip_inserted_blocks "$sp" "$(planner_params_prompt_rules)" "$SPECIFY_BULLET" "${ACPRE_BLOCKS[@]}" "${OWN_BLOCKS[@]}")
@@ -747,6 +750,9 @@ name="Consensus prompt is the pre-change prompt plus the rule blocks"
 if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule planner_acpre_consensus_rule planner_goldfish_consensus_rule planner_prompt_consensus; then
   cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   cp="${cp//$REPOS_ROOT/<REPOS_ROOT>}"
+  # Sibling rules: stripped first, as for Specify above.
+  _sib_sec=$(planner_sibling_citation_consensus_section "INIT-TEST")
+  cp=$(_strip_inserted_blocks "$cp" "$(planner_sibling_blocker_rule)" "inline:${_sib_sec//$REPOS_ROOT/<REPOS_ROOT>}"$'\n\n')
   GOLDFISH_BLOCKS=("$(planner_goldfish_consensus_rule)")
   ct=$(_strip_inserted_blocks "$cp" "${GOLDFISH_BLOCKS[@]}" "$(planner_params_consensus_rule)" "$(planner_acpre_consensus_rule)" "$(planner_ownership_consensus_rule)")
   got=$(_sha "$ct")

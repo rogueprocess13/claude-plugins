@@ -226,6 +226,22 @@ assert_contains "marker" "$pack" "$PLANNER_TESTDATA_SYNTH_MARKER"
 assert_contains "seed command" "$pack" "Seed command: make seed-inv-0-test-data-pack"
 assert_contains "verify command" "$pack" "Verify command: make verify-seed-inv-0-test-data-pack"
 assert_contains "seed channel from inventory Load via" "$pack" "Seed channel: sql"
+assert_contains "relational data keeps the foreign-key criterion" "$pack" "- [ ] Every seeded foreign key resolves"
+assert_contains "…and its Verification Notes row" "$pack" "verify target reports no orphan rows"
+# F42: a directory or a worktree has no foreign keys; the criterion would
+# describe a different change and the semantic audit blocks the spec on it.
+_planner_tds_relational factories $'1 empty temporary directory' &&
+  fail "F42: a directory is not relational" "relational" || pass "F42: a directory is not relational"
+_planner_tds_relational factories $'1 git worktree of `x` at a temporary path\n1 git worktree of `x`, with `frontend/` removed' &&
+  fail "F42: worktrees are not relational" "relational" || pass "F42: worktrees are not relational"
+_planner_tds_relational factories $'1 empty directory\n3 paid invoices' &&
+  pass "F42: one record need keeps the pack relational" || fail "F42: one record need keeps the pack relational" "not relational"
+_planner_tds_relational files $'3 paid invoices' &&
+  fail "F42: the files channel is not relational" "relational" || pass "F42: the files channel is not relational"
+f42=$(printf 'f42-td\0371\037inv-0-export\037Start exits non-zero on an empty directory\0371 empty temporary directory\037td-42-9\037\037\n' |
+  planner_testdata_synth_render f42-td "$INIT" single)
+case "$f42" in *"foreign key"* | *"orphan rows"*) fail "F42: file-shaped spec has no foreign-key criterion" "present" ;; *) pass "F42: file-shaped spec has no foreign-key criterion" ;; esac
+assert_contains "F42: file-shaped spec keeps the other criteria" "$f42" "- [ ] the verify command passes"
 assert_contains "make-only sentence" "$pack" 'must stay `make <target>`'
 assert_contains "record key td-<init>-<n> + consumer criterion" "$pack" \
   '- `td-42-3` — 3 paid invoices — for `inv-0-export`: Export includes paid invoices'

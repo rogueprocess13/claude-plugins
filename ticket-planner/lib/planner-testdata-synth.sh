@@ -50,6 +50,36 @@ PLANNER_TESTDATA_SYNTH_CHANNELS="sql api factories files ui-forms"
 # without knowing the schema.
 PLANNER_TESTDATA_SYNTH_DEFAULT_CHANNEL="factories"
 
+# Nouns that make a need's data a filesystem object (a directory, a file, a
+# checkout), not a record with references to other records.
+PLANNER_TESTDATA_SYNTH_FILE_NOUNS="directory directories folder folders file files worktree worktrees checkout checkouts repository repositories repo repos clone clones archive archives path paths"
+
+# Do the needs seed records that can reference each other? False when the
+# channel is `files` alone, or when every need's data text names a filesystem
+# object (PLANNER_TESTDATA_SYNTH_FILE_NOUNS). Only relational data gets the
+# foreign-key criterion: on a directory or a worktree it describes a different
+# change, and the semantic audit blocks the spec on it (rehearsal F42).
+# Usage: _planner_tds_relational <channel> <data lines>
+_planner_tds_relational() {
+  local channel="$1" line w hit any=false
+  [ "$channel" = "files" ] && return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    any=true
+    hit=false
+    for w in $(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z\n' ' '); do
+      case " $PLANNER_TESTDATA_SYNTH_FILE_NOUNS " in *" $w "*)
+        hit=true
+        break
+        ;;
+      esac
+    done
+    [ "$hit" = true ] || return 0
+  done <<<"$2"
+  [ "$any" = true ] && return 1
+  return 0
+}
+
 # ── Small helpers ───────────────────────────────────────────────────────────
 
 _planner_tds_specs_dir() {
@@ -711,6 +741,12 @@ planner_testdata_synth_render() {
     Priority: "High"
   }')
 
+  local fk_ac="" fk_row=""
+  if _planner_tds_relational "$channel" "$(cut -d$'\037' -f5 <<<"$recs")"; then
+    fk_ac="- [ ] Every seeded foreign key resolves to a seeded or existing parent record"$'\n'
+    fk_row="| Every seeded foreign key resolves to a seeded or existing parent record | implementer | none | — | — | verify target reports no orphan rows | yes |"$'\n'
+  fi
+
   local keys_line
   keys_line="${PLANNER_TESTDATA_SYNTH_KEYS_PREFIX}$(cut -d$'\037' -f6 <<<"$recs" | LC_ALL=C sort -u | sed '/^$/d' | paste -sd';' - | sed 's/;/; /g') -->"
 
@@ -760,8 +796,7 @@ ${provided}
 
 - [ ] the seed command exits 0 on two consecutive runs
 - [ ] the verify command passes
-- [ ] Every seeded foreign key resolves to a seeded or existing parent record
-- [ ] All seeded data is synthetic or masked, with no production personal data
+${fk_ac}- [ ] All seeded data is synthetic or masked, with no production personal data
 - [ ] make reset-seed-${slug} removes only the records this ticket seeds and exits 0
 - [ ] A README maps every record key under Test Data Provided to its record and consumer criterion
 
@@ -796,8 +831,7 @@ ${signals}
 |-----------|------|-----------|--------|-----------------|----------|------------|
 | the seed command exits 0 on two consecutive runs | implementer | none | — | — | exit code 0 on both runs | yes |
 | the verify command passes | implementer | none | — | — | exit code 0 | yes |
-| Every seeded foreign key resolves to a seeded or existing parent record | implementer | none | — | — | verify target reports no orphan rows | yes |
-| All seeded data is synthetic or masked, with no production personal data | reviewer | none | — | — | needs human judgement of the seed scripts, no checkable value | no |
+${fk_row}| All seeded data is synthetic or masked, with no production personal data | reviewer | none | — | — | needs human judgement of the seed scripts, no checkable value | no |
 | make reset-seed-${slug} removes only the records this ticket seeds and exits 0 | implementer | none | — | — | exit code 0 and the verify target then fails | yes |
 | A README maps every record key under Test Data Provided to its record and consumer criterion | reviewer | none | — | — | every td-${tok}-n key appears in the README | yes |
 EOF

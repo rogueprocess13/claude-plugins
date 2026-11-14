@@ -1,6 +1,7 @@
 # allow-growth: dor-semantic-paraphrase — scan PARAPHRASE line and INCOHERENT_CHANGE in the prompt, schema doc and evaluator compatibility (+5,393 bytes, 0.115.0)
 # allow-growth: ARCH-4 manifest write lock — lib/manifest-write.sh is in the dor-semantic manifest (+46 bytes, 0.115.2)
-dor-semantic	94229
+# allow-growth: rehearsal F47 — scan prompt lists the codes that back each GAP_* line, or a gap backed by another dimension's finding halts planning as SEMANTIC_UNVERIFIED (+1,599 bytes, 0.117.2)
+dor-semantic	95828
 guidance-extractor	94887
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 ticket-appraise	154367

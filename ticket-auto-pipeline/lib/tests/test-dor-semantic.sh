@@ -133,6 +133,25 @@ grep -q "SEMANTIC_UNVERIFIED" <<<"$missing4" &&
   _pass "dor_semantic_apply: unverified_gaps names the mismatched gap" ||
   _fail "dor_semantic_apply: unverified_gaps should name requirement_completeness"
 
+# A finding of another dimension does not back the gap (rehearsal F47): the
+# scan prompt's gap rule prevents this shape, the evidence check still blocks it.
+cat >"$ws/body4b.md" <<'EOF'
+## Acceptance Criteria
+- A registered user with a taken email gets a 422.
+EOF
+hash4b=$(_ready_tid "APPLY-4B" "$ws/body4b.md")
+findings=$(jq -nc '[{code:"TEST_DATA_GAP", dimension:"test_uat",
+  quote:"A registered user with a taken email gets a 422.", detail:"one registered user"}]')
+scan=$(_scan_result "APPLY-4B" "$hash4b" "$findings" "$gaps_with_finding")
+audit=$(_audit_result "APPLY-4B" "$hash4b")
+dor_semantic_apply "APPLY-4B" "$ws/body4b.md" "$scan" "$audit" >/dev/null
+[ "$(get_ticket_manifest_field APPLY-4B ready | jq -c '.semantic.unverified_gaps')" = '["requirement_completeness"]' ] &&
+  _pass "dor_semantic_apply: a TEST_DATA_GAP finding does not back GAP_REQUIREMENT_COMPLETENESS" ||
+  _fail "dor_semantic_apply: gap backed only by TEST_DATA_GAP should stay unverified (got $(get_ticket_manifest_field APPLY-4B ready | jq -c '.semantic.unverified_gaps'))"
+get_ticket_manifest_field APPLY-4B ready | jq -c '.missing' | grep -q "SEMANTIC_UNVERIFIED" &&
+  _pass "dor_semantic_apply: that gap still blocks with SEMANTIC_UNVERIFIED" ||
+  _fail "dor_semantic_apply: gap backed only by TEST_DATA_GAP should add SEMANTIC_UNVERIFIED"
+
 # ── DOR_SEMANTIC_ADVISORY_CODES demotes a code ─────────────────────────────
 
 write_ticket_manifest "APPLY-5" "INIT-1" "feature" '[]' >/dev/null
@@ -249,7 +268,43 @@ grep -q "AC_VAGUE\|SCOPE_MISSING\|FLAG_NEEDS_INFO" <<<"$scan_prompt" &&
   _fail "dor_semantic_prompt: scan leaked a deterministic code" ||
   _pass "dor_semantic_prompt: scan output has no deterministic code"
 
+# Rehearsal F47: the scan prompt names the codes that back each gap, taken
+# from the same tables the evidence check reads.
+gap_rule=$(_dor_semantic_gap_rule)
+_gap_rule_ok=1
+for _line in \
+  "- GAP_REQUIREMENT_COMPLETENESS: MISSING_CORE_AC or NEEDS_HUMAN_DECISION" \
+  "- GAP_CONTRADICTORY_REQUIREMENTS: CONTRADICTORY_REQUIREMENTS" \
+  "- GAP_DEEP_SCOPE_AMBIGUITY: SCOPE_AMBIGUOUS" \
+  "- GAP_EDGE_CASE_SUFFICIENCY: EDGE_CASE_GAP"; do
+  grep -qxF -- "$_line" <<<"$scan_prompt" || _gap_rule_ok=0
+done
+[ "$_gap_rule_ok" -eq 1 ] &&
+  _pass "dor_semantic_prompt: scan names the codes that back each gap" ||
+  _fail "dor_semantic_prompt: scan should name each gap's codes (rule: $gap_rule)"
+grep -q "@@GAP_RULE@@" <<<"$scan_prompt" &&
+  _fail "dor_semantic_prompt: scan left the gap rule placeholder in" ||
+  _pass "dor_semantic_prompt: scan has no placeholder left"
+grep -qF "Never" <<<"$gap_rule" && grep -qF "not back a gap" <<<"$scan_prompt" &&
+  _pass "dor_semantic_prompt: scan says another code does not back a gap" ||
+  _fail "dor_semantic_prompt: scan should say another code does not back a gap"
+_gap_dims_ok=1
+for _g in $DOR_SEMANTIC_GAPS; do
+  _gd=$(_dor_semantic_gap_dimension "$(printf '%s' "${_g#GAP_}" | tr '[:upper:]' '[:lower:]')")
+  _listed=$(grep -F -- "- ${_g}: " <<<"$gap_rule" | sed 's/^[^:]*: //; s/ or / /g')
+  [ -n "$_listed" ] || _gap_dims_ok=0
+  for _c in $_listed; do
+    [ "${DOR_SEMANTIC_CODES[$_c]:-}" = "$_gd" ] || _gap_dims_ok=0
+  done
+done
+[ "$_gap_dims_ok" -eq 1 ] &&
+  _pass "_dor_semantic_gap_rule: every gap lists codes, all in its own dimension" ||
+  _fail "_dor_semantic_gap_rule: a gap lists no code or a code of another dimension ($gap_rule)"
+
 audit_prompt=$(dor_semantic_prompt audit WIL-999 /tmp/body-WIL-999.md /tmp/result-WIL-999.txt /tmp/det-WIL-999.json)
+grep -q "GAP_REQUIREMENT_COMPLETENESS" <<<"$audit_prompt" &&
+  _fail "dor_semantic_prompt: audit should not carry the gap rule" ||
+  _pass "dor_semantic_prompt: audit does not carry the gap rule"
 grep -q "/tmp/det-WIL-999.json" <<<"$audit_prompt" &&
   _pass "dor_semantic_prompt: audit references the det-result file" ||
   _fail "dor_semantic_prompt: audit should reference the det-result path"
