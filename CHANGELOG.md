@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.127.0 (2026-11-20) — stitch a recording into a video
+
+Third slice of the `ticket-auto-record` change: the frames a `--record` run saved can now be turned into a video.
+
+- **New `lib/record-stitch.sh`.** `plan clip <TID>` and `plan video <TID>...` are pure bash/jq and never run ffmpeg: they read each ticket's `artifacts/recordings/manifest.jsonl` and print an ffmpeg concat list, with one `#title` line per ticket for `video`. `render` runs ffmpeg over a plan; `clip <TID>` writes `<ticket dir>/artifacts/recordings/<TID>-verify.mp4` (the latest VERIFY attempt, 1.5 s a frame) and `video [--out FILE] <TID>...` writes one video with a 2 s title card per ticket, then its board frames (2 s) and app frames (1.5 s) in time order. Output is 1280×800 H.264.
+- **The planner decides what is shown.** Only `ok` entries; only frames from an environment `RECORD_ALLOWED` allows at stitch time, so a recording made when `uat` was allowed is not stitched after it is taken off the list; only the latest VERIFY attempt; only files whose name matches the recording pattern and whose real path is inside that ticket's own `artifacts/recordings/` (no symlinks, nothing globbed). `render` checks every file of a plan it is handed the same way. A line of the manifest that does not parse is skipped.
+- **Failure writes nothing.** An empty plan (exit 3), a host without ffmpeg (exit 4) or a failed ffmpeg (exit 5) leaves no file and keeps an earlier video. The stitch never writes to the pipeline log, the manifest or a frame.
+- **New skill `/ticket-record-stitch <id>... [--out FILE]`** (`--clip <id>` for one ticket's clip): a thin wrapper around the script, with no pipeline preamble.
+- CI installs `ffmpeg` (`.github/actions/install-deps`): the render cases of `lib/tests/test-record-stitch.sh` use the real `ffmpeg` and `ffprobe` and fail without them. The planner cases run with a tripwire `ffmpeg` on PATH.
+- `docs/skills/`: new `ticket-record-stitch` page; the `ticket-verify` page now describes Step 1h (recording).
 ## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
 
 - **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.

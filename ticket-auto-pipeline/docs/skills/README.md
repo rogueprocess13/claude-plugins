@@ -34,6 +34,7 @@ The ticket-auto-pipeline ships 25 skills that automate the full Linear ticket li
 | [ticket-gate-reconcile](ticket-gate-reconcile.md) | Post-gate-hold comment reconciliation for re-approved tickets |
 | [ticket-overseer](ticket-overseer.md) | Produces standup and in-flight status reports from pipeline logs |
 | [ticket-prescan](ticket-prescan.md) | Builds durable agent-knowledge docs for repos — eliminates per-ticket codebase rediscovery |
+| [ticket-record-stitch](ticket-record-stitch.md) | Builds a video from the recordings of tickets run with `--record` |
 | [ticket-reproduce](ticket-reproduce.md) | Confirms a bug exists via Playwright before implementation starts |
 | [wiki-maintenance](wiki-maintenance.md) | Incorporates ticket-implement errata entries into wiki flow files |
 
