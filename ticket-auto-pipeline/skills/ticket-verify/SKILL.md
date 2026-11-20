@@ -157,7 +157,7 @@ change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was im
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
-Some tickets are verified by running build tooling (no UI or API surface: a parent-POM, a dependency bump), some by checking a running backend through health/API calls (service registration, circuit breakers: no login, no page), and the rest in a browser. Treating one as another gives a silent false-pass or a stall. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; live-backend is tested before build-only, so a passing mention of `mvn` never hides a runtime check. It writes the `load-context` log line itself:
+Some tickets are verified with build tooling or file checks (no UI or API surface: a parent-POM, a docs-only change), some against a running backend through health/API calls (an API-only ticket, service registration: no login, no page), and the rest in a browser. Treating one as another gives a silent false-pass or a stall. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; a `Verify mode:` field in the ticket wins. It writes the `load-context` log line itself:
 
 ```bash
 bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT"
