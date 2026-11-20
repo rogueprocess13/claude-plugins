@@ -312,6 +312,27 @@ out=$(bash "$VR" "$VR_TID" --ticket-dir "$td" --artifact "$ws/bare.md" --no-log)
 grep -qx 'VR_STATUS=CLEAR' <<<"$out" && grep -qx 'VR_MODE=browser' <<<"$out" && grep -q '| Test user | found | Verification Plan (notes.md) |' "$td/notes.md" &&
   _ok "a verifiable plan row marks every prerequisite found" || _ko "vplan: $out"
 
+# GitHub #761: a docs-only ticket has no login, page, environment or build
+# to ask for. Its profile is diff-only: the expected behaviour alone.
+dtd="$ws/$VR_TID--docs"
+mkdir -p "$dtd"
+printf '# Docs ticket\n\nOne new markdown file. No code, no tests, no UI.\n' >"$dtd/context.md"
+printf '## Complexity\n**Score:** simple\n' >"$dtd/notes.md"
+printf '# Fix\n\nAdd the file NOTES.md.\n' >"$ws/docs-fix.md"
+out=$(bash "$VR" "$VR_TID" --ticket-dir "$dtd" --artifact "$ws/docs-fix.md" --no-log)
+grep -qx 'VR_STATUS=INCOMPLETE' <<<"$out" && grep -qx 'VR_MODE=diff-only' <<<"$out" && grep -qx 'VR_REQUIRED=1' <<<"$out" &&
+  grep -qx 'VR_MISSING_LIST=expected behavior' <<<"$out" &&
+  _ok "diff-only: only the expected behaviour is required" || _ko "diff-only missing: $out"
+printf '\n## Expected Behavior\n- git show prints the one line\n' >>"$ws/docs-fix.md"
+out=$(bash "$VR" "$VR_TID" --ticket-dir "$dtd" --artifact "$ws/docs-fix.md" --no-log)
+grep -qx 'VR_STATUS=CLEAR' <<<"$out" && grep -qx 'VR_MODE=diff-only' <<<"$out" &&
+  grep -q '^\*\*Mode:\*\* diff-only (verify: build-only)$' "$dtd/notes.md" &&
+  grep -q '^| Expected behavior | found |' "$dtd/notes.md" && ! grep -q '^| Test user \|^| Build command ' "$dtd/notes.md" &&
+  _ok "diff-only: CLEAR, and the notes section lists one prerequisite" || _ko "diff-only clear: $out / $(cat "$dtd/notes.md")"
+# The section the scorer wrote says "browser" nowhere, and would not count if it did.
+out=$(bash "$VR" "$VR_TID" --ticket-dir "$dtd" --artifact "$ws/docs-fix.md" --no-log)
+grep -qx 'VR_MODE=diff-only' <<<"$out" && _ok "diff-only: a rerun over its own notes section stays diff-only" || _ko "diff-only rerun: $out"
+
 for args in "" "$VR_TID" "$VR_TID --ticket-dir $td" "$VR_TID --artifact x" "$VR_TID --ticket-dir" "$VR_TID --bogus"; do
   rc=0
   # shellcheck disable=SC2086

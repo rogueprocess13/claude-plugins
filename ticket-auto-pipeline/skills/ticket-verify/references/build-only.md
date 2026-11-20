@@ -12,6 +12,8 @@ Read only under the condition in SKILL.md Step 1f (`VERIFY_MODE=build-only`). Ev
 
 ## Step 2 (build-only variant)
 
+**Diff-only tickets.** If Step 1e printed `VERIFY_SHAPE=diff-only` (on a resume: the latest `load-context` log line says `shape=diff-only`), the ticket is docs-only or git-only and there is no build tool to run. Its "build commands" are file and diff checks in the ticket's worktree, one per criterion: `git diff --name-status origin/{base}...HEAD`, `git show HEAD:{path}`, `test -f`, `grep`, `wc`. Run no Maven/Gradle command and start no environment. The rest of this file applies unchanged.
+
 **Derive the module list and build commands.** Read the plan artifact's Completion Checklist / task list and `notes.md` for the affected repos/modules (e.g. from a "pre-implementation checkpoint" or worktree list). For each affected module, determine the appropriate build command from the project's `CLAUDE.md` `BE_TEST_CMD` and standard Maven/Gradle conventions:
 
 - Root/parent POM changes → `mvn -N install` (or `mvn -N validate` if install would pollute the local repo unnecessarily) run first, since downstream modules resolve against it.

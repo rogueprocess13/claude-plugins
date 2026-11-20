@@ -12,6 +12,11 @@
 # profile inline: it is the verify classification mapped to a prerequisite
 # profile, not a parity fixture.
 #
+# GitHub #761: fixtures/verify-mode/shape/<shape>_<case>.md are reduced,
+# anonymised copies of the text verify classified for tickets that have no
+# page (an in-memory store, two HTTP APIs, one added markdown file) and for
+# two real browser tickets. Every one classified browser before the fix.
+#
 # Usage: bash test-verify-mode.sh
 # With VERIFY_MODE_TEST_LIB_ONLY=1 the file only defines its helpers.
 set -eo pipefail
@@ -132,6 +137,80 @@ done
 got=$(verify_mode_gate_profile "" 0 0)
 [ "$got" = "api-only" ] && _ok "gate: no text, no signal -> api-only" || _ko "gate empty: $got"
 
+echo "=== GitHub #761: ticket shape (verify_mode_shape) ==="
+# file|shape|ticket-verify path|gate profile
+for spec in \
+  "api_in_memory_store|api-only|live-backend|api-only" \
+  "api_articles|api-only|live-backend|api-only" \
+  "api_normalise_accounts|api-only|live-backend|api-only" \
+  "diff_add_docs_file|diff-only|build-only|diff-only" \
+  "browser_sign_in_pages|browser|browser|browser" \
+  "browser_mixed_api_rows|browser|browser|browser"; do
+  IFS='|' read -r c want_shape want_mode want_gate <<<"$spec"
+  text=$(cat "$VM_FX/shape/$c.md")
+  got="$(verify_mode_shape "$text")|$(verify_mode_classify "$text")|$(verify_mode_gate_profile "$text" 0 0)"
+  [ "$got" = "$want_shape|$want_mode|$want_gate" ] && _ok "shape $c ($got)" || _ko "shape $c: want $want_shape|$want_mode|$want_gate got $got"
+done
+
+# text|expected shape. A negated browser word, a path, a slug or "open the
+# PR" is not a browser signal: with nothing else the text has no signal at
+# all, so the default (browser) applies with a browser count of 0.
+_shape_is() { # label, text, want shape
+  local got
+  got=$(verify_mode_shape "$2")
+  [ "$got" = "$3" ] && _ok "$1 -> $3" || _ko "$1: want $3 got $got"
+}
+_browser_count_is() { # label, text, want count
+  local got
+  read -r got _ <<<"$(_verify_mode_signals "$2")"
+  [ "$got" = "$3" ] && _ok "$1: browser signals = $3" || _ko "$1: browser signals want $3 got $got"
+}
+_browser_count_is '"No screen"' 'Navigation Path: No screen' 0
+_browser_count_is '"no login"' 'The developer needs no login.' 0
+_browser_count_is '"no ... login"' 'This check needs no browser or login.' 0
+_browser_count_is '"without a browser"' 'Runs without a browser.' 0
+_browser_count_is '"open the PR"' 'Commit, push and open the PR against develop.' 0
+_browser_count_is '"opens a port"' 'server.js is the only file that opens a port.' 0
+_browser_count_is 'login in a path' 'Send the body to `POST /api/users/login`, see src/pages/login.js.' 0
+_browser_count_is 'login in a branch slug' 'Base branch epic/init-1-sign-up-login-and-articles.' 0
+_browser_count_is 'the readiness section Mode line' '**Mode:** browser (verify: browser)' 0
+_browser_count_is 'a real login' 'Open the login page and click Save.' 1
+_browser_count_is '"no error on the screen" keeps its screen' 'Click Save. There is no error on the screen.' 1
+_shape_is '"No screen" alone' 'Navigation Path: No screen' api-only
+_shape_is '"No screen, API only" with login prose' 'No screen, API only. Login returns 401 for a wrong password.' api-only
+_shape_is 'heading form: ## Navigation Path / No screen.' "$(printf '## Navigation Path\n\nNo screen. Send the request by hand.\n')" api-only
+_shape_is 'heading form: ## Test User / None' "$(printf '## Test User\n\nNone. A developer runs the unit tests.\n')" api-only
+_shape_is 'Test User: None + npm test' 'Test User: None. Run npm test in backend/.' api-only
+_shape_is 'curl' 'Run curl -s localhost:3000/health and expect 200.' api-only
+_shape_is 'HTTP verb and path' 'GET /api/articles returns 200.' api-only
+_shape_is 'supertest' 'Each check is a supertest request.' api-only
+_shape_is 'git-only' 'Git-only: the new file is the whole change.' diff-only
+_shape_is 'docs-only with a browser word' 'Docs-only. Describe the login screen in the guide.' diff-only
+_shape_is 'no UI + no code' 'One new markdown file. No code, no tests, no UI.' diff-only
+_shape_is 'no UI + mvn stays build-only' 'No UI or API surface. Run mvn -N install; BUILD SUCCESS.' build-only
+_shape_is 'eureka stays live-backend' 'No UI. Service must register with Eureka on startup.' live-backend
+_shape_is '"no UI changes" is not a declaration' 'No UI changes expected; click the Save button to confirm.' browser
+_shape_is '"the API only through" is not a declaration' 'The browser reaches the API only through the proxy; click Save.' browser
+_shape_is 'no screen on one row, a click on another' "$(printf 'Row 1: No screen, API only.\nRow 2: click the Edit button.\n')" browser
+_shape_is 'no signal at all stays browser' 'Refactor the repository class.' browser
+_shape_is 'browser + curl stays browser' 'Click Save, then curl the health endpoint.' browser
+
+echo "=== GitHub #761: an explicit Verify mode field overrides the heuristics ==="
+_shape_is 'bold field beats browser words' "$(printf '**Verify mode:** api-only\nClick the login button.\n')" api-only
+_shape_is 'plain field' "$(printf 'Verify mode: diff-only\nClick the login button.\n')" diff-only
+_shape_is 'colon outside the bold' "$(printf '**Verify Mode**: build-only\nNo screen, API only.\n')" build-only
+_shape_is 'field browser beats "API only"' "$(printf '**Verify mode:** browser\nNo screen. API only.\n')" browser
+_shape_is 'heading form' "$(printf '## Verify Mode\n\nlive-backend\n\nClick Save.\n')" live-backend
+_shape_is 'unknown value falls back to the heuristics' "$(printf '**Verify mode:** headless\nClick Save.\n')" browser
+got=$(verify_mode_classify "$(printf '**Verify mode:** api-only\nClick the login button.\n')")
+[ "$got" = "live-backend" ] && _ok "field api-only runs the live-backend path" || _ko "field api-only path: $got"
+got=$(verify_mode_classify "$(printf '**Verify mode:** diff-only\nClick the login button.\n')")
+[ "$got" = "build-only" ] && _ok "field diff-only runs the build-only path" || _ko "field diff-only path: $got"
+got=$(verify_mode_gate_profile "$(printf '**Verify mode:** browser\nRefactor the class.\n')" 0 0)
+[ "$got" = "browser" ] && _ok "gate: field browser -> browser profile" || _ko "gate field browser: $got"
+got=$(verify_mode_gate_profile 'This check needs no login.' 0 1)
+[ "$got" = "browser" ] && _ok "gate: no signal, plan names a test user -> browser (unchanged)" || _ko "gate no signal + user: $got"
+
 echo "=== verify_mode_text ==="
 _ws_new
 printf 'PLAN\n' >"$WS/plan.md"
@@ -151,6 +230,15 @@ out=$(bash "$VM" "$TID" --ticket-dir "$TD" --no-log)
 printf 'Click the login button.\n' >"$WS/desc.txt"
 out=$(bash "$VM" "$TID" --ticket-dir "$TD" --no-log --description-file "$WS/desc.txt")
 [ "$out" = "VERIFY_MODE=browser" ] && _ok "--description-file text counts as a signal" || _ko "--description-file: $out"
+cp "$VM_FX/shape/diff_add_docs_file.md" "$TD/simple-fix.md"
+rm -f "$TD/context.md"
+out=$(bash "$VM" "$TID" --ticket-dir "$TD" --root "$TICKETS_ROOT")
+[ "$out" = "$(printf 'VERIFY_MODE=build-only\nVERIFY_SHAPE=diff-only')" ] && _ok "diff-only prints the mode, then the shape" || _ko "diff-only stdout: $out"
+line=$(tail -1 "$TAP_LOG")
+[[ "$line" == *"|VERIFY|load-context|done|Context loaded, shape=diff-only, mode=build-only" ]] && _ok "the log line carries the shape before mode=" || _ko "diff-only log line: $line"
+# ticket-verify Step 1f reads the mode back from this line on a resume.
+got=$(grep '|VERIFY|load-context|done|' "$TAP_LOG" 2>/dev/null | tail -1 | sed -n 's/.*mode=//p')
+[ "$got" = "build-only" ] && _ok "a --from-step resume still reads mode=build-only" || _ko "resume mode: $got"
 rc=0
 bash "$VM" "$TID" >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] && _ok "missing --ticket-dir -> exit 2" || _ko "missing --ticket-dir rc=$rc"
