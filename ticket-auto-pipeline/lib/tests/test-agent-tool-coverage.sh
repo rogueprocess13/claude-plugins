@@ -73,8 +73,10 @@ required_tools() {
   for f in "$@"; do
     [ -f "$f" ] || continue
     grep -qiE 'spawn (a|an|the) [^.]*(agent|subagent)|subagent_type' "$f" && echo Agent
-    grep -vE '(the|a) user' "$f" |
-      grep -qE 'Skill\(|(^|[.:*] |, )([Rr]un|[Ii]nvoke) (the )?`/[a-z]' && echo Skill
+    # No `grep -q` at the end of this pipe: it exits on the first match, the
+    # first grep dies of SIGPIPE and pipefail turns a hit into a miss.
+    [ -n "$(grep -vE '(the|a) user' "$f" |
+      grep -E 'Skill\(|(^|[.:*] |, )([Rr]un|[Ii]nvoke) (the )?`/[a-z]')" ] && echo Skill
     grep -oE '\b(TaskCreate|TaskUpdate|TodoWrite|WebFetch|WebSearch)\b' "$f"
     grep -oE '\bmcp__[A-Za-z0-9_-]+__[A-Za-z0-9_]+' "$f"
   done | sort -u
