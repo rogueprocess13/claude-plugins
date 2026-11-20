@@ -307,6 +307,10 @@ if [ "${_MODE:-full}" = "validate" ]; then
     failures=$((failures + 1))
   fi
 
+  # Tickets-root layout (issue #763): never a failure.
+  IFS='|' read -r _tl_s _tl_v _tl_n < <(bash "$SCRIPT_DIR/ticket-dir.sh" layout "$(dirname "$CLAUDE_MD")" --row) || true
+  if [ "${_tl_s:-}" = ok ]; then pass "tickets root: $_tl_v ($_tl_n)"; else warn "tickets root: ${_tl_v:-unknown}" "${_tl_n:-}"; fi
+
   # LOCAL_URL
   if [ -n "${LOCAL_URL:-}" ]; then
     pass "LOCAL_URL ($LOCAL_URL via env)"
@@ -684,6 +688,11 @@ else
     fi
     issues=$((issues + 1))
   fi
+
+  # TICKETS_LAYOUT (issue #763): which tickets-root layout this is, and
+  # whether it is a supported one. Informational, never an issue.
+  IFS='|' read -r _tl_s _tl_v _tl_n < <(bash "$SCRIPT_DIR/ticket-dir.sh" layout "$PROJECT_DIR" --row) || true
+  _var "TICKETS_LAYOUT" "${_tl_s:-warn}" "${_tl_v:-}" "$PROJECT_DIR" "${_tl_n:-}"
 
   # LOG_DIR_ANCHOR (state-root-anchor): informational, never an issue.
   _rr=$(_env_check_repos_root)
