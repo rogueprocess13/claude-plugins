@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.126.0 (2026-11-20) — VERIFY capture under `--record`
+
+Second slice of the `ticket-auto-record` change: a recording ticket's browser verification now keeps one picture of the app per step.
+
+- **New `skills/ticket-verify/references/record.md`**, read only when recording is on for the ticket (`record.sh enabled`) and the ticket verifies in browser mode. It tells the verify agent to fix the viewport at 1280×800 before the first navigation, to take one extra screenshot each time a step has settled, and to hand it to `record.sh append` with the page's real URL. `record.sh` alone decides whether that page's environment may be recorded, and names and lists the file; the agent never touches `artifacts/recordings/`.
+- A step whose form holds a typed password gets no frame. A failed screenshot or a failed `append` is ignored: recording never changes the verdict, the report or the pipeline log.
+- `ticket-verify/SKILL.md` gains one guarded line (Step 1h) and did not grow: the bytes were paid for by trimming repeated prose. The reference is listed in `prompt_manifests["ticket-verify"]`, so it counts under `ticket-verify:conditional` and in the skill fingerprint.
+- Build-only and live-backend verification, and REPRODUCE, record nothing.
+- New test `lib/tests/test-verify-record-reference.sh` (13 cases; one runs the reference's own `append` command line against `record.sh`).
 ## 0.125.0 (2026-11-20) — an epic child waiting for a human merge stays in Review (#765)
 
 - **The board no longer shows Done for an unmerged PR.** A child of a `UAT Policy: epic` epic used to close to `Done` on a passing PR review even when its PR was left for a human to merge (`Merge Policy`, or autonomy `manual`). `uat_decide_trigger` now picks the new trigger `pr-review-pass-merge-pending` in that case: the ticket is marked `reviewed` and stays in `Review`. It still never parks in `UAT`. The trigger carries the verdict gate.

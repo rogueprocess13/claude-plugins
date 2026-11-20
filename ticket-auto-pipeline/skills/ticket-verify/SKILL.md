@@ -9,19 +9,12 @@ You have been given a ticket ID as the argument (e.g. `CRE-39`), with optional f
 - `--user <email>` — login email override. If omitted, derived from the ticket description.
 - `--password <password>` — login password override. If omitted, resolved from the `UAT_TEST_PASSWORD` environment variable, else the `UAT_TEST_PASSWORD` field in `./CLAUDE.md` (see Step 1b5). There is no built-in default password. On local, the login gate is typically bypassed.
 - `--env local|uat` — which environment to test against (default: `local`)
-- `--from-auto` — called by ticket-auto or batch. Suppresses all user prompts.
-  Missing credentials or nav failures produce a diagnostic FAIL instead
-  of asking the user.
-- `--no-env-start` — skip Step 1.6 (don't start/check backend services).
-  Use when managing the environment manually.
-
-Parse the arguments before proceeding.
+- `--from-auto` — called by ticket-auto or batch. Suppresses all user prompts. Missing credentials or nav failures produce a diagnostic FAIL instead of asking the user.
+- `--no-env-start` — skip Step 1.6 (don't start/check backend services). Use when managing the environment manually.
 
 **Environment URLs:**
 - `local` → Read `LOCAL_URL` from `./CLAUDE.md`. If absent, abort: "No LOCAL_URL configured for this project."
 - `uat` → Read `UAT_URL` from `./CLAUDE.md`. If absent, abort: "No UAT_URL configured for this project."
-
-**Credential derivation (UAT only):** If `--user` is not explicitly provided, extract it from the ticket description after Step 1b. If `--password` is not provided, resolve it from configuration (Step 1b5) — never assume a default. On local, credentials are typically not needed.
 
 This skill never modifies source code.
 
@@ -187,6 +180,10 @@ If that prints nothing, run Steps 1b, 1c and 1e first. After a context compactio
 ### 1g — QA persona (load condition)
 
 Run `echo "VERIFY_QA_PERSONA=${VERIFY_QA_PERSONA:-false}"`. **If it prints `true`**, before Step 2, and before re-entering Step 4b, 4c or 4c-live on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/qa-persona.md`, then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/qa-persona.md"` and stop. Otherwise skip it: no persona, no supporting checks, no Observations section.
+
+### 1h — Recording (load condition)
+
+Run `source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}; bash ~/.claude/skills/lib/record.sh enabled "$TAP_LOG"; echo "RECORD_RC=$?"`. **If it prints `RECORD_RC=0` and `VERIFY_MODE=browser`**, before Step 3, also on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/record.md`, then Read the printed path in full. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/record.md"` and stop. Otherwise skip it: nothing is recorded.
 
 ---
 
@@ -502,15 +499,13 @@ If login fails:
   ⚠️ Login failed for {derived_user} on UAT. The configured test password may be wrong for this account, or the account may be locked. Please verify the test credentials and re-run with --user and --password flags.
   ```
   Then abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "Login failed for {derived_user}").
-- **On local**: report and stop as above (local env may have different requirements).
+- **On local**: report and stop as above.
 
 bash ~/.claude/skills/lib/plog.sh VERIFY browser-session done "Logged in as {--user}"
 
 ---
 
 ## Step 4 — Navigate to the feature under test
-
-This step uses a **3-attempt** budget to reach the correct location before escalating to the user.
 
 ### Attempt tracking
 
@@ -538,7 +533,7 @@ Bound every wait (no more than ~15 s). A wait that times out is evidence, not a 
 2. A parent/sibling click path (e.g. if "Handover Progress" fails, go to "Handover Payments" first using its nav-hints entry, then look for tabs/links to Progress).
 3. Explore the nav: start from the root page (click Home), then click through nav bar items that match the feature area until reaching the target.
 
-**Important:** If any attempt results in an `/accessdenied` redirect, do NOT try that URL or click path again. The nav bar will likely be broken after `/accessdenied` — navigate to the root URL (`/`) to restore session, then continue with the next attempt.
+If any attempt results in an `/accessdenied` redirect, do NOT try that URL or click path again. The nav bar will likely be broken after `/accessdenied` — navigate to the root URL (`/`) to restore session, then continue with the next attempt.
 
 ### After 3 failed attempts
 
@@ -556,7 +551,7 @@ If `nav_attempts == 3` and the correct page has not been reached:
 
 ### Save new navigation knowledge (Step 4a)
 
-Once the correct page is reached — whether via the plan, retry, or user input — **if the area was not already in `{TICKETS_ROOT}/nav-hints.md`**, save it now.
+Once the correct page is reached, **if the area was not already in `{TICKETS_ROOT}/nav-hints.md`**, save it now.
 
 Append to `{TICKETS_ROOT}/nav-hints.md` (create the file if it doesn't exist):
 
@@ -599,7 +594,6 @@ Record each file under `### Evidence` in the report (Steps 6/7) and in the REMED
 **Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log (resume rules: [Step dispatch](#step-dispatch)):
 
 ```bash
-# After criterion N passes, write checkpoint:
 bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
 ```
 
