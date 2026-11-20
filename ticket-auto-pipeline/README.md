@@ -187,6 +187,7 @@ Restart Claude Code after adding MCP servers.
 | `/ticket-pr-review <id>` | PR code review pass |
 | `/ticket-pr-iterate <id>` | Iteration on PR feedback |
 | `/ticket-prescan [path]` | Build durable agent-knowledge docs for a repo |
+| `/ticket-record-stitch <id>... [--out FILE]` | Build a video from the recordings of tickets that ran with `--record` (needs `ffmpeg`). `--clip <id>` builds one ticket's verification clip. |
 
 ### Human Decisions
 
