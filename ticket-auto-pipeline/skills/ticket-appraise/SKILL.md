@@ -234,13 +234,15 @@ Moved to `references/full-investigation.md` (persona, scoring run, routing and t
 
 **Scoring rubric.** Each axis that fires adds its **weight**; a total of **3 or more** classifies `complex`, below 3 classifies `simple`. Weak axes weigh 2 (one alone stays `simple`, any two escalate); strong axes weigh 3 (each escalates on its own).
 
-| Axis                | Weight | Fires when                                                                                                                                             |
-| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Multi-service**   | 2      | Description mentions more than one service, or the affected area is ambiguous (e.g. "payment flow", "attorney assignment", "reporting")                |
-| **Cross-layer**     | 2 (3 with the framework-migration marker) | Fix clearly requires both frontend AND backend changes, OR touches Feign clients, PDF generation, async jobs, or framework-version migrations (Spring Boot / Java upgrade) that touch `@Configuration`, security, or bean-wiring classes |
-| **Reversibility**   | 3      | Any of: a database schema migration; a destructive or irreversible change to persisted data (backfills, deletions); a change on the payment or billing execution path; a breaking change to a public or externally-consumed API contract (removed endpoint or field, changed response shape); a change to authentication or authorization rules; any change with no revert path, or one needing a coordinated multi-service deploy to revert |
-| **Prior rejection** | 3      | Comments contain a previous appraisal that was marked `rejected`, or the ticket description says "tried X, didn't work"                                |
-| **Blast radius**    | 3      | Scored later, in Step 2.8 — fires exactly when `get_blast_radius_override` reports `BLAST_OVERRIDE=complex`. Not judged here.                          |
+| Axis | Weight | Fires when |
+| --- | --- | --- |
+| **Multi-service** | 2 | Description mentions more than one service, or the affected area is ambiguous (e.g. "payment flow", "attorney assignment", "reporting") |
+| **Cross-layer** | 2 (3 with the framework-migration marker) | Fix clearly requires both frontend AND backend changes, OR touches Feign clients, PDF generation, async jobs, or framework-version migrations (Spring Boot / Java upgrade) that touch `@Configuration`, security, or bean-wiring classes |
+| **Reversibility** | 3 | Any of: a database schema migration; a destructive or irreversible change to persisted data (backfills, deletions); a change on the payment or billing execution path; a breaking change to a public or externally-consumed API contract (removed endpoint or field, changed response shape); a change to how existing authentication or authorization behaves (**Auth trigger** below); any change with no revert path, or one needing a coordinated multi-service deploy to revert |
+| **Prior rejection** | 3 | Comments contain a previous appraisal that was marked `rejected`, or the ticket description says "tried X, didn't work" |
+| **Blast radius** | 3 | Scored later, in Step 2.8 — fires exactly when `get_blast_radius_override` reports `BLAST_OVERRIDE=complex`. Not judged here. |
+
+**Auth trigger.** Record which kind of auth change it is. `reversibility:auth-modify` (3): existing behaviour changes — token or session verification, credential or password handling, identity matching, a role or permission check, or who can reach an existing endpoint, screen or record. `reversibility:auth-new` (2): new auth logic nothing existing depends on, such as a first sign-in module or an ownership rule on a new endpoint. `reversibility:auth-reuse` (0): an existing, unchanged check is only applied to new endpoints or screens, or an existing auth endpoint is only called. When another Reversibility trigger also applies, record that one. Unsure which kind: `auth-modify`.
 
 **Reversibility is size-independent.** A three-line `DROP COLUMN` fires it; a 600-line refactor confined to one service with no migration, payment path, public contract change, or auth change does not. When in doubt about a listed trigger, fire it — a false escalation costs one human gate, a false `simple` skips the gate and the delegated investigation both.
 
@@ -295,7 +297,7 @@ If the symbol is ambiguous (multiple candidates), pick the highest-relevance res
 
 | Target | Risk | d=1 (WILL BREAK) | d=2 (LIKELY AFFECTED) | Affected Flows | Edit |
 |--------|------|-------------------|------------------------|----------------|------|
-| `{symbol}` | LOW/MEDIUM/HIGH/CRITICAL | {count} callers | {count} indirect | {comma-separated flow names, or none} | additive/modifying |
+| `{symbol}` | LOW/MEDIUM/HIGH/CRITICAL | {count} callers ({caller files}) | {count} indirect | {comma-separated flow names, or none} | additive/modifying |
 
 **Analysis:** {one sentence summarizing what the blast radius means for this ticket}
 ```
@@ -309,8 +311,6 @@ bash ~/.claude/skills/lib/complexity-score.sh blast '{ticket-dir}'
 ```
 
 It reads the table through `get_blast_radius_override` (thresholds in its header, `lib/notes-parse.sh`). `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3): the script adds `blast-radius:3` and 3 to the weighted score (a fast-path `n/a` counts as 0), escalates a `simple` Score and appends `BLAST_REASON`, once. A non-empty `BLAST_ADDITIVE_SKIP` (additive edits, caller-count trigger only) adds a `**blast-radius:** additive` line. This applies on the fast path too. Its `COMPLEXITY=` line is the classification from here on.
-
-**Framework-migration:** no separate override any more. The `cross-layer (framework-migration):3` entry from Step 2.5 already scored `complex` on its own, so a LOW blast-radius result here changes nothing — the `impact()` thresholds are edge counts, and this class of defect has no edge. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
 
 **Non-blocking fallback:** If the `mcp__gitnexus__impact` tool is unavailable or returns an error, log a warning and proceed:
 
