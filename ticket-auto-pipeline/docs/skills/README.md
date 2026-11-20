@@ -27,6 +27,7 @@ The ticket-auto-pipeline ships 25 skills that automate the full Linear ticket li
 | [ticket-audit-exec](ticket-audit-exec.md) | Two-phase apply agent for audit recommendation checklists |
 | [ticket-batch-appraise](ticket-batch-appraise.md) | Parallel appraisal and artifact creation for multiple tickets at once |
 | [ticket-batch-verify](ticket-batch-verify.md) | Parallel Playwright UAT verification across multiple tickets |
+| [ticket-cancel](ticket-cancel.md) | Retires a ticket nobody will finish: `cancel` trigger, log record, board projection |
 | [ticket-critique](ticket-critique.md) | Validates ticket completeness before implementation begins |
 | [ticket-detect-resume](ticket-detect-resume.md) | *(Private)* Reads pipeline log to find crash recovery restart point |
 | [ticket-document](ticket-document.md) | Generates ai-context.md after implementation for future agents |

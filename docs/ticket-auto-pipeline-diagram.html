@@ -830,7 +830,7 @@
 <script type="application/json" id="workflow-triggers">
 {
   "_note": "Copy of skills/ticket-flow/workflow.json triggers. from/to/adds/removes/event must match workflow.json exactly: ticket-auto-pipeline/skills/ticket-flow/check-diagram-drift.py (run by make check-generated) fails the build on any difference. `diagram` is drawing metadata only. The page draws every edge and every side transition from this block.",
-  "states": ["Backlog", "Todo", "Approve", "Ready", "Review", "UAT", "Done"],
+  "states": ["Backlog", "Todo", "Approve", "Ready", "Review", "UAT", "Done", "Canceled"],
   "side_states": {
     "Blocked": "well-known state that no trigger names: blocked-by dependency enforcement moves a ticket in and out (vocabulary events blocked / unblocked, projected to nothing)"
   },
@@ -1050,6 +1050,17 @@
         "side": "gate-reconcile re-hold: clears the manifest approval fact and restarts the gate hold cycle"
       }
     },
+    "cancel": {
+      "from": null,
+      "to": "Canceled",
+      "adds": [],
+      "removes": ["needs-info", "needs-adr", "rejected", "reviewed"],
+      "event": "ticket-cancelled",
+      "diagram": {
+        "kind": "human",
+        "side": "retires a ticket nobody will finish, from any state except Done. Fired by /ticket-cancel with a required reason. Canceled is final: every later trigger is refused. Blocked-by dependents are not released."
+      }
+    },
     "epic-integration-open": {
       "from": "Backlog",
       "to": "Review",
@@ -1110,6 +1121,8 @@ const DATA = {
     { id: "review",   label: "Review" },
     { id: "uat",      label: "UAT" },
     { id: "done",     label: "Done",     kind: "terminal" },
+    // Reached from any state except Done by the cancel trigger; no edge is drawn (see the side list).
+    { id: "canceled", label: "Canceled", kind: "terminal", col: "done", y: 420 },
     // Epic acceptance lane (UAT Policy: epic) — acts on the epic issue itself, never on a child.
     { id: "epic-backlog", label: "Backlog", kind: "epic start", col: "backlog", row: "epic" },
     { id: "epic-review",  label: "Review",  kind: "epic",       col: "review",  row: "epic" },
@@ -1139,7 +1152,7 @@ const DATA = {
   // Label adds/removes are the board projection's flags; approval, complexity and
   // outcome are local manifest facts and are never tracker labels.
   transitions: Object.entries(WF.triggers)
-    .filter(([, t]) => t.to !== null)
+    .filter(([, t]) => t.to !== null && t.from !== null)
     .map(([name, t]) => {
       const d = t.diagram || {};
       const fromLabels = Array.isArray(t.from) ? t.from : [t.from];
@@ -1162,10 +1175,13 @@ const DATA = {
       };
     }),
 
-  // Triggers that change no state, plus side states no trigger names (Blocked).
+  // Triggers that change no state or apply from any state (cancel), plus side states no trigger names (Blocked).
   sideTransitions: Object.entries(WF.triggers)
-    .filter(([, t]) => t.to === null)
-    .map(([name, t]) => ({ trigger: name, add: t.adds, remove: t.removes, desc: t.diagram.side })),
+    .filter(([, t]) => t.to === null || t.from === null)
+    .map(([name, t]) => ({
+      trigger: name, add: t.adds, remove: t.removes,
+      desc: (t.to !== null ? "any state → " + t.to + ": " : "") + t.diagram.side,
+    })),
 
   // Phase chips that sit between states (referenced by transition.phase)
   // Each chip is positioned between fromCol and toCol along the main flow
@@ -1429,7 +1445,7 @@ const STATE_BY_ID = Object.fromEntries(DATA.states.map(s => [s.id, s]));
 function nodeRect(stateId) {
   const st = STATE_BY_ID[stateId];
   const x = DATA.layout.cols[st.col || st.id];
-  const y = st.row === "epic" ? DATA.layout.epicRowY : DATA.layout.rowY;
+  const y = st.y || (st.row === "epic" ? DATA.layout.epicRowY : DATA.layout.rowY);
   const w = DATA.layout.nodeWidth;
   const h = DATA.layout.nodeHeight;
   return { x: x - w/2, y: y - h/2, cx: x, cy: y, w, h, left: x - w/2, right: x + w/2, top: y - h/2, bottom: y + h/2 };
