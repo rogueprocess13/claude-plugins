@@ -246,13 +246,14 @@ _eq "planned-feedback-write: confidence_predicted equals generated **Confidence:
 _eq "planned-feedback-write: services from real block" '["billing-api","ledger"]' "$(echo "$payload" | jq -c '.services_touched')"
 
 payload=$(_pfw_payload "# no block here")
-_eq "planned-feedback-write: no block → confidence 0" "0" "$(echo "$payload" | jq -r '.confidence_predicted')"
+# An unknown prediction is null with drift "unknown", never 0/major (#768).
+_eq "planned-feedback-write: no block → confidence null, drift unknown" "null unknown" "$(echo "$payload" | jq -r '"\(.confidence_predicted) \(.decision_drift)"')"
 
 payload=$(_pfw_payload "$(printf '%s\n' "## Planner Context" '**Confidence:** 0.8; rm -rf /')")
-_eq "planned-feedback-write: non-numeric confidence → 0, payload still built" "0" "$(echo "$payload" | jq -r '.confidence_predicted')"
+_eq "planned-feedback-write: non-numeric confidence → null, payload still built" "null" "$(echo "$payload" | jq -r '.confidence_predicted')"
 
 payload=$(_pfw_payload "$(printf '%s\n' "## Planner Context" '**Confidence:** 00.5')")
-_eq "planned-feedback-write: leading-zero confidence → 0, payload still built" "0" "$(echo "$payload" | jq -r '.confidence_predicted')"
+_eq "planned-feedback-write: leading-zero confidence → null, payload still built" "null" "$(echo "$payload" | jq -r '.confidence_predicted')"
 
 # ── Consumer: fleet-controller fleet-feedback.sh ───────────────────────────────
 
