@@ -17,13 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.129.1 (2026-11-20) — the complexity score is logged in one format (#769)
+## 0.130.1 (2026-11-20) — the complexity score is logged in one format (#769)
 
 - **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
 - **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
 - **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
 - **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
 - Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
+## 0.130.0 (2026-11-21) — board frames for a recording, and a Recording section in env-check
+
+Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` can now also keep a picture of the board each time its card moves.
+
+- **New board driver `lib/board-drivers/recorder.sh`.** Opt-in: set `FLEET_BOARD_DRIVERS=linear,recorder`. After `linear` has moved the card, the recorder opens `RECORD_BOARD_URL` in a headless browser, waits until the card is under its new column's header and saves `artifacts/recordings/board-{SEQ}-{event}.png`, cropped to that column, with a `board` entry in the recording manifest. `/ticket-record-stitch` already shows such frames for 2 s each.
+- **It cannot hurt a run.** The driver exits 0 for every input, so a drain never fails or retries because of it; the screenshot runs under `timeout` (`RECORD_SHOT_TIMEOUT`, default 25 s, at most 55); it never writes to the pipeline log, so `META|outcome` stays the last line; it projects nothing and changes no cursor. A host that does not list `recorder` sees no change.
+- **One frame per backlog, and only a true one.** A move that a later event in the outbox already replaced is skipped (`superseded`); a move `linear` has not applied yet is skipped (`board-not-applied`); a card not seen in the expected column is skipped (`column-mismatch`) and no file is kept. Failures are manifest entries with a short reason (`timeout`, `session-expired`, `no-session`, `browser-missing`, `no-board-url`, `bad-board-url`, `shot-failed`).
+- **`RECORD_BOARD_URL` must be an `https://linear.app/` project or view URL** (`/project/` or `/view/` in its path), so only the filtered board is ever opened.
+- **The saved Linear session is private.** `recorder.sh login` (headed browser) or `recorder.sh import` (a Playwright storage state on stdin, for a host with no display) writes `$REPOS_ROOT/.ticket-auto/record/linear-session.json` with mode 0600 in a 0700 directory, beside a `.gitignore` holding `*`. It is a full login for its user: use a dedicated read-only Linear user. No code prints it. Playwright is not bundled; the operator installs it under `.ticket-auto/record/`.
+- **`/ticket-env-check` has a Recording section**, printed only when `RECORD_ALLOWED` is set: `RECORD_ALLOWED`, `RECORD_BOARD_DRIVERS`, `RECORD_BOARD_URL`, `RECORD_FFMPEG`, `RECORD_BROWSER`, `RECORD_SESSION`, `RECORD_SESSION_MODE`, `RECORD_SESSION_IGNORED`. Every row is `ok` or `warn`; none changes the exit code.
+- The board layout is read from the live Linear page; that path has no automated test and is checked on a real board before the feature is documented for operators.
+
 ## 0.129.0 (2026-11-20) — a cancel transition: retire a ticket through flow.sh (#770)
 
 There was no way to retire a ticket nobody will finish. `human-reject` sends it back to Todo, so an obsolete or duplicate ticket had to be set to Canceled by hand in Linear, which left the manifest on its old stage, wrote nothing to the outbox or the pipeline log, and kept the pipeline's labels on the card. Also `fleet-controller` 0.55.1.

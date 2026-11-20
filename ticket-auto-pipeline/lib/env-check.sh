@@ -760,6 +760,16 @@ else
   fi
 fi
 
+# ── Recording ───────────────────────────────────────────────────────────────
+# Printed only when RECORD_ALLOWED is set; every row is ok or warn, never an
+# issue (lib/record-env-check.sh).
+if [ -f "$SCRIPT_DIR/record-env-check.sh" ]; then
+  source "$SCRIPT_DIR/record-env-check.sh"
+  while IFS='|' read -r _rc_name _rc_status _rc_value _rc_loc _rc_note; do
+    [ -n "$_rc_name" ] && _var "$_rc_name" "$_rc_status" "$_rc_value" "$_rc_loc" "$_rc_note"
+  done < <(record_env_check_rows "$PROJECT_DIR" 2>/dev/null || true)
+fi
+
 # ── Skill shadowing ─────────────────────────────────────────────────────────
 # A user- or project-level SKILL.md named like a plugin skill runs instead of
 # the plugin's, silently (lib/skill-shadow.sh).
