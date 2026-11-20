@@ -30,6 +30,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - **Templates.** `templates/*.md` (read by `/ticket-create`) gain `## Verify Mode`; `feature.md` and `improvement.md` gain `## Errors and Edge Cases`. A template left unfilled classifies as before.
 - **Not changed:** the Definition-of-Ready check does not require the new sections, `ticket-verify` does not treat `[unit]` and `[live]` criteria differently, and the five warn codes do not block. Each is a decision left for a later change.
 - New libs `ticket-planner/lib/planner-body-template.sh` and `planner-crosscheck-body.sh`; new test `test-planner-body-template.sh` (135 cases; composed bodies go through `verify_mode_shape` for all five shapes, and the golden bodies keep the same readiness verdict with and without the new sections); three Crosscheck fixtures (`body-v2-*`); the business-framing golden bodies carry the new sections.
+
 ## 0.127.0 (2026-11-20) — stitch a recording into a video
 
 Third slice of the `ticket-auto-record` change: the frames a `--record` run saved can now be turned into a video.
