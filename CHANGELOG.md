@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.131.1 (2026-11-21) — ticket-implement no longer tells its agent to use tools it does not have (#667)
+## 0.131.2 (2026-11-21) — ticket-implement no longer tells its agent to use tools it does not have (#667)
 
 `ticket-implement-agent` holds Bash, Read, Write, Edit, Grep, Glob and three GitNexus tools. Three steps of `ticket-implement/SKILL.md` needed the Agent tool, the Skill tool or another plugin's slash command, so under the router and under fleetd the agent skipped them or made something up. No tool was granted: each step now runs with the tools the agent already has.
 
@@ -26,6 +26,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - **Step 5, commit.** Plain `git add <paths>` and `git commit -m`, with the title from the existing template, in place of `/commit-commands:commit`.
 - **New test `lib/tests/test-agent-tool-coverage.sh`.** For every skill and agent pair in `dispatch-table.json` it scans the skill's `SKILL.md` and `references/` for instructions that need the Agent tool, the Skill tool, a task or web tool, or an `mcp__…` tool, and fails when the agent's `tools:` line lacks it. Gaps in other phases that predate the test (ticket-appraise, ticket-appraise-exec, ticket-reproduce, ticket-verify, ticket-pr-review, ticket-gate-reconcile) are listed in its `KNOWN_GAPS` ratchet: a new gap fails, and so does a listed one that has been fixed.
 - **Not included:** the other phases' gaps, and the ADR gate (`skill-preamble-auto.md` § 8 tells every phase to invoke `/adr-gate`, which needs the Skill tool).
+
+## 0.131.1 (2026-11-20) — the complexity score is logged in one format (#769)
+
+- **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
+- **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
+- **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
+- **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
+- Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
 
 ## 0.131.0 (2026-11-21) — env-check reports what a run needs besides variables
 

@@ -65,13 +65,13 @@ Judge which axes of the scoring rubric in SKILL.md Step 2.5 fire, using only wha
 bash ~/.claude/skills/lib/complexity-score.sh write "{TICKET-DIR}" --axes "{axes}" --reason "{one sentence; name the Reversibility trigger when it fired}"
 ```
 
-`{axes}` is comma-separated from `multi-service`, `cross-layer`, `cross-layer:framework-migration`, `reversibility:{trigger}` (auth: `auth-modify`, `auth-new` or `auth-reuse`), `prior-rejection`, or `none`. Exit 2 means an axis was refused (unknown, repeated, or `cross-layer` qualified with a migration or payment trigger, which is Reversibility only): fix the list and re-run. It prints `COMPLEXITY`, `WEIGHTED` and `AXES`.
+`{axes}` is comma-separated from `multi-service`, `cross-layer`, `cross-layer:framework-migration`, `reversibility:{trigger}` (auth: `auth-modify`, `auth-new` or `auth-reuse`), `prior-rejection`, or `none`. Exit 2 means an axis was refused (unknown, repeated, or `cross-layer` qualified with a migration or payment trigger, which is Reversibility only): fix the list, re-run. It prints `COMPLEXITY`.
 
 **If `COMPLEXITY=simple` → proceed to Step 2.6, then Step 3 (inline).**
 
 **If `COMPLEXITY=complex` → proceed to Step 2.6, then Step 3-Agent (delegated) instead.**
 
-bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "{COMPLEXITY}, score: {WEIGHTED}/3, axes: {AXES}"
+bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "$(bash ~/.claude/skills/lib/complexity-score.sh summary "{TICKET-DIR}")"
 
 ---
 

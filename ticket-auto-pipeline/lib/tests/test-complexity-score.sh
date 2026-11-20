@@ -246,6 +246,85 @@ test_blast_fast_path_na_line() {
     [ "$(_line 'Axes fired')" = "none (fast-path — planner-provided; reversibility keyword scan: no match), blast-radius:3" ]
 }
 
+# ── summary: the one log formatter (issue #769) ───────────────────────────────
+# The sweep line read `complex, score: 3/3` and the phase-done line, free text,
+# `complex (score 6: ...)`: two formats, and `/3` looked like a maximum.
+_sum() { bash "$CS" summary "$TMP" "$@"; }
+
+test_summary_sweep_then_final_with_blast_override() {
+  _scored reversibility:auth-modify '| `a` | HIGH | 1 callers | 0 indirect | none | modifying |\n' || return 1
+  [ "$(_sum)" = "sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)" ] || return 1
+  bash "$CS" blast "$TMP" >/dev/null || return 1
+  [ "$(_sum final)" = "final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3" ] &&
+    # The sweep's own number stays readable after the write-back.
+    [ "$(_sum sweep)" = "sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)" ]
+}
+
+test_summary_never_prints_threshold_as_denominator() {
+  _scored reversibility '| `a` | HIGH | 1 callers | 0 indirect | none | modifying |\n' || return 1
+  bash "$CS" blast "$TMP" >/dev/null || return 1
+  local st
+  for st in sweep final; do
+    ! grep -Eq '[0-9]/3|\|' <<<"$(_sum "$st")" || return 1
+  done
+}
+
+test_summary_final_without_blast() {
+  _scored multi-service '| `a` | LOW | 1 callers | 0 indirect | none | modifying |\n' || return 1
+  bash "$CS" blast "$TMP" >/dev/null || return 1
+  [ "$(_sum final)" = "final: simple, score 2 = sweep 2 + blast-radius 0 (threshold 3), axes: multi-service:2" ]
+}
+
+test_summary_blast_escalation_keeps_sweep_simple() {
+  _scored reversibility:auth-reuse '| `a` | HIGH | 1 callers | 0 indirect | none | modifying |\n' || return 1
+  bash "$CS" blast "$TMP" >/dev/null || return 1
+  [ "$(_sum sweep)" = "sweep: simple, score 0 (threshold 3, blast radius not yet applied), axes: reversibility:0 (auth-reuse)" ] &&
+    [ "$(_sum final)" = "final: complex, score 3 = sweep 0 + blast-radius 3 (threshold 3), axes: reversibility:0 (auth-reuse), blast-radius:3" ]
+}
+
+test_summary_auth_new_and_none() {
+  _write_case "cross-layer,reversibility:auth-new" 4 complex || return 1
+  [ "$(_sum)" = "sweep: complex, score 4 (threshold 3, blast radius not yet applied), axes: cross-layer:2, reversibility:2 (auth-new)" ] || return 1
+  _write_case none 0 simple || return 1
+  [ "$(_sum final)" = "final: simple, score 0 = sweep 0 + blast-radius 0 (threshold 3), axes: none" ]
+}
+
+test_summary_fast_path_na() {
+  bash -c '
+    source "$1/appraise-fast-path.sh"
+    FAST_PATH_STRATEGY=Conservative FAST_PATH_DESCRIPTION="Rename a label" generate_fast_path_notes "$2" T-1
+  ' _ "$LIB_DIR" "$TMP" || return 1
+  [ "$(_sum final)" = "final: simple, score n/a (threshold 3), axes: none (fast-path — planner-provided; reversibility keyword scan: no match)" ]
+}
+
+test_summary_strips_pipes() {
+  _setup_notes
+  bash "$CS" write "$TMP" --axes 'reversibility:a|b' --reason r >/dev/null || return 1
+  [ "$(_sum)" = "sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (a/b)" ]
+}
+
+test_summary_no_score_exit_3() {
+  _setup_notes
+  local rc=0 out
+  out=$(bash "$CS" summary "$TMP" 2>/dev/null) || rc=$?
+  [ "$rc" -eq 3 ] && [ -z "$out" ]
+}
+
+test_summary_bad_stage_exit_2() {
+  _write_case none 0 simple || return 1
+  local rc=0
+  bash "$CS" summary "$TMP" bogus >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 2 ]
+}
+
+# The sweep log line in the appraise reference is the formatter's output, not
+# a template the agent fills in.
+test_skill_sweep_line_calls_summary() {
+  local ref="$LIB_DIR/../skills/ticket-appraise/references/full-investigation.md"
+  grep -qF 'plog.sh APPRAISE complexity-sweep done "$(bash ~/.claude/skills/lib/complexity-score.sh summary "{TICKET-DIR}")"' "$ref" &&
+    ! grep -qF 'WEIGHTED}/3' "$ref"
+}
+
 test_usage_exit_2() {
   local rc=0
   bash "$CS" bogus "$TMP" >/dev/null 2>&1 || rc=$?
