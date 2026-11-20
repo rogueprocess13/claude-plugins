@@ -134,8 +134,8 @@ _events() {
   local f="$1/logs/${TID}-outbox.jsonl"
   [ -f "$f" ] && jq -c --arg e "$2" 'select(.event == $e)' "$f" | wc -l | tr -d ' ' || echo 0
 }
-_ack_field() { jq -r --arg f "$2" '.regression_ack[$f] // ""' "$(_manifest "$1")"; }
-_recorded() { jq -r '.regression_risk.risk // ""' "$(_manifest "$1")"; }
+_ack_field() { jq -r --arg f "$2" '(.regression_acks // [])[-1][$f] // ""' "$(_manifest "$1")"; }
+_recorded() { jq -r '(.regression_risks // [])[-1].risk // ""' "$(_manifest "$1")"; }
 _expect_rc() {
   local want="$1" rc=0
   shift
@@ -374,7 +374,7 @@ test_repeat_ack_is_noop() {
   _write_notes "$t" UNACKNOWLEDGED
   id=$(_id "$t")
   _ack "$t" "$id" >/dev/null || return 1
-  jq -c '.regression_ack.at = "2001-01-01T00:00:00Z"' "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  jq -c '.regression_acks[0].at = "2001-01-01T00:00:00Z"' "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
   # No prompt on a repeat: a wrong answer would abort if one were asked.
   out=$(_ack "$t" "not-the-id" --note "again") || return 1
   grep -qx 'already_acknowledged=true' <<<"$out" || return 1
@@ -421,7 +421,7 @@ test_person_acknowledges_a_removed_section() {
   id=$(_id "$t")
   _write_notes "$t" none
   out=$(_ack "$t" "$id") || return 1
-  grep -q 'no longer has the section' <<<"$out" || return 1
+  grep -q 'no longer has a Regression Risk section' <<<"$out" || return 1
   out=$(_check "$t") || return 1
   grep -qx 'REGRESSION_RISK_GATE=pass' <<<"$out"
 }
@@ -498,7 +498,7 @@ test_non_human_fact_holds() {
   sha=$(_sha "$t")
   for prov in policy agent ""; do
     jq -c --arg r "$sha" --arg p "$prov" \
-      '.regression_ack = {risk: $r, provenance: $p, by: "x", at: "2026-01-01T00:00:00Z"}' \
+      '.regression_acks = [{risk: $r, provenance: $p, by: "x", at: "2026-01-01T00:00:00Z"}]' \
       "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
     rc=0
     out=$(_check "$t") || rc=$?
@@ -518,6 +518,153 @@ test_log_line_does_not_clear() {
   _write_notes "$t" UNACKNOWLEDGED
   echo "2026-01-01T00:00:00Z|IMPLEMENT|regression-risk|done|acknowledged: risk=x; provenance=human; by=y; at=z" >>"$t/logs/${TID}-pipeline.log"
   _expect_rc 1 _check "$t"
+}
+
+# Review round 2, finding 1: the recorded history is append-only and every
+# recorded version needs an acknowledgement. Putting an earlier, acknowledged
+# text back does not clear a later version nobody acknowledged.
+test_revert_to_acked_text_still_holds() {
+  local t out rc=0 a b
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  a=$(_sha "$t")
+  _ack "$t" "${a:0:12}" >/dev/null || return 1
+  _check "$t" >/dev/null || return 1
+  _write_notes "$t" UNACKNOWLEDGED "the plan now removes the prior guard"
+  b=$(_sha "$t")
+  _expect_rc 1 _check "$t" || return 1
+  # Back to the acknowledged text.
+  _write_notes "$t" UNACKNOWLEDGED
+  [ "$(_sha "$t")" = "$a" ] || return 1
+  out=$(_check "$t") || rc=$?
+  [ "$rc" -eq 1 ] || {
+    echo "reverting notes.md to acknowledged text cleared the later risk" >&2
+    return 1
+  }
+  grep -qx 'REGRESSION_RISK_REASON=earlier-risk' <<<"$out" || return 1
+  grep -qx "REGRESSION_RISK_ID=${b:0:12}" <<<"$out" || return 1
+  # Both versions stay on record, in order; nothing was replaced.
+  [ "$(jq -c '[.regression_risks[].risk]' "$(_manifest "$t")")" = "[\"$a\",\"$b\"]" ] || return 1
+  # The person is shown the unacknowledged text, though notes.md no longer has it.
+  out=$(_ack "$t" "${b:0:12}") || return 1
+  grep -q 'the plan now removes the prior guard' <<<"$out" || return 1
+  grep -q 'notes.md no longer says this' <<<"$out" || return 1
+  _check "$t" >/dev/null
+}
+
+test_record_is_append_only() {
+  local t a
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  a=$(_sha "$t")
+  _record "$t" >/dev/null
+  _record "$t" >/dev/null
+  [ "$(jq '.regression_risks | length' "$(_manifest "$t")")" = "1" ] || return 1
+  _write_notes "$t" UNACKNOWLEDGED "second version"
+  _record "$t" >/dev/null
+  _write_notes "$t" UNACKNOWLEDGED
+  _record "$t" >/dev/null
+  [ "$(jq '.regression_risks | length' "$(_manifest "$t")")" = "2" ] || return 1
+  [ "$(jq -r '.regression_risks[0].risk' "$(_manifest "$t")")" = "$a" ] || return 1
+  # The writer has no way to drop or rewrite an entry.
+  _env "$t" bash -c "source '$LIB_DIR/manifest-write.sh'; set_ticket_regression_risk $TID $a 'other text'" || return 1
+  [ "$(jq -r '.regression_risks[0].body' "$(_manifest "$t")")" != "other text" ]
+}
+
+# Finding 2: a section the gate sees and cannot record is a hold, and
+# `record` fails, so neither path goes on with nothing on record.
+test_record_write_failure_holds() {
+  [ "$(id -u)" != "0" ] || {
+    echo "skipped as root: a read-only directory does not stop root" >&2
+    return 0
+  }
+  local t out rc=0 dir
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  dir=$(dirname "$(_manifest "$t")")
+  chmod 444 "$(_manifest "$t")"
+  chmod 555 "$dir"
+  out=$(_check "$t" 2>/dev/null) || rc=$?
+  local rrc=0
+  _record "$t" >/dev/null 2>&1 || rrc=$?
+  chmod 755 "$dir"
+  chmod 644 "$(_manifest "$t")"
+  [ "$rc" -eq 1 ] || {
+    echo "check rc=$rc with an unwritable manifest: $out" >&2
+    return 1
+  }
+  grep -qx 'REGRESSION_RISK_GATE=hold' <<<"$out" || return 1
+  grep -qx 'REGRESSION_RISK_REASON=record-failed' <<<"$out" || return 1
+  [ "$rrc" -eq 1 ] || {
+    echo "record rc=$rrc with an unwritable manifest" >&2
+    return 1
+  }
+  [ -z "$(_recorded "$t")" ]
+}
+
+# Only exit 0 lets ticket-implement go on, and the skill says so.
+test_skill_treats_any_nonzero_as_stop() {
+  grep -q 'Exit 0 → proceed. Any other exit → stop' "$PLUGIN_DIR/skills/ticket-implement/SKILL.md"
+}
+
+# Finding 3: escape sequences in the agent-written text never reach the
+# approver's terminal, and a section holding them is not acknowledged.
+test_escape_sequence_refused() {
+  local t out rc=0
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED $'removes the guard\e[1A\e[2Kharmless rename'
+  out=$(_ack "$t" "$(_id "$t")" 2>&1) || rc=$?
+  [ "$rc" -eq 7 ] || {
+    echo "a section with ESC sequences: rc=$rc" >&2
+    return 1
+  }
+  ! grep -q $'\e' <<<"$out" || {
+    echo "an ESC byte reached the terminal" >&2
+    return 1
+  }
+  ! grep -q 'harmless rename' <<<"$out" || return 1
+  [ -z "$(_ack_field "$t" risk)" ] || return 1
+  _expect_rc 1 _check "$t"
+}
+
+# Ordinary non-ASCII text is not a control character.
+test_plain_unicode_accepted() {
+  local t out
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED "café — 日本 😀 ⚠️ naïve"
+  out=$(_ack "$t" "$(_id "$t")") || return 1
+  grep -q 'café — 日本 😀' <<<"$out" || return 1
+  ! grep -q 'WARNING' <<<"$out"
+}
+
+test_bidi_and_c1_refused() {
+  local t
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED $'safe \xe2\x80\xaetxet neddih'
+  _expect_rc 7 _ack "$t" "$(_id "$t")" || return 1
+  _write_notes "$t" UNACKNOWLEDGED $'c1 \xc2\x9b2K control'
+  _expect_rc 7 _ack "$t" "$(_id "$t")"
+}
+
+# Once recorded, a version with escape sequences cannot be rewritten. After
+# the section is cleaned it is shown escaped, under a warning, and never raw.
+test_recorded_escape_version_shown_escaped() {
+  local t out bad
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED $'removes the guard\e[2Khidden'
+  bad=$(_sha "$t")
+  _expect_rc 1 _check "$t" || return 1
+  _write_notes "$t" UNACKNOWLEDGED "removes the guard, stated plainly"
+  out=$(_ack "$t" "$(_id "$t")") || {
+    echo "a cleaned section could not be acknowledged: $out" >&2
+    return 1
+  }
+  ! grep -q $'\e' <<<"$out" || return 1
+  grep -q 'WARNING' <<<"$out" || return 1
+  grep -qF 'removes the guard^[[2Khidden' <<<"$out" || return 1
+  [ "$(jq '[.regression_acks[] | select(.provenance == "human")] | length' "$(_manifest "$t")")" = "2" ] || return 1
+  jq -e --arg r "$bad" '.regression_acks | any(.risk == $r)' "$(_manifest "$t")" >/dev/null || return 1
+  _check "$t" >/dev/null
 }
 
 # ── skill prose ──────────────────────────────────────────────────────────────
@@ -556,6 +703,14 @@ _run "a heading of another level or case is still the section" test_heading_leve
 _run "risk text on a **Status:**-prefixed line changes the fingerprint" test_status_prefixed_text_is_fingerprinted
 _run "risk text on a → line changes the fingerprint; only the fixed lines are dropped" test_arrow_prefixed_text_is_fingerprinted
 _run "a → line added after the acknowledgement re-holds" test_added_arrow_line_reholds
+_run "reverting notes.md to acknowledged text does not clear a later risk" test_revert_to_acked_text_still_holds
+_run "the recorded history is append-only" test_record_is_append_only
+_run "a record write failure holds, and record itself fails" test_record_write_failure_holds
+_run "ticket-implement stops on any non-zero exit of the gate" test_skill_treats_any_nonzero_as_stop
+_run "a section with an ESC sequence is refused and never printed" test_escape_sequence_refused
+_run "direction-override and C1 control characters are refused" test_bidi_and_c1_refused
+_run "ordinary non-ASCII text is shown and accepted" test_plain_unicode_accepted
+_run "a recorded version with ESC sequences is shown escaped under a warning" test_recorded_escape_version_shown_escaped
 _run "a repeated hold emits gate-held once per risk" test_hold_event_once_per_risk
 _run "the gate does not evaluate without REPOS_ROOT (exit 2)" test_check_needs_repos_root
 _run "the actuator clears the gate and records provenance, who and when" test_ack_clears_and_records_provenance

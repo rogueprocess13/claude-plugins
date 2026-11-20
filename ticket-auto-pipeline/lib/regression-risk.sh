@@ -6,49 +6,52 @@
 # notes.md when the plan touches a file a prior fix touched. A person must
 # acknowledge that risk before implementation starts.
 #
-# Two facts in the ticket's local manifest carry the gate. notes.md is only
-# where the risk is described:
+# Two append-only lists in the ticket's local manifest carry the gate.
+# notes.md is only where the risk is described:
 #
-#   "regression_risk": {"risk": "<sha256>", "recorded_at": "<ISO>"}
-#       A risk exists. Written by `record` (ticket-appraise-exec, right after
-#       the section is written) and by `check` whenever it sees a section.
-#       Nothing in this file ever removes it.
-#   "regression_ack": {"risk": "<sha256>", "provenance": "human",
-#                      "by": "<who>", "at": "<ISO>", "note": "<optional>"}
-#       A person acknowledged that risk. Written only by the operator script
-#       lib/regression-ack.sh.
+#   "regression_risks": [{"risk": "<sha256>", "recorded_at": "<ISO>", "body": "<text>"}]
+#       Every version of the risk that was ever seen. Written by `record`
+#       (ticket-appraise-exec, right after the section is written) and by
+#       `check` for any section it sees. Entries are never changed or removed.
+#   "regression_acks": [{"risk": "<sha256>", "provenance": "human",
+#                        "by": "<who>", "at": "<ISO>", "note": "<optional>"}]
+#       A person acknowledged that version. Written only by the operator
+#       script lib/regression-ack.sh.
 #
-# The risk the gate judges is the fingerprint of the section as it stands,
-# or, when notes.md no longer has the section, the recorded one. So deleting
-# or renaming the section does not clear the gate: a recorded risk with no
-# matching acknowledgement holds (reason=section-removed). Changing
-# `**Status:** UNACKNOWLEDGED` to `ACKNOWLEDGED` by hand acknowledges nothing,
-# and a changed section needs a new acknowledgement.
+# The gate passes only when EVERY recorded risk has a human acknowledgement.
+# So none of these clears it: changing `**Status:** UNACKNOWLEDGED` to
+# `ACKNOWLEDGED` by hand, deleting or renaming the section, or putting an
+# earlier, already acknowledged text back while a later version was never
+# acknowledged. A section the gate sees and cannot record is a hold.
 #
 # Sourced:
 #   regression_risk_body <notes.md>         normalised section text; rc 1 = no section
 #   regression_risk_fingerprint <notes.md>  64-hex sha256 of that text; rc 1 = no section
-#   regression_risk_recorded <TID>          the manifest's recorded risk sha, or nothing
-#   regression_risk_ack_json <TID>          the manifest's regression_ack object, or nothing
+#   regression_risk_recorded <TID>          recorded risk shas, oldest first
+#   regression_risk_outstanding <TID>       recorded shas with no human acknowledgement
+#   regression_risk_ack_json <TID>          the latest human acknowledgement, or nothing
 #
 # CLI:
 #   regression-risk.sh record <TID> [<notes.md>]
-#     Records the section's fingerprint as regression_risk. Prints
-#     REGRESSION_RISK_RECORDED=<12 hex>|none. Exit 0, 1 manifest write
-#     failed, 2 usage / notes.md not found.
+#     Records the section's fingerprint. Prints
+#     REGRESSION_RISK_RECORDED=<12 hex>|none. Exit 0, 1 the manifest write
+#     failed (the caller stops), 2 usage / notes.md not found.
 #   regression-risk.sh check <TID> [<notes.md>]
 #     Prints REGRESSION_RISK_GATE=clear|pass|hold and REGRESSION_RISK_ID=<12 hex>.
-#     clear  no section and no recorded risk                         exit 0
-#     pass   the manifest holds a human acknowledgement of this risk exit 0
+#     clear  no section and nothing ever recorded                     exit 0
+#     pass   every recorded risk has a human acknowledgement          exit 0
 #            log: IMPLEMENT|regression-risk|done|acknowledged: risk=…; provenance=human; by=…; at=…
-#     hold   anything else                                           exit 1
+#     hold   anything else                                            exit 1
 #            log: META|gate-stop|fail|REGRESSION_RISK_UNACKNOWLEDGED — reason=…; risk=…
 #            outbox: gate-held, once per risk
-#     notes.md not found, REPOS_ROOT unresolved, no sha256 tool      exit 2
-#     Hold reasons: unacknowledged, risk-changed (an acknowledgement exists for
-#     different content), section-removed (a recorded risk whose section is
-#     gone from notes.md), hand-edit (notes.md says ACKNOWLEDGED, the manifest
-#     does not), provenance (the fact is not a human's).
+#     notes.md not found, REPOS_ROOT unresolved, no sha256 tool       exit 2
+#     Only exit 0 lets the caller proceed. Hold reasons: unacknowledged,
+#     risk-changed (the section differs from what was acknowledged),
+#     earlier-risk (the section as it stands is acknowledged, another
+#     recorded version is not), section-removed, record-failed (the section
+#     could not be written to the manifest), hand-edit (notes.md says
+#     ACKNOWLEDGED, the manifest does not), provenance (an entry that is not
+#     a human's).
 #   regression-risk.sh fingerprint <notes.md>
 #
 # What this does not guarantee: the manifest is a file an agent can write.
@@ -99,16 +102,23 @@ regression_risk_body() {
   ' "$notes"
 }
 
-regression_risk_fingerprint() {
-  local body sum=""
-  body=$(regression_risk_body "$1") || return 1
+_rr_sha256() {
+  local sum=""
   if command -v sha256sum >/dev/null 2>&1; then
-    sum=$(printf '%s' "$body" | sha256sum | awk '{print $1}') || sum=""
+    sum=$(sha256sum | awk '{print $1}') || sum=""
   elif command -v shasum >/dev/null 2>&1; then
-    sum=$(printf '%s' "$body" | shasum -a 256 | awk '{print $1}') || sum=""
+    sum=$(shasum -a 256 | awk '{print $1}') || sum=""
+  else
+    cat >/dev/null
   fi
   [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || return 2
   printf '%s\n' "$sum"
+}
+
+regression_risk_fingerprint() {
+  local body
+  body=$(regression_risk_body "$1") || return 1
+  printf '%s' "$body" | _rr_sha256
 }
 
 # regression_risk_hand_edited <notes.md> — 0 when a `**Status:** ACKNOWLEDGED`
@@ -129,22 +139,37 @@ _rr_manifest_path() {
 regression_risk_recorded() {
   local path
   path=$(_rr_manifest_path "$1") || return 0
-  jq -r '.regression_risk.risk // empty' "$path" 2>/dev/null || true
+  jq -r '(.regression_risks // [])[] | .risk // empty' "$path" 2>/dev/null || true
+}
+
+regression_risk_outstanding() {
+  local path
+  path=$(_rr_manifest_path "$1") || return 0
+  jq -r '(.regression_acks // []) as $a
+    | (.regression_risks // [])[] | .risk as $r
+    | select(($a | any(.risk == $r and .provenance == "human")) | not) | $r' \
+    "$path" 2>/dev/null || true
 }
 
 regression_risk_ack_json() {
   local path
   path=$(_rr_manifest_path "$1") || return 0
-  jq -c '.regression_ack // empty | select(type == "object")' "$path" 2>/dev/null || true
+  jq -c '[(.regression_acks // [])[] | select(.provenance == "human")] | last // empty' \
+    "$path" 2>/dev/null || true
 }
 
-# _rr_record <TID> <sha> — write the recorded risk unless it already says so.
+# _rr_record <TID> <sha> <notes.md> — append this version to the recorded
+# list unless it is there, then confirm it is. rc 1 when it is not on record
+# afterwards, whatever the reason.
 _rr_record() {
-  [ "$(regression_risk_recorded "$1")" != "$2" ] || return 0
-  declare -f set_ticket_regression_risk >/dev/null 2>&1 ||
-    source "$_RR_LIB_DIR/manifest-write.sh" 2>/dev/null || return 1
-  ensure_ticket_manifest "$1" >/dev/null 2>&1 || return 1
-  set_ticket_regression_risk "$1" "$2"
+  local tid="$1" sha="$2" notes="$3"
+  if ! regression_risk_recorded "$tid" | grep -qx "$sha"; then
+    declare -f set_ticket_regression_risk >/dev/null 2>&1 ||
+      source "$_RR_LIB_DIR/manifest-write.sh" 2>/dev/null || return 1
+    ensure_ticket_manifest "$tid" >/dev/null 2>&1 || return 1
+    set_ticket_regression_risk "$tid" "$sha" "$(regression_risk_body "$notes")" >/dev/null 2>&1 || return 1
+  fi
+  regression_risk_recorded "$tid" | grep -qx "$sha"
 }
 
 # _rr_resolve <TID> <notes-arg> — sets RR_NOTES; rc 2 with a message when the
@@ -186,60 +211,76 @@ _rr_record_cli() {
     echo "regression-risk: no sha256 tool (sha256sum or shasum)" >&2
     return 2
   fi
-  _rr_record "$tid" "$sha" || {
-    echo "regression-risk: could not record the risk in the manifest for $tid" >&2
+  _rr_record "$tid" "$sha" "$RR_NOTES" || {
+    echo "regression-risk: could not record the risk in the manifest for $tid — stop; do not continue without it" >&2
     return 1
   }
   echo "REGRESSION_RISK_RECORDED=${sha:0:12}"
 }
 
 _rr_check() {
-  local tid="$1" notes sha rc=0 removed=false
+  local tid="$1" notes cur="" rc=0 record_failed=false
   _rr_resolve "$1" "${2:-}" || return 2
   notes="$RR_NOTES"
 
-  sha=$(regression_risk_fingerprint "$notes") || rc=$?
+  cur=$(regression_risk_fingerprint "$notes") || rc=$?
   if [ "$rc" -eq 1 ]; then
-    # No section now. A risk recorded earlier still stands.
-    sha=$(regression_risk_recorded "$tid")
-    if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "REGRESSION_RISK_GATE=clear"
-      return 0
-    fi
-    removed=true
+    cur=""
   elif [ "$rc" -ne 0 ]; then
     echo "regression-risk: no sha256 tool (sha256sum or shasum) — cannot fingerprint the risk" >&2
     return 2
   else
-    _rr_record "$tid" "$sha" ||
-      echo "regression-risk: could not record the risk in the manifest for $tid" >&2
+    _rr_record "$tid" "$cur" "$notes" || record_failed=true
   fi
 
-  local id="${sha:0:12}" ack ack_risk="" ack_prov="" ack_by="" ack_at=""
-  ack=$(regression_risk_ack_json "$tid")
-  if [ -n "$ack" ]; then
-    ack_risk=$(jq -r '.risk // ""' <<<"$ack")
-    ack_prov=$(jq -r '.provenance // ""' <<<"$ack")
-    ack_by=$(jq -r '.by // ""' <<<"$ack")
-    ack_at=$(jq -r '.at // ""' <<<"$ack")
+  local recorded outstanding
+  recorded=$(regression_risk_recorded "$tid")
+  outstanding=$(regression_risk_outstanding "$tid")
+  if [ -z "$cur" ] && [ -z "$recorded" ]; then
+    echo "REGRESSION_RISK_GATE=clear"
+    return 0
   fi
+
+  # The risk named in the output: the section as it stands when that is what
+  # holds, else the newest version still waiting for a person.
+  local sha="$cur"
+  if [ -z "$sha" ] || { ! $record_failed && ! grep -qx "$sha" <<<"$outstanding"; }; then
+    sha=$(tail -n 1 <<<"$outstanding")
+  fi
+  [ -n "$sha" ] || sha="${cur:-$(tail -n 1 <<<"$recorded")}"
+  local id="${sha:0:12}"
 
   export TICKET_ID="${TICKET_ID:-$tid}"
   echo "REGRESSION_RISK_ID=$id"
-  if [ "$ack_risk" = "$sha" ] && [ "$ack_prov" = "human" ]; then
+  if ! $record_failed && [ -z "$outstanding" ]; then
+    local ack ack_by ack_at
+    ack=$(regression_risk_ack_json "$tid")
+    [ -n "$ack" ] || ack='{}'
+    ack_by=$(jq -r '.by // "unknown"' <<<"$ack" 2>/dev/null) || ack_by="unknown"
+    ack_at=$(jq -r '.at // "unknown"' <<<"$ack" 2>/dev/null) || ack_at="unknown"
     bash "$_RR_LIB_DIR/plog.sh" IMPLEMENT regression-risk done \
-      "acknowledged: risk=${id}; provenance=human; by=${ack_by:-unknown}; at=${ack_at:-unknown}" 2>/dev/null || true
+      "acknowledged: risk=${id}; provenance=human; by=${ack_by}; at=${ack_at}" 2>/dev/null || true
     echo "REGRESSION_RISK_GATE=pass"
     return 0
   fi
 
+  local path any_ack="" foreign=""
+  path=$(_rr_manifest_path "$tid") || path=""
+  if [ -n "$path" ]; then
+    any_ack=$(jq -r '[(.regression_acks // [])[] | select(.provenance == "human")] | length' "$path" 2>/dev/null) || any_ack=""
+    foreign=$(jq -r --arg r "$sha" '[(.regression_acks // [])[] | select(.risk == $r and .provenance != "human")] | length' "$path" 2>/dev/null) || foreign=""
+  fi
   local reason="unacknowledged"
-  if $removed; then
+  if $record_failed; then
+    reason="record-failed"
+  elif [ -z "$cur" ]; then
     reason="section-removed"
-  elif [ -n "$ack_risk" ] && [ "$ack_risk" != "$sha" ]; then
-    reason="risk-changed"
-  elif [ -n "$ack" ] && [ "$ack_prov" != "human" ]; then
+  elif ! grep -qx "$cur" <<<"$outstanding"; then
+    reason="earlier-risk"
+  elif [ "${foreign:-0}" != "0" ] && [ -n "$foreign" ]; then
     reason="provenance"
+  elif [ "${any_ack:-0}" != "0" ] && [ -n "$any_ack" ]; then
+    reason="risk-changed"
   elif regression_risk_hand_edited "$notes"; then
     reason="hand-edit"
   fi
@@ -271,8 +312,10 @@ acknowledgement.
 EOF
   case "$reason" in
   hand-edit) echo "notes.md says ACKNOWLEDGED, but no acknowledgement is recorded. A hand edit no longer counts." ;;
-  risk-changed) echo "The risk changed since it was last acknowledged (${ack_risk:0:12} by ${ack_by:-unknown}). It needs a new acknowledgement." ;;
+  risk-changed) echo "The risk changed since it was last acknowledged. The new version needs its own acknowledgement." ;;
+  earlier-risk) echo "notes.md shows a version that was acknowledged, but another recorded version of the risk never was. Putting old text back does not clear it." ;;
   section-removed) echo "A regression risk was recorded for this ticket, and notes.md no longer has the section. Removing it does not clear the gate." ;;
+  record-failed) echo "The risk could not be written to the ticket manifest, so the gate holds. Fix the manifest (permissions, disk) and re-run." ;;
   esac
   return 1
 }
