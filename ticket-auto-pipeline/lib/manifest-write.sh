@@ -405,6 +405,25 @@ set_ticket_approval() {
   fi
 }
 
+# set_ticket_regression_risk <TID> <risk_sha256>
+# Records that the ticket has a Regression Risk and which one
+# (`.regression_risk = {risk, recorded_at}`, GitHub #771). The gate reads
+# this instead of trusting notes.md to still carry the section. It only ever
+# sets the fact; nothing removes it. Exit 3 on a bad fingerprint, 1 when no
+# manifest exists yet.
+set_ticket_regression_risk() {
+  local tid="$1" risk="$2"
+  if ! [[ "$risk" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "manifest-write: invalid risk fingerprint (expected 64 hex)" >&2
+    return 3
+  fi
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+  _manifest_update "$manifest_path" '.regression_risk = {risk: $r, recorded_at: $at}' \
+    --arg r "$risk" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
 # set_ticket_regression_ack <TID> <risk_sha256> <provenance> <by> [note]
 # Records a person's acknowledgement of the ticket's Regression Risk section
 # (GitHub #771): `.regression_ack = {risk, provenance, by, at[, note]}`.
