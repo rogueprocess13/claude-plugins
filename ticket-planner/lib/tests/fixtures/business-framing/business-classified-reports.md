@@ -26,12 +26,20 @@ Every accountant report and export lists only documents marked Classified. The r
 - The excluded count comes from the same query with the opposite predicate.
 - No schema change: `classification_status` already exists (computed column).
 
+## Errors and Edge Cases
+
+- **Failure:** when the report request fails (network failure or a 5xx response), the report page shows "The report could not be loaded." and no partial list.
+- **Check order:** Not applicable — the report routes keep their existing sign-in and permission checks.
+- **Empty or malformed input:** a client with no documents shows an empty report and no excluded-count message.
+- **Late or concurrent responses:** Not applicable — the report is read-only and loaded once per page visit.
+- **Unauthorised viewer:** Not applicable — access to the report page does not change.
+
 ## Acceptance Criteria
 
-- [ ] A report for a client with 4 classified and 2 unclassified documents lists exactly 4 documents
-- [ ] The report header shows "2 documents not yet classified"
-- [ ] The CSV export for the same client contains exactly 4 data rows
-- [ ] A report for a client with only classified documents shows no excluded-count message
+- [ ] [live] A report for a client with 4 classified and 2 unclassified documents lists exactly 4 documents
+- [ ] [live] The report header shows "2 documents not yet classified"
+- [ ] [live] The CSV export for the same client contains exactly 4 data rows
+- [ ] [live] A report for a client with only classified documents shows no excluded-count message
 
 ## Out of Scope
 
@@ -51,6 +59,10 @@ Changing how classification itself works. Showing the excluded documents inside 
 ## Navigation Path
 
 `Clients > Client detail > Reports > Document summary`
+
+## Verify Mode
+
+**Verify mode:** browser — an accountant opens the report and its export from the client page.
 
 ## Verification Plan
 

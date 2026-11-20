@@ -1,0 +1,7 @@
+{
+  "contracts": ["ticket-body-v2"],
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "GitHub #773: a spec written to the ticket-body-v2 rules (Verify Mode, Errors and Edge Cases, tagged criteria repeated verbatim in Verification Notes, Scope listing every Technical Context file with the read-only one marked). No family reports anything: the tags and the new sections do not disturb the other checks."
+}

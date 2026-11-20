@@ -25,10 +25,10 @@ Move bom onto the shared parent POM at Java 17 and Spring Boot 3.4, replace the 
 
 ## Acceptance Criteria
 
-- [ ] `mvn clean verify -pl microservices/bom` exits 0 on Java 17
-- [ ] The bom service starts and `GET /management/health` returns HTTP 200 with status "UP"
-- [ ] `GET /api/products` returns HTTP 200 with the same JSON shape as before the migration
-- [ ] The built artifact has no `jhipster` dependency in `mvn dependency:tree`
+- [ ] [live] `mvn clean verify -pl microservices/bom` exits 0 on Java 17
+- [ ] [live] The bom service starts and `GET /management/health` returns HTTP 200 with status "UP"
+- [ ] [live] `GET /api/products` returns HTTP 200 with the same JSON shape as before the migration
+- [ ] [live] The built artifact has no `jhipster` dependency in `mvn dependency:tree`
 
 ## Out of Scope
 
@@ -43,6 +43,10 @@ Java 21 or later. Changes to any other microservice.
 ## Test User
 
 N/A — backend-only build and API check.
+
+## Verify Mode
+
+**Verify mode:** live-backend — the build must pass and the started service is checked over its health and product endpoints; there is no page.
 
 ## Verification Plan
 
