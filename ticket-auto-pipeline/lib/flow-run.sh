@@ -62,6 +62,9 @@
 #   12   an earlier pending event could not be replayed; nothing applied, retry
 #   13   REPOS_ROOT unset — the ticket manifest cannot be resolved; nothing
 #        applied. Source the ticket env file (or export REPOS_ROOT) and retry
+#   14   the ticket is cancelled — no trigger applies any more (GitHub #770).
+#        Not transient: do not retry. Nothing is written to the pipeline
+#        log, which already ends with the ticket's outcome line.
 #   42   another flow.sh run for this ticket holds the lock
 #   127  flow.sh could not be resolved (nothing was run)
 #   any other non-zero code is flow.sh's and is passed through as-is
@@ -69,6 +72,8 @@
 # Side effects on failure (none on exit 0)
 #   11:      LOG  <ts>|META|gate-stop|fail|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr
 #            HB   gate verdict-gate fail
+#   14:      no log line (the cancelled ticket's log stays closed)
+#            HB   gate ticket-cancelled fail
 #   127:     LOG  <ts>|META|flow-error|fail|flow.sh not found: <trigger>
 #            HB   retry flow-sh fail (error_type=not_found)
 #   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>[ — <flow.sh stderr snippet>]
@@ -239,6 +244,14 @@ case "$_fr_rc" in
   _fr_hb gate "verdict-gate" "fail" "${_fr_trigger_safe} blocked by trailing FAIL/BLOCK verifier-result" \
     "{\"trigger\":\"${_fr_trigger_safe}\",\"ticket\":\"${_fr_tid}\"}"
   _fr_report 11 true
+  ;;
+14)
+  # Cancelled ticket (GitHub #770). No log line: the log already ends with
+  # the cancel outcome, and a line after it would make fleet's terminal
+  # classifiers read the ticket as an interrupted run and resume it.
+  _fr_hb gate "ticket-cancelled" "fail" "${_fr_trigger_safe} refused: ticket is cancelled" \
+    "{\"trigger\":\"${_fr_trigger_safe}\",\"ticket\":\"${_fr_tid}\"}"
+  _fr_report 14 false
   ;;
 *)
   case "$_fr_rc" in

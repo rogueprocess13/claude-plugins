@@ -52,8 +52,9 @@ fi
 SM="$SCRIPT_DIR/workflow.json"
 
 usage() {
-  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON] [--provenance human|policy]" >&2
+  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--reason TEXT] [--dry-run] [--override REASON] [--provenance human|policy]" >&2
   echo "" >&2
+  echo "  --reason TEXT   Same as --data reason=TEXT (required by the cancel trigger)" >&2
   echo "  --generation N   Caller's generation token (default: \$FLEET_GENERATION, which fleetd sets for every worker)" >&2
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
   echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
@@ -61,7 +62,8 @@ usage() {
   echo "" >&2
   echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
   echo "  11 verdict gate, 12 an earlier pending event could not be emitted," >&2
-  echo "  13 REPOS_ROOT unset or log dir unresolvable (STATE_ROOT_STRICT=true), 42 ticket in flight" >&2
+  echo "  13 REPOS_ROOT unset or log dir unresolvable (STATE_ROOT_STRICT=true)," >&2
+  echo "  14 ticket is cancelled (no trigger applies any more), 42 ticket in flight" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -128,6 +130,12 @@ while [ $# -gt 0 ]; do
       usage
     fi
     DATA["$key"]="$val"
+    shift
+    ;;
+  --reason)
+    # Shorthand for --data reason=<text> (the cancel trigger, GitHub #770).
+    _need_value "$1" $#
+    DATA["reason"]="$2"
     shift
     ;;
   *)
@@ -228,7 +236,8 @@ _write_approval_manifest() {
   human-approve | pr-iterate)
     set_ticket_approval "$TICKET_ID" true "$PROVENANCE" 2>/dev/null || true
     ;;
-  re-claim | implement-complete)
+  re-claim | implement-complete | cancel)
+    # cancel (GitHub #770): a retired ticket carries no approval.
     # implement-complete clearing the fact (Ready -> Review) is what makes
     # uat-fail's Review->Ready-without-reapproval path safe — a ticket that
     # loops UAT-fail back to Ready must never carry a stale approved:true,
@@ -254,6 +263,18 @@ if [ -z "$def" ]; then
   jq -r '.triggers | keys[]' "$SM" | sed 's/^/  /' >&2
   exit 3
 fi
+
+# ── Required --data keys (GitHub #770) ──────────────────────────────────────
+# A trigger's `requires_data` names the --data keys it cannot run without
+# (cancel needs a reason: the outbox event and the log record carry it).
+# Checked before the lock and any write. A value of only whitespace is empty.
+while IFS= read -r _req_key; do
+  [ -n "$_req_key" ] || continue
+  if [ -z "${DATA[$_req_key]//[[:space:]]/}" ]; then
+    echo "flow.sh: '${TRIGGER}' requires --data ${_req_key}=<value> (or --${_req_key} <value>)" >&2
+    exit 1
+  fi
+done < <(echo "$def" | jq -r '.requires_data[]? // empty')
 
 # ── Manifest root (GitHub #608) ─────────────────────────────────────────────
 # Every manifest read and write resolves REPOS_ROOT. Unset, the readers below
@@ -325,10 +346,6 @@ if ! flock -n -E 42 9; then
   echo "ticket already in flight: $TICKET_ID" >&2
   exit 42
 fi
-_emit_schema_header
-
-_log "META|trigger-def|info|${TRIGGER}:$(echo "$def" | jq -c '.')"
-_hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" "$(_hb_detail trigger "$TRIGGER")"
 
 # ── Derive state machine variables from trigger def ─────────────────────────
 
@@ -407,6 +424,40 @@ CURRENT_FLAGS_JSON=$(_manifest_get flags) || true
 echo "$CURRENT_FLAGS_JSON" | jq -e 'type == "array"' >/dev/null 2>&1 || CURRENT_FLAGS_JSON='[]'
 CURRENT_REV=$(_manifest_get rev) || true
 [[ "$CURRENT_REV" =~ ^[0-9]+$ ]] || CURRENT_REV=0
+
+# ── Enforced stage refusals (GitHub #770) ───────────────────────────────────
+# Unlike the warn-only `from` check below, these two refuse the trigger.
+#
+# Tombstone: a stage listed in workflow.json's `tombstone_stages` (Canceled)
+# is final. Every trigger is refused there with exit 14 unless it declares
+# `allow_from_tombstone` (only cancel does, so a repeat is harmless). This is
+# what keeps a worker that was still running when its ticket was cancelled
+# from moving it back to Ready or Review: its generation is still current, so
+# the fence alone would let it through.
+#
+# refuse_from: stages a trigger may never leave (cancel names Done — finished
+# work is not retired).
+#
+# Both write nothing — no log line, no heartbeat, no manifest change, no
+# event. The ticket's run is over and its log already ends with its outcome
+# line (pipeline-log-format.md rule 6), so the refusal goes to stderr only.
+# flow-run.sh does not log exit 14 either.
+if [ -n "$CURRENT_STAGE" ]; then
+  if jq -e --arg s "$CURRENT_STAGE" '(.tombstone_stages // []) | index($s) != null' "$SM" >/dev/null 2>&1 &&
+    [ "$(echo "$def" | jq -r '.allow_from_tombstone // false')" != "true" ]; then
+    echo "flow.sh: ${TICKET_ID} is ${CURRENT_STAGE} — '${TRIGGER}' not applied. A cancelled ticket takes no further transition; file a new ticket to redo the work." >&2
+    exit 14
+  fi
+  if echo "$def" | jq -e --arg s "$CURRENT_STAGE" '(.refuse_from // []) | index($s) != null' >/dev/null 2>&1; then
+    echo "flow.sh: '${TRIGGER}' is refused from ${CURRENT_STAGE} on ${TICKET_ID} — nothing applied" >&2
+    exit 8
+  fi
+fi
+
+_emit_schema_header
+
+_log "META|trigger-def|info|${TRIGGER}:$(echo "$def" | jq -c '.')"
+_hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" "$(_hb_detail trigger "$TRIGGER")"
 
 # ── Warn-only from-precondition check (D-2) ─────────────────────────────────
 # Compares the trigger's declared origin against the manifest's stage —
@@ -585,8 +636,10 @@ if [ -n "$_EVENT_NAME" ]; then
   _EVENT_DATA=$(printf '%s' "$_EVENT_DATA_RAW" | jq -c \
     --arg complexity "${DATA[complexity]:-simple}" \
     --arg outcome "${DATA[outcome]:-Smooth}" \
+    --arg reason "${DATA[reason]:-}" \
     'with_entries(.value |= (
-       if type == "string"
+       if . == "{reason}" then $reason
+       elif type == "string"
        then gsub("\\{complexity\\}"; $complexity) | gsub("\\{outcome\\}"; $outcome)
        else . end))')
 fi

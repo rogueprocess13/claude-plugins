@@ -338,6 +338,12 @@ ticket_pipeline_pr_ref() {
 #   no-pr              rc 0  completed, and the log names no PR at all (a
 #                            no-code ticket) — unchanged from before #412
 #   merged             rc 0  completed, and its PR is merged
+#   cancelled          rc 1  the ticket's manifest stage is Canceled (retired
+#                            through /ticket-cancel, GitHub #770). Checked
+#                            first, before any log evidence: a cancelled
+#                            blocker never releases a dependent, even when an
+#                            earlier run of it completed and merged. A person
+#                            decides what its dependents do.
 #   open               rc 1  completed, but its PR is still open. A run that
 #                            leaves the merge to a human (manual autonomy, an
 #                            epic Merge Policy) writes `completed: STEP_6`
@@ -382,6 +388,12 @@ ticket_pipeline_merge_state() {
     fi
   fi
   local log_file="$workspace/${tid}-pipeline.log"
+
+  # Cancelled (GitHub #770) — the manifest decides, whatever the log says.
+  if ticket_is_cancelled "$tid"; then
+    echo "cancelled"
+    return 1
+  fi
 
   if [ ! -f "$log_file" ]; then
     echo "not-complete"
@@ -465,6 +477,17 @@ ticket_pipeline_merge_state() {
 # calls ticket_pipeline_merge_state directly for the state word.
 ticket_pipeline_terminal_done() {
   ticket_pipeline_merge_state "$@" >/dev/null
+}
+
+# ticket_is_cancelled <TID>
+# Exit 0 when the ticket's manifest stage is Canceled — retired through the
+# `cancel` trigger (GitHub #770). Exit 1 otherwise, including no manifest, an
+# unset REPOS_ROOT or an unreadable manifest: absence of evidence is never
+# "cancelled". Manifest only, no tracker read.
+ticket_is_cancelled() {
+  local stage=""
+  stage=$(get_ticket_manifest_field "$1" stage 2>/dev/null) || stage=""
+  [ "$stage" = "Canceled" ]
 }
 
 # ticket_is_ready <TID>
