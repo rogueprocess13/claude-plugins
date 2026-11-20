@@ -635,6 +635,17 @@ spawn_agent_pre() {
     return 1
   fi
 
+  # Stale return guard (GitHub #764). The router hands each agent's return
+  # over in ./logs/<TID>-agent-return.txt, one file shared by every phase
+  # and attempt. Remove the previous spawn's copy now, so any file
+  # router-step.sh post-spawn reads was written after this spawn began. A
+  # return the router never wrote then reads as "no result", never as an
+  # earlier phase's verdict.
+  case "$TICKET_ID" in
+  *[!A-Za-z0-9_-]*) ;;
+  *) rm -f "./logs/${TICKET_ID}-agent-return.txt" 2>/dev/null || true ;;
+  esac
+
   local phase_lower phase_upper
   phase_lower=$(echo "$STEP" | tr '[:upper:]' '[:lower:]')
   # Normalize phase to uppercase for detect-resume.sh compatibility
