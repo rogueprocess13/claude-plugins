@@ -92,12 +92,37 @@ test_epic_policy_closes_child_to_done() {
   [ "$ok" = 1 ]
 }
 
-test_epic_policy_ignores_merge_pending() {
+# GitHub #765: an epic-policy child whose PR waits for a human merge stays in
+# Review (pr-review-pass-merge-pending); it never takes the Done trigger and
+# never parks in UAT.
+test_epic_policy_merge_pending_stays_in_review() {
   _setup
   _prt UAT_POLICY=epic AUTONOMY=manual -- --verdict pass
   local ok=1
-  [ "$_rc" = 0 ] && _flow_once pr-review-pass-done &&
-    grep -q '|META|uat-decision|info|trigger=pr-review-pass-done; merge pending: pipeline autonomy=manual requires human merge' "$_ws/log" || ok=0
+  [ "$_rc" = 0 ] && _flow_once pr-review-pass-merge-pending &&
+    grep -qx 'TRIGGER=pr-review-pass-merge-pending' <<<"$_out" &&
+    grep -q '|META|uat-decision|info|trigger=pr-review-pass-merge-pending; merge pending: pipeline autonomy=manual requires human merge' "$_ws/log" || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+test_epic_policy_manual_merge_policy_stays_in_review() {
+  _setup
+  _prt UAT_POLICY=epic AUTONOMY=auto MERGE_POLICY=manual UAT_URL=https://uat.example.com -- --verdict pass
+  local ok=1
+  [ "$_rc" = 0 ] && _flow_once pr-review-pass-merge-pending &&
+    grep -q '|META|uat-decision|info|trigger=pr-review-pass-merge-pending; merge pending: epic Branch Directive Merge Policy: manual requires human merge' "$_ws/log" || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+# The verdict gate still guards the review pass on this path.
+test_epic_policy_merge_pending_verdict_gate_exits_11() {
+  _setup
+  _prt STUB_RC=11 UAT_POLICY=epic AUTONOMY=manual -- --verdict pass
+  local ok=1
+  [ "$_rc" = 11 ] && grep -qx 'GATE_BLOCKED=true' <<<"$_out" &&
+    grep -q '|META|gate-stop|fail|VERDICT_GATE_BLOCKED' "$_ws/log" || ok=0
   _teardown
   [ "$ok" = 1 ]
 }

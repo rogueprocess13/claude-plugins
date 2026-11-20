@@ -280,12 +280,11 @@ bash ~/.claude/skills/lib/pr-review-transition.sh --log-file "{LOG_FILE}" --verd
 ```
 
 `--verdict gaps` (⚠️) fires `pr-review-fail` (no verdict gate). `--verdict pass` (✅) fires the
-trigger `uat_decide_trigger` picks, after `merge_blocked_reason` (#412): under `UAT Policy: epic`
-it is `pr-review-pass-done`, so the child closes and its `blocked-by` dependents are released.
-Under `per-ticket` (the default) a passing review goes to `UAT` when a UAT target is configured
-**or** the PR is left for a human merge (autonomy `manual`, or any epic `Merge Policy`), and to
-`Done` only when this run may merge the PR in Step 6b. A ticket parked in `UAT` for a pending
-merge stays there until a human merges the PR and fires `uat-pass`.
+trigger `uat_decide_trigger` picks, after `merge_blocked_reason` (#412). "Human merge" means
+autonomy `manual` or any epic `Merge Policy`. `UAT Policy: epic`: `pr-review-pass-done`, or with
+a human merge `pr-review-pass-merge-pending` (stays in `Review`; `merge-poll.sh` moves it to
+`Done` once merged, #765). `per-ticket` (the default): `UAT` when a UAT target is configured or
+with a human merge (a person merges, then fires `uat-pass`), else `Done`.
 
 Exit `11` (it prints `GATE_BLOCKED=true`) means the verdict gate refused the transition: another
 verifier's FAIL/BLOCK is still latest. `_gate_blocked=true` carries into Steps 6b/7/8. Any

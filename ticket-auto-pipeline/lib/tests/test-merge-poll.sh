@@ -258,6 +258,177 @@ EOF
   [ "$rc_open" -ne 0 ] && [ "$rc_merged" -eq 0 ] && [ "$n_merge" = "2" ]
 }
 
+# ── merge_poll_close_merged (GitHub #765) ────────────────────────────────────
+# These run the real flow-run.sh → flow.sh against a temp REPOS_ROOT, so the
+# manifest stage and the outbox are the real ones. The board driver is a stub.
+
+_FLOW_SH="$LIB_DIR/../skills/ticket-flow/flow.sh"
+
+# _close_setup: after _setup. Exports the env flow.sh needs.
+_close_setup() {
+  mkdir -p "$_ws/repos" "$_ws/drivers" "$_ws/logs"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$_ws/drivers/linear.sh"
+  chmod +x "$_ws/drivers/linear.sh"
+  export REPOS_ROOT="$_ws/repos" CLAUDE_SKILLS_LIB="$LIB_DIR"
+  export TICKET_FLOW_LOCK_DIR="$_ws/locks" OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$_ws/drivers"
+  # flow-run.sh would otherwise pick an installed ~/.claude/skills flow.sh.
+  export FLEET_PIPELINE_LOG_DIR="$_ws/logs" FLOW_RUN_FLOW_SH="$_FLOW_SH"
+  unset FLEET_GENERATION FLEET_STATE_DIR FLEET_WORKER_PID LOG_FILE TAP_LOG HB_LOG_FILE
+}
+_close_teardown() {
+  unset REPOS_ROOT CLAUDE_SKILLS_LIB TICKET_FLOW_LOCK_DIR OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE FLEET_PIPELINE_LOG_DIR FLOW_RUN_FLOW_SH
+  _teardown
+}
+_flow() { bash "$_FLOW_SH" "$@" >/dev/null 2>&1; }
+_stage() { get_ticket_manifest_field "$1" stage 2>/dev/null; }
+_rev() { get_ticket_manifest_field "$1" rev 2>/dev/null; }
+_n_event() { grep -c "\"event\":\"$2\"" "$_ws/logs/$1-outbox.jsonl" 2>/dev/null || true; }
+
+# _close_ticket TID REVIEW_TRIGGER...: a finished run that left PR 7 open.
+_close_ticket() {
+  local tid="$1" recent_ts trig
+  shift
+  recent_ts=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%SZ)
+  _flow "$tid" implement-complete
+  for trig in "$@"; do _flow "$tid" "$trig"; done
+  {
+    echo '2026-01-01T00:00:00Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/x;uat-policy=epic;merge-policy=manual'
+    echo '2026-01-01T00:00:01Z|META|pr-created|info|{"pr":7,"url":"https://github.com/acme/repo/pull/7","repo":"acme/repo"}'
+    echo '2026-01-01T00:00:05Z|PR-REVIEW|merge-decision|done|skipped: epic Branch Directive Merge Policy: manual requires human merge'
+    echo '2026-01-01T00:00:09Z|META|outcome|info|completed: STEP_6'
+  } >"$_ws/logs/$tid-pipeline.log"
+  echo "{\"kind\":\"run\",\"tid\":\"$tid\",\"run_id\":\"r-$tid\",\"ended_at\":\"$recent_ts\",\"pr\":{\"pr\":7,\"url\":\"https://x\",\"repo\":\"acme/repo\"},\"observed_at\":\"$recent_ts\"}" >>"$_ws/logs/runs.jsonl"
+}
+# _gh_state STATE [BASE]
+_gh_state() {
+  local merged_at=null commit=null
+  [ "$1" = MERGED ] && merged_at='"2026-09-02T00:00:00Z"' && commit='{"oid":"abc123"}'
+  cat >"$_ws/bin/gh" <<EOF
+#!/usr/bin/env bash
+echo '{"state":"$1","mergedAt":$merged_at,"mergeCommit":$commit,"baseRefName":"${2:-epic/x}"}'
+EOF
+  chmod +x "$_ws/bin/gh"
+}
+_sweep() { MERGE_POLL_MIN_INTERVAL_SECS=0 merge_poll_sweep "$_ws/logs/runs.jsonl" "$@"; }
+
+# Review pass with a human merge pending leaves the ticket in Review; the
+# observed merge closes it, once, however often the sweep repeats.
+test_close_merge_observed_moves_review_to_done_once() {
+  _setup
+  _close_setup
+  _close_ticket EPC-1 pr-review-pass-merge-pending
+  local ok=1 log_before
+  [ "$(_stage EPC-1)" = "Review" ] || ok=0
+  get_ticket_manifest_field EPC-1 flags | jq -e 'index("reviewed") != null' >/dev/null || ok=0
+  log_before=$(cat "$_ws/logs/EPC-1-pipeline.log")
+
+  _gh_state OPEN
+  _sweep
+  [ "$(_stage EPC-1)" = "Review" ] && [ "$(_n_event EPC-1 merge-observed)" = 0 ] || ok=0
+
+  _gh_state MERGED
+  _sweep
+  [ "$(_stage EPC-1)" = "Done" ] && [ "$(_n_event EPC-1 merge-observed)" = 1 ] || ok=0
+  local rev_done
+  rev_done=$(_rev EPC-1)
+
+  _sweep
+  _sweep EPC-1
+  merge_poll_close_merged "$_ws/logs/runs.jsonl"
+  [ "$(_stage EPC-1)" = "Done" ] && [ "$(_n_event EPC-1 merge-observed)" = 1 ] &&
+    [ "$(_rev EPC-1)" = "$rev_done" ] || ok=0
+  # The run has ended: nothing is appended to the pipeline log.
+  [ "$(cat "$_ws/logs/EPC-1-pipeline.log")" = "$log_before" ] || ok=0
+  ticket_pipeline_terminal_done EPC-1 "$_ws/logs" || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
+# A ticket that review already closed (auto-merge, or merged before the
+# transition) is in Done: observing its merge fires nothing.
+test_close_already_done_fires_nothing() {
+  _setup
+  _close_setup
+  _close_ticket EPC-2 pr-review-pass-done
+  local ok=1 rev_before
+  [ "$(_stage EPC-2)" = "Done" ] || ok=0
+  rev_before=$(_rev EPC-2)
+  _gh_state MERGED
+  _sweep
+  _sweep
+  grep -q '"state":"merged"' "$_ws/logs/runs.jsonl" || ok=0
+  [ "$(_stage EPC-2)" = "Done" ] && [ "$(_n_event EPC-2 merge-observed)" = 0 ] &&
+    [ "$(_rev EPC-2)" = "$rev_before" ] || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
+# Review without `reviewed` (the review failed, or never ran) is not closed by
+# a merge; neither is a per-ticket ticket parked in UAT for its human merge.
+test_close_needs_review_stage_and_reviewed_flag() {
+  _setup
+  _close_setup
+  _close_ticket EPC-3 pr-review-fail
+  _close_ticket EPC-4 pr-review-pass-uat
+  _gh_state MERGED
+  _sweep
+  _sweep
+  local ok=1
+  [ "$(_stage EPC-3)" = "Review" ] && [ "$(_n_event EPC-3 merge-observed)" = 0 ] || ok=0
+  [ "$(_stage EPC-4)" = "UAT" ] && [ "$(_n_event EPC-4 merge-observed)" = 0 ] || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
+# The board must not show Done for a merge dispatch does not accept.
+test_close_skips_merge_into_another_base() {
+  _setup
+  _close_setup
+  _close_ticket EPC-5 pr-review-pass-merge-pending
+  _gh_state MERGED develop
+  _sweep
+  local ok=1
+  [ "$(ticket_pipeline_merge_state EPC-5 "$_ws/logs")" = "merged-other-base" ] || ok=0
+  [ "$(_stage EPC-5)" = "Review" ] && [ "$(_n_event EPC-5 merge-observed)" = 0 ] || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
+# A flow.sh failure on the pass that observes the merge (lock busy) is
+# retried by the next sweep, although the PR is no longer a poll candidate.
+test_close_retries_after_flow_failure() {
+  _setup
+  _close_setup
+  _close_ticket EPC-6 pr-review-pass-merge-pending
+  printf '#!/usr/bin/env bash\nexit 42\n' >"$_ws/flow-run-busy.sh"
+  _gh_state MERGED
+  MERGE_POLL_FLOW_RUN="$_ws/flow-run-busy.sh" _sweep
+  local ok=1
+  [ "$(_stage EPC-6)" = "Review" ] || ok=0
+  [ "$(merge_poll_candidates "$_ws/logs/runs.jsonl")" = "[]" ] || ok=0
+  _sweep
+  [ "$(_stage EPC-6)" = "Done" ] && [ "$(_n_event EPC-6 merge-observed)" = 1 ] || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
+# No REPOS_ROOT (no manifest root): the sweep still records the merge and
+# fires nothing.
+test_close_without_repos_root_is_a_noop() {
+  _setup
+  _close_setup
+  _close_ticket EPC-7 pr-review-pass-merge-pending
+  _gh_state MERGED
+  local root="$REPOS_ROOT" ok=1
+  unset REPOS_ROOT
+  _sweep
+  export REPOS_ROOT="$root"
+  grep -q '"state":"merged"' "$_ws/logs/runs.jsonl" || ok=0
+  [ "$(_stage EPC-7)" = "Review" ] || ok=0
+  _close_teardown
+  [ "$ok" = 1 ]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -276,7 +447,13 @@ for fn in \
   test_sweep_gh_failure_emits_nothing_this_pass \
   test_sweep_successful_poll_appends_merge_event_shape \
   test_merge_poll_one_records_pr_base \
-  test_sweep_records_human_merge_releasing_dependents; do
+  test_sweep_records_human_merge_releasing_dependents \
+  test_close_merge_observed_moves_review_to_done_once \
+  test_close_already_done_fires_nothing \
+  test_close_needs_review_stage_and_reviewed_flag \
+  test_close_skips_merge_into_another_base \
+  test_close_retries_after_flow_failure \
+  test_close_without_repos_root_is_a_noop; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

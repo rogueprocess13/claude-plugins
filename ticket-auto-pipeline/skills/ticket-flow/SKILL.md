@@ -40,7 +40,7 @@ shell command, so a following `_rc=$?` would read nothing, and the phase agents
 | `0` | Transition applied (or a warn-only no-op such as `ILLEGAL_TRANSITION`) | nothing |
 | `1` | Usage (`error_type=usage`) or runtime error (`flow_error`) | `META\|flow-error\|fail\|exit 1: <trigger> — <stderr>` |
 | `3`/`8`/`9`/`10`/`12`/`13` | Unknown trigger / precondition / fence: no token / fence: superseded / pending event not replayable / `REPOS_ROOT` unset | `META\|flow-error` |
-| `11` | **Verdict gate blocked** — a `verdict_gate` trigger (`uat-pass`, `pr-review-pass-done`, `pr-review-pass-uat`) refused because a trailing FAIL/BLOCK verifier-result is on record. Not transient: do not retry and do not report PASS/Done. | `META\|gate-stop\|fail\|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr` |
+| `11` | **Verdict gate blocked** — a `verdict_gate` trigger (`uat-pass`, `pr-review-pass-*`) refused because a trailing FAIL/BLOCK verifier-result is on record. Not transient: do not retry and do not report PASS/Done. | `META\|gate-stop\|fail\|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr` |
 | `42` | Another `flow.sh` run for this ticket holds the lock | `META\|flow-error` |
 | `127` | `flow.sh` could not be resolved — nothing ran | `META\|flow-error\|fail\|flow.sh not found: <trigger>` |
 
@@ -74,7 +74,7 @@ updates within the same command when `flow.sh` drains at exit. A hand edit to on
 projected labels is reverted on the next event that projects to it, if pipeline state
 disagrees; any other hand-applied label is left alone.
 
-**Which pass trigger fires (`pr-review-pass-done` or `pr-review-pass-uat`) is not decided here.**
+**Which pass trigger fires (`pr-review-pass-done`, `-uat` or `-merge-pending`) is not decided here.**
 `uat_decide_trigger` in `lib/branch-resolve.sh` evaluates the epic's UAT policy *before* the UAT
 target. That ordering is load-bearing: `UAT_URL` is exported into every pipeline agent's
 environment, so a policy check placed after an "is UAT configured?" test would never be reached.
@@ -92,7 +92,7 @@ trigger (a human moves the card). Epic detection lives in `lib/epic-precondition
 
 ### Verdict gate
 
-`pr-review-pass-done`, `pr-review-pass-uat` and `uat-pass` carry `"verdict_gate": true`.
+The `pr-review-pass-*` triggers and `uat-pass` carry `"verdict_gate": true`.
 `flow.sh` refuses them with exit 11 while any `(verifier, phase)` pair's **latest**
 `META|verifier-result` is `FAIL` or `BLOCK` (see `verifier_latest_verdict` in
 `lib/verifier-result.sh`). Caller contract:

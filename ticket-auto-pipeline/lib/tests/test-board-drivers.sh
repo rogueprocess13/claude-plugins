@@ -450,6 +450,20 @@ test_real_workflow_verdict_labels_exclusive() {
 }
 _run "real workflow.json: verdict labels are mutually exclusive (#489)" test_real_workflow_verdict_labels_exclusive
 
+# GitHub #765: a review pass that waits for a human merge projects the
+# `reviewed` label and no column (the card stays in Review); only the observed
+# merge projects Done.
+test_real_workflow_merge_pending_projects_no_column() {
+  local wf="$LIB_DIR/../skills/ticket-flow/workflow.json"
+  jq -e '.board_drivers.linear.events["pr-review-passed-merge-pending"]
+    | (has("column") | not) and (.add | index("reviewed")) and (.remove | index("rejected"))' "$wf" >/dev/null || return 1
+  jq -e '.board_drivers.linear.events["merge-observed"] == {"column": "Done"}' "$wf" >/dev/null || return 1
+  jq -e '.board_drivers.linear.events["pr-merged"] == null' "$wf" >/dev/null || return 1
+  jq -e '.triggers["pr-review-pass-merge-pending"] | .from == "Review" and .to == null and .verdict_gate == true' "$wf" >/dev/null || return 1
+  jq -e '.triggers["merge-observed"] | .from == "Review" and .to == "Done" and .adds == [] and .removes == []' "$wf" >/dev/null
+}
+_run "real workflow.json: merge-pending review pass keeps the column, merge-observed projects Done (#765)" test_real_workflow_merge_pending_projects_no_column
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

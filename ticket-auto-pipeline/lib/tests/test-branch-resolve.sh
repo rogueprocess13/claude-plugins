@@ -759,19 +759,34 @@ test_trigger_merge_pending_with_url_still_uat() {
 }
 _run "uat_decide_trigger: per-ticket with UAT target and merge pending routes to UAT" test_trigger_merge_pending_with_url_still_uat
 
-test_trigger_merge_pending_epic_still_done() {
-  # UAT Policy: epic children route Review -> Done by design; parking them in
-  # UAT is the deadlock that policy exists to avoid. --merge-pending must not
-  # change that path.
+test_trigger_merge_pending_epic_stays_in_review() {
+  # GitHub #765. UAT Policy: epic children never park in UAT (the deadlock
+  # that policy exists to avoid), but a child whose PR waits for a human merge
+  # must not show Done either: it stays in Review, with or without a UAT
+  # target, until merge-poll.sh fires merge-observed.
+  local got url
+  for url in "" "https://uat.example.com"; do
+    got=$(uat_decide_trigger --policy epic --uat-url "$url" --merge-pending)
+    [ "$got" = "pr-review-pass-merge-pending" ] || {
+      echo "  expected pr-review-pass-merge-pending under epic policy (uat-url='$url'), got '$got'" >&2
+      return 1
+    }
+  done
+  return 0
+}
+_run "uat_decide_trigger: epic policy with --merge-pending stays in Review" test_trigger_merge_pending_epic_stays_in_review
+
+test_trigger_epic_no_merge_pending_still_done() {
+  # Auto-merge path: this run may merge the PR, so the child closes at once.
   local got
-  got=$(uat_decide_trigger --policy epic --uat-url "" --merge-pending)
+  got=$(uat_decide_trigger --policy epic --uat-url "")
   [ "$got" = "pr-review-pass-done" ] || {
-    echo "  expected epic policy to stay pr-review-pass-done, got '$got'" >&2
+    echo "  expected pr-review-pass-done without --merge-pending, got '$got'" >&2
     return 1
   }
   return 0
 }
-_run "uat_decide_trigger: epic policy ignores --merge-pending" test_trigger_merge_pending_epic_still_done
+_run "uat_decide_trigger: epic policy without --merge-pending goes to Done" test_trigger_epic_no_merge_pending_still_done
 
 # ── merge_blocked_reason (GitHub #412) ───────────────────────────────────────
 

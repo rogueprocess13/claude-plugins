@@ -915,7 +915,7 @@
       "diagram": {
         "kind": "auto",
         "phase": "PR-REVIEW",
-        "note": "Chosen by uat_decide_trigger: UAT Policy epic, or per-ticket with no UAT target and no pending human merge."
+        "note": "Chosen by uat_decide_trigger when no human merge is pending: UAT Policy epic, or per-ticket with no UAT target."
       }
     },
     "pr-review-pass-uat": {
@@ -928,6 +928,28 @@
         "kind": "auto",
         "phase": "PR-REVIEW",
         "note": "Chosen by uat_decide_trigger: per-ticket policy with a UAT target, or the PR is left for a human merge (--merge-pending)."
+      }
+    },
+    "pr-review-pass-merge-pending": {
+      "from": "Review",
+      "to": null,
+      "adds": ["reviewed"],
+      "removes": ["rejected"],
+      "event": "pr-review-passed-merge-pending",
+      "diagram": {
+        "side": "PR-REVIEW pass under UAT Policy epic while the PR waits for a human merge; the ticket stays in Review until merge-observed"
+      }
+    },
+    "merge-observed": {
+      "from": "Review",
+      "to": "Done",
+      "adds": [],
+      "removes": [],
+      "event": "merge-observed",
+      "diagram": {
+        "kind": "auto",
+        "arcLift": 125,
+        "note": "Fired by merge-poll.sh (run end, then fleetd's periodic sweep) once the PR of a reviewed epic-policy child is merged. No agent phase."
       }
     },
     "pr-review-fail": {
@@ -1132,6 +1154,7 @@ const DATA = {
         kind: d.kind,
         phase: d.phase || null,
         loopY: d.loopY,
+        arcLift: d.arcLift,
         add: t.adds.length ? t.adds : null,
         remove: t.removes.length ? t.removes : null,
         event: t.event,
@@ -1303,8 +1326,9 @@ const DATA = {
         { name: "merge-decision",      desc: "Computes overall verdict (pass / warn / fail) and chooses the next transition." },
       ],
       outcomes: [
-        { verdict: "pass", label: "✅ pass → Done",  desc: "uat_decide_trigger picks pr-review-pass-done: UAT Policy epic, or per-ticket with no UAT target and a merge this run may perform. Review → Done." },
-        { verdict: "pass", label: "✅ pass → UAT",   desc: "uat_decide_trigger picks pr-review-pass-uat: per-ticket policy with a UAT target, or the PR is left for a human merge (manual autonomy / epic Merge Policy). Review → UAT; a person later fires uat-pass." },
+        { verdict: "pass", label: "✅ pass → Done",  desc: "uat_decide_trigger picks pr-review-pass-done when this run may merge: UAT Policy epic, or per-ticket with no UAT target. Review → Done." },
+        { verdict: "pass", label: "✅ pass → await merge", desc: "UAT Policy epic and the PR is left for a human merge (manual autonomy / epic Merge Policy): pr-review-pass-merge-pending adds reviewed and the ticket stays in Review. merge-poll.sh fires merge-observed (Review → Done) once the merge is seen." },
+        { verdict: "pass", label: "✅ pass → UAT",   desc: "uat_decide_trigger picks pr-review-pass-uat: per-ticket policy with a UAT target, or, under per-ticket policy, the PR is left for a human merge (manual autonomy / epic Merge Policy). Review → UAT; a person later fires uat-pass." },
         { verdict: "fail", label: "⚠ warn → iterate", desc: "Requirements unmet. pr-review-fail adds rejected (no state change), then pr-iterate loops Review → Ready → IMPLEMENT → VERIFY → PR-REVIEW. Max 3 ITERATION cycles, then PR_REVIEW_EXHAUSTED." },
       ],
       stopCodes: [
@@ -1482,7 +1506,8 @@ function curveBetween(t) {
   if (dir === 1 && stateGap > 1) {
     const x1 = a.cx + 25, y1 = a.top;
     const x2 = b.cx - 25, y2 = b.top;
-    const arcY = a.top - 80;
+    // Two triggers can share a skip-link (review → done); arcLift separates them.
+    const arcY = a.top - (t.arcLift || 80);
     const midX = (a.cx + b.cx) / 2;
     return { d: `M ${x1} ${y1} C ${x1 + 30} ${arcY}, ${x2 - 30} ${arcY}, ${x2} ${y2}`, mid: { x: midX, y: arcY + 4 } };
   }

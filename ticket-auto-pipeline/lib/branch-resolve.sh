@@ -313,8 +313,9 @@ merge_blocked_reason() {
 # uat_decide_trigger [--policy <policy>] [--uat-url <url>] [--ticket <TICKET_ID>]
 #                    [--project-dir <dir>] [--merge-pending]
 # Echoes the ticket-flow trigger to fire after a passing PR review:
-#   pr-review-pass-done  (Review → Done)
-#   pr-review-pass-uat   (Review → UAT)
+#   pr-review-pass-done           (Review → Done)
+#   pr-review-pass-uat            (Review → UAT)
+#   pr-review-pass-merge-pending  (stays in Review, marked reviewed)
 #
 # This is the single UAT-vs-Done decision site. It is a function that echoes a
 # trigger name rather than prose in a SKILL file, so the decision cannot vary
@@ -334,9 +335,12 @@ merge_blocked_reason() {
 # pr-review-pass-uat even with no UAT target — closing to Done here would
 # claim the ticket finished while its code is still sitting in an open PR.
 # The ticket parks in UAT until a human merges and fires uat-pass. Under epic
-# policy the flag is deliberately ignored: children of a shared epic branch
-# route to Done on a passing review by design (parking them in UAT is the
-# deadlock UAT Policy: epic exists to avoid), so that path is unchanged.
+# policy a child never parks in UAT (that is the deadlock UAT Policy: epic
+# exists to avoid), but it must not show Done while its PR is still open
+# either (GitHub #765): the flag selects pr-review-pass-merge-pending, which
+# marks the ticket reviewed and leaves it in Review. lib/merge-poll.sh fires
+# merge-observed (Review → Done) once it sees the merge. Without the flag an
+# epic child still goes straight to Done.
 uat_decide_trigger() {
   local policy=""
   local uat_url=""
@@ -386,7 +390,11 @@ uat_decide_trigger() {
   local _uat_required=false
   local _trigger
   if [ "$policy" = "epic" ]; then
-    _trigger="pr-review-pass-done"
+    if $merge_pending; then
+      _trigger="pr-review-pass-merge-pending"
+    else
+      _trigger="pr-review-pass-done"
+    fi
   else
     if ! $uat_url_given; then
       uat_url=$(resolve_uat_url "$project_dir" 2>/dev/null) || uat_url=""
