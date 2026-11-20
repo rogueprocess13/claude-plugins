@@ -253,7 +253,7 @@ _prompt_has "Specify" "$SPECIFY_PROMPT" \
   'each response status code, and each error body' \
   'including the rejected, expired, missing and fallback cases' \
   'each ordering or tie-break rule' \
-  'each field or element a list, page or response is said to show' \
+  'each response, row or page with the fields or elements it is said to show' \
   'walk every behaviour sentence' \
   'never in the' \
   'never delete, soften or move a' \
@@ -405,7 +405,10 @@ _prompt_has "EpicGen" "$EPICGEN_PROMPT" \
 # Re-captured for seam-bash-derives (status lines carry no counts).
 # Re-captured for rehearsal F89 (built-in-test rule).
 # Re-captured for rehearsal F87 (shared-state lifecycle rules).
-SPECIFY_PROMPT_SHA="6e80c3995cb009a9946958e54999b97ebb2538895db865f39b1e3e7eb1ab9589"
+# Re-captured for GitHub #773 (ticket-body-v2 rules: four blocks, two self-lint
+# lines and a note, one reworded bullet; test-planner-specify-params.sh strips
+# them before its own pins).
+SPECIFY_PROMPT_SHA="bbbb67905b8e3b2d2a906c30ea1804a2b371c1e0b46d0cb5520935c11749534b"
 got_sha=$(printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum | cut -d' ' -f1)
 if [ "$got_sha" = "$SPECIFY_PROMPT_SHA" ]; then
   pass "Specify prompt is byte-identical to the pre-change capture"

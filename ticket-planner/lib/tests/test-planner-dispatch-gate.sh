@@ -364,9 +364,10 @@ if declare -f _planner_dispatch_contract_mark >/dev/null; then
   else
     fail "ac-precondition-v1 first dispatch" "before=$a0 after=$(acmark) markers=$(markers)"
   fi
-  # The three markers in order, timestamps cut: the first two lines are the
-  # ones item 6 PR B wrote, byte for byte.
-  want=$'META|contract|start|specify-parameters-v1\nMETA|contract|start|spec-ownership-v1\nMETA|contract|start|ac-precondition-v1'
+  # The markers in order, timestamps cut: the first two lines are the ones
+  # item 6 PR B wrote, byte for byte; ticket-body-v2 (GitHub #773) is a
+  # fourth plain call after ac-precondition-v1.
+  want=$'META|contract|start|specify-parameters-v1\nMETA|contract|start|spec-ownership-v1\nMETA|contract|start|ac-precondition-v1\nMETA|contract|start|ticket-body-v2'
   if [ "$(contract_lines)" = "$want" ]; then
     pass "ac-precondition-v1 follows spec-ownership-v1; the first two lines are unchanged"
   else

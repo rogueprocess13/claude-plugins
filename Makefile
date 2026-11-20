@@ -207,6 +207,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-refinement-carryover.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
+	# cancel transition (#770)
+	bash ticket-auto-pipeline/lib/tests/test-ticket-cancel.sh
 	# one fact, one outbox record (#767)
 	bash ticket-auto-pipeline/lib/tests/test-outbox-single-fact.sh
 	# ticket-create-skill
@@ -384,6 +386,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh
 	bash ticket-planner/lib/tests/test-planner-business-framing.sh
+	bash ticket-planner/lib/tests/test-planner-body-template.sh
 	bash ticket-planner/lib/tests/test-planner-ac-checklist.sh
 	bash ticket-planner/lib/tests/test-planner-sibling-rules.sh
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh

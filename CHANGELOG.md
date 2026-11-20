@@ -17,12 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.127.4 (2026-11-20) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
+## 0.129.1 (2026-11-21) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
 
 - **Cause.** A new manifest carries no `stage` field: `write_ticket_manifest` (planner, `/ticket-create`) and `ensure_ticket_manifest` never write one, and a ticket run by hand has no manifest at all. `flow.sh`'s warn-only from-check compared that empty stage with the trigger's `from` (`Backlog`, `Todo` for `appraise-start`), so the first call for every ticket warned. `REPOS_ROOT` was set; this is not #608.
 - **Fix.** `workflow.json` now declares `"initial_state": "Backlog"`. The from-check reads an absent stage as that state. Only the check uses the stand-in: the manifest, the dry-run `current.stage` and the computed stage are unchanged, so a trigger with no `to` still leaves the stage absent. This also covers manifests already on disk and new epic manifests (`epic-integration-open` expects `Backlog`). No manifest writer seeds a stage, because `manifest-backfill.sh` reads a present stage as "already backfilled".
 - **A real illegal transition still warns.** A manifest with a recorded stage is compared as before, and the line names that stage. A trigger that cannot leave the initial state (for example `implement-complete` on a ticket nothing has moved) still warns, as `from Backlog (no stage recorded)`. `<none>` appears only when a `workflow.json` declares no `initial_state`.
 - Tests: `skills/ticket-flow/tests/test-initial-stage.sh` (new, real `flow.sh`); `phase1.sh`'s array-`from` warn case now starts from `Review`.
+## 0.129.0 (2026-11-20) — a cancel transition: retire a ticket through flow.sh (#770)
+
+There was no way to retire a ticket nobody will finish. `human-reject` sends it back to Todo, so an obsolete or duplicate ticket had to be set to Canceled by hand in Linear, which left the manifest on its old stage, wrote nothing to the outbox or the pipeline log, and kept the pipeline's labels on the card. Also `fleet-controller` 0.55.1.
+
+- **New `cancel` trigger** (`workflow.json`): any stage except `Done` → `Canceled`. It removes the four projected flags, clears the approval, and emits one `ticket-cancelled` event with the reason. `flow.sh <ID> cancel --reason "<text>"` (`--reason` is short for `--data reason=…`); a reason is required. Not for epics.
+- **`Canceled` is final.** `flow.sh` now refuses every other trigger on a cancelled ticket with **exit 14** and writes nothing, so a worker still running when its ticket was cancelled cannot move it back to Ready or Review. `flow-run.sh` passes 14 through and writes no log line. A superseded generation cannot cancel (exit 9/10), as for any trigger.
+- **Board projection.** `ticket-cancelled` moves the card to the cancelled column and removes `needs-info`, `needs-adr`, `rejected` and `reviewed`; other labels stay. The column is the state named `Canceled`, else the team's first state of type `canceled` (new `column_type` fallback), so a board that spells it "Cancelled" works. `validate-linear-config.sh` accepts the same fallback.
+- **New `/ticket-cancel <ID> --reason "<why>"`** (`skills/ticket-cancel/cancel.sh`), the one actuator. It fires the trigger, then appends `META|cancel|info|reason=…; from=…; by=…` and `META|outcome|info|cancelled: …` to the pipeline log, outcome last. It refuses while a worker for the ticket is alive (exit 6; `--force` cancels under it, never kills it), refuses `Done` tickets and epics (exit 5), and is a no-op on a repeat.
+- **Dependents are not released.** `ticket_pipeline_merge_state` reports `cancelled` (not Done) for a cancelled blocker, checked before any log evidence. Fleet dispatch prints `blocked by <ID> (cancelled — …)` and `/ticket-cancel` lists the blocked tickets. Dispatch never enqueues a cancelled child and names it on every pass; its epic cannot reach "all children Done" while it lists that child.
+- **Not included:** no Linear comment with the reason (the board driver projects a column and labels only), no removal of labels the driver does not own (a leftover `claimed`), no epic cancel, no reopen.
+- The README state diagram and the public pipeline diagram draw the trigger; `gen-mermaid.sh` now draws any-state triggers and tombstone stages.
+
+## 0.128.0 (2026-11-20) — planned ticket bodies state verify mode, errors and edge cases, and security decisions (#773)
+
+`ticket-planner` 0.56.0. A review of one epic's planned tickets found the same gaps in every generated body. Specify now writes them, and a new Crosscheck family checks them for initiatives planned from this version on (contract marker `ticket-body-v2`, written on the first Specify dispatch; older and in-flight initiatives are unchanged).
+
+- **Verify mode.** Every spec carries `## Verify Mode` with the line `**Verify mode:** <shape>` (`browser`, `api-only`, `diff-only`, `build-only` or `live-backend`). The composer copies it into the ticket, where `lib/verify-mode.sh` already reads it before any heuristic (#779), so an API, git or scaffold ticket no longer runs in browser mode. Missing or malformed: `VERIFY_MODE_INVALID` (blocking).
+- **Errors and edge cases.** Feature and improvement specs, and every `api-only` or `live-backend` spec, carry `## Errors and Edge Cases` with five prompts: failure, check order of 401/403/404/422, empty or malformed input, late or concurrent responses, unauthorised viewer. Missing: `EDGE_CASES_MISSING` (blocking).
+- **Criteria.** One criterion per response or behaviour instead of one per field, about 20 at most (`AC_COUNT_HIGH`, warn); each tagged `[unit]` or `[live]` (`AC_UNTAGGED`, warn); worded to hold on the PR branch, never "once merged" or "on `develop`" (`AC_POST_MERGE_STATE`, warn).
+- **Scope and Technical Context agree.** The Scope table lists every file Technical Context names, read-only ones marked; `SCOPE_TC_MISMATCH` (warn) names the files that differ.
+- **Security and identity decisions.** A plan that touches sign-in, accounts, tokens, secrets or personal data lists identifier normalisation, secret policy per environment and token handling in proposal.md `## Security & Identity Decisions`, each as a `policy` row of `## Parameters`, so a person is asked before Review instead of the epic carrying an unconfirmed assumption. Epic Gen copies the section into the epic. `SECURITY_DECISIONS_MISSING` (warn).
+- **Smaller prompt rules:** Technical Context states constraints, not exact calls; Signals `Decision` covers only the ticket's own slice; a scaffold pins the major version of what it installs; a ticket that needs a state is blocked by the one that creates it.
+- **Templates.** `templates/*.md` (read by `/ticket-create`) gain `## Verify Mode`; `feature.md` and `improvement.md` gain `## Errors and Edge Cases`. A template left unfilled classifies as before.
+- **Not changed:** the Definition-of-Ready check does not require the new sections, `ticket-verify` does not treat `[unit]` and `[live]` criteria differently, and the five warn codes do not block. Each is a decision left for a later change.
+- New libs `ticket-planner/lib/planner-body-template.sh` and `planner-crosscheck-body.sh`; new test `test-planner-body-template.sh` (135 cases; composed bodies go through `verify_mode_shape` for all five shapes, and the golden bodies keep the same readiness verdict with and without the new sections); three Crosscheck fixtures (`body-v2-*`); the business-framing golden bodies carry the new sections.
+
 ## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
 
 Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").
@@ -887,8 +913,6 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
-
-
 
 ## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
 

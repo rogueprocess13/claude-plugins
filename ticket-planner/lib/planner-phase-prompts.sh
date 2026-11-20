@@ -54,6 +54,10 @@ _source_if_missing "planner_lifecycle_prompt_rules" \
 # The Specify and Consensus Preconditions wording (planner-ac-code-precondition, D12).
 _source_if_missing "planner_acpre_prompt_rules" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-ac-precondition.sh"
+# The ticket-body-v2 wording (GitHub #773): verify mode, errors and edge cases,
+# scope files, criteria shape, security decisions.
+_source_if_missing "planner_body_template_prompt_rules" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-body-template.sh"
 _source_if_missing "planner_goldfish_consensus_rule" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-goldfish.sh"
 
@@ -903,6 +907,7 @@ business outcome.
 percentage improvements, customer commitments, regulatory requirements or
 actors unless the idea, intent, appraisal, repository evidence or other
 planning evidence supports them.
+$(planner_security_decisions_prompt_rules)
 $(planner_params_prompt_rules)
 
 ### Part 2: Write per-ticket spec files
@@ -1044,6 +1049,8 @@ must already be in the Description, in its final wording:
   and every outcome id exactly as written. This pass happens here, once, so the
   ticket body is a pure function of the spec.
 
+$(planner_body_template_prompt_rules)
+
 ### One acceptance criterion per stated outcome
 
 Every observable outcome the behaviour section (\`## Proposed Behaviour\`,
@@ -1055,7 +1062,9 @@ Verification Notes row. Each of these is a separate outcome:
 - each conditional branch — every \`if\`, \`otherwise\`, \`when\` or \`unless\` clause,
   including the rejected, expired, missing and fallback cases;
 - each ordering or tie-break rule;
-- each field or element a list, page or response is said to show.
+- each response, row or page with the fields or elements it is said to show:
+  one criterion for the group, not one per field (see "Criteria: grouped,
+  tagged, true on the branch" below).
 
 Facts nobody can observe from outside — file layout, library choice, internal
 structure — need no criterion. Before handoff, walk every behaviour sentence and
@@ -1068,6 +1077,7 @@ ticket already exists in Linear; Crosscheck blocks earlier on a stated response
 code no criterion names (\`AC_STATUS_UNCOVERED\`).
 
 $(planner_ac_checklist)
+$(planner_ac_shape_prompt_rules)
 
 ### Verification Notes (planner-ready-by-construction)
 
@@ -1245,11 +1255,15 @@ source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-citations.sh"
 planner_crosscheck_citations "${initiative_id}"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-codespan.sh"
 planner_crosscheck_codespan "${initiative_id}"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-body.sh"
+planner_crosscheck_body "${initiative_id}"
 \`\`\`
 
 A \`CODE_SPAN_EDGE_SPACE\` line means an inline code value starts and ends
 with a space, which markdown drops: quote the value inside the span
 (\`"  a b "\`) so the spaces a test depends on survive.
+
+$(planner_body_template_selflint_note)
 
 If it reports failures, read each \`planner-crosscheck-citations: <CODE>
 <file>:<line> → <detail>\` line, fix the cited file, and re-run. Up to 3
@@ -1460,6 +1474,8 @@ pass: if a sentence is wrong, change it for that reason and say so in
 Every criterion you add or change passes this checklist:
 
 $(planner_ac_checklist)
+
+$(planner_body_template_consensus_rule)
 
 $(planner_sibling_citation_consensus_section "${initiative_id}")
 
@@ -1688,6 +1704,8 @@ technical information the epic carried before stays — it moves under
 process narration (phase names, "post-Consensus", review dispositions) anywhere
 in the epic.
 
+$(planner_security_decisions_epic_rule)
+
 ## Humanize the epic title and description before creation (issue #285) — MANDATORY
 
 Once \$EPIC_TITLE and \$EPIC_DESCRIPTION are fully written, and before either is
@@ -1696,7 +1714,7 @@ skill to strip AI-sounding prose (inflated-importance phrasing, hedging, stock
 transitions — see that skill's own pattern catalog) from the free-text portions.
 Per the humanizer's own rules: keep every fact and claim intact, invent nothing,
 and preserve the heading/list/table structure exactly as written — it rewrites
-prose, not structure. Keep the five section headings above, the \`### O<n>\` ids
+prose, not structure. Keep the section headings above (the security section included when present), the \`### O<n>\` ids
 and the \`**Who:**\`/\`**Need:**\`/\`**Outcome:**\`/\`**Measure:**\` labels verbatim. The
 epic body has no ticket-auto-pipeline section-template contract (that applies
 only to child tickets — see Ticket Gen); the layout above is the planner's own.

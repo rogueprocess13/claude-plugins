@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "GitHub #773: the body-v2-rules-broken spec in an initiative with no ticket-body-v2 marker. The ticket-body family stays silent, so a legacy or in-flight initiative is unchanged."
+}

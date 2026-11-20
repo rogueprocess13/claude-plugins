@@ -751,6 +751,26 @@ if need "$name" planner_params_prompt_rules planner_ownership_prompt_rules plann
   sp=$(planner_prompt_specify "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   sp="${sp//$REPOS_ROOT/<REPOS_ROOT>}"
   sp=$(_seam_revert "$sp")
+  # The ticket-body-v2 rules (GitHub #773) came after everything below: strip
+  # their four blocks, the two self-lint command lines and the note, and put
+  # back the one bullet they reworded, so the earlier pins hold.
+  if need "Specify carries the ticket-body-v2 blocks" planner_body_template_prompt_rules planner_ac_shape_prompt_rules planner_security_decisions_prompt_rules planner_body_template_selflint_note; then
+    _bt_new=$'- each response, row or page with the fields or elements it is said to show:\n  one criterion for the group, not one per field (see "Criteria: grouped,\n  tagged, true on the branch" below).'
+    _bt_old='- each field or element a list, page or response is said to show.'
+    if [[ "$sp" == *"$_bt_new"* ]]; then pass "#773: Specify groups field checks into one criterion"; else
+      fail "#773: Specify groups field checks into one criterion" "bullet not found"
+    fi
+    sp="${sp//"$_bt_new"/"$_bt_old"}"
+    if [[ "$sp" == *"$(planner_security_decisions_prompt_rules)"$'\n'"$(planner_params_prompt_rules)"* ]]; then
+      pass "#773: the security decisions rules sit directly before the Parameters rules"
+    else fail "#773: the security decisions rules sit directly before the Parameters rules" "not adjacent"; fi
+    sp=$(_strip_inserted_blocks "$sp" \
+      "inline:$(planner_security_decisions_prompt_rules)"$'\n' \
+      "inline:$(planner_body_template_prompt_rules)"$'\n\n' \
+      "$(planner_ac_shape_prompt_rules)" \
+      "inline:"$'source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-body.sh"\nplanner_crosscheck_body "INIT-TEST"\n' \
+      "inline:$(planner_body_template_selflint_note)"$'\n\n')
+  fi
   # The sibling rules (rehearsal F38/F43, test-planner-sibling-rules.sh) came
   # after every capture below: strip them first so the earlier pins hold.
   sp=$(_strip_inserted_blocks "$sp" "inline:"$'\n\n'"$(planner_sibling_blocker_rule)" "$(planner_sibling_citation_rule)")
@@ -836,6 +856,10 @@ if need "$name" planner_lifecycle_consensus_rule planner_params_consensus_rule p
   cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   cp="${cp//$REPOS_ROOT/<REPOS_ROOT>}"
   cp=$(_seam_revert "$cp")
+  # The ticket-body-v2 rule (GitHub #773): one paragraph after the checklist.
+  if declare -f planner_body_template_consensus_rule >/dev/null 2>&1; then
+    cp=$(_strip_inserted_blocks "$cp" "inline:$(planner_body_template_consensus_rule)"$'\n\n')
+  fi
   # Sibling rules: stripped first, as for Specify above.
   _sib_sec=$(planner_sibling_citation_consensus_section "INIT-TEST")
   cp=$(_strip_inserted_blocks "$cp" "$(planner_sibling_blocker_rule)" "inline:${_sib_sec//$REPOS_ROOT/<REPOS_ROOT>}"$'\n\n')

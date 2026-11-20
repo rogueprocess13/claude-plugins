@@ -663,6 +663,15 @@ _fleet_dispatch_initiative_locked() {
       continue
     fi
 
+    # A cancelled child (manifest stage Canceled, /ticket-cancel — GitHub
+    # #770) is never dispatched, whatever its dispatch flag says. It is named
+    # on every pass: the epic cannot reach "all children Done" while it is
+    # listed, and that needs a person's decision, not a silent skip.
+    if declare -f ticket_is_cancelled >/dev/null 2>&1 && ticket_is_cancelled "$child_id"; then
+      echo "  cancelled ${child_id} — not dispatched; ${initiative_id} cannot integrate while it lists a cancelled child (re-plan, or remove it from the epic)"
+      continue
+    fi
+
     # dispatch:false is the eligibility gate.
     [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] && continue
 
@@ -748,6 +757,7 @@ _fleet_dispatch_initiative_locked() {
         echo "    blocked-by ${_mc_blocker_id} resolved (Done, ${_mc_bstate})"
       else
         case "$_mc_bstate" in
+        cancelled) echo "    blocked by ${_mc_blocker_id} (cancelled — it will never be Done; cancel this ticket too or re-plan to drop the dependency) — skipping" ;;
         open) echo "    blocked by ${_mc_blocker_id} (run completed, PR still open — awaiting merge) — skipping" ;;
         closed) echo "    blocked by ${_mc_blocker_id} (PR closed unmerged — needs a human decision) — skipping" ;;
         merged-other-base) echo "    blocked by ${_mc_blocker_id} (PR merged into a branch other than its recorded base — needs a human decision) — skipping" ;;

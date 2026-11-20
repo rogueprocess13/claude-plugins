@@ -190,7 +190,7 @@ test_every_emits_names_a_declared_vocabulary_event() {
 # `vocabulary[*]` is what actually enforces this — it is what would catch a
 # regression that moves a column mapping out of board_drivers into either
 # section, which is exactly what the fixture test below proves.
-_ALLOWED_TRIGGER_KEYS='["from","to","adds","removes","description","precondition","verdict_gate","emits"]'
+_ALLOWED_TRIGGER_KEYS='["from","to","adds","removes","description","precondition","verdict_gate","emits","refuse_from","requires_data","allow_from_tombstone"]'
 _ALLOWED_VOCAB_KEYS='["trigger","data_from","payload","description","emitted_by"]'
 
 _workflow_namespace_check() {

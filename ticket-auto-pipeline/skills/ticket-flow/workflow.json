@@ -10,6 +10,10 @@
   "well_known_labels": [
     "repro-failed"
   ],
+  "_tombstone_note": "GitHub #770. A ticket whose manifest stage is listed in tombstone_stages is retired: flow.sh refuses every trigger on it (exit 14, nothing written) except one that declares allow_from_tombstone. Only the cancel trigger moves a ticket there. A trigger's refuse_from lists stages it is refused from (exit 8) and requires_data lists the --data keys it needs (exit 1); unlike `from`, which only warns, these three are enforced.",
+  "tombstone_stages": [
+    "Canceled"
+  ],
   "_planner_labels_note": "tracker-planner-and-fallback-cutover (4.7): the planner_labels section that used to live here (planned, INIT-*, pre-approved, blocked-by:*, state:execution, and the 5 type labels) is removed — the planner creates every issue with an empty label set now. The declared label set below is board_drivers.linear.projected_labels (needs-info/needs-adr/rejected/reviewed) plus well_known_labels, both still read by validate-linear-config.sh.",
   "triggers": {
     "appraise-start": {
@@ -229,6 +233,27 @@
       "precondition": "must_not_be_epic",
       "emits": { "event": "re-claimed", "data": {} }
     },
+    "cancel": {
+      "from": null,
+      "to": "Canceled",
+      "adds": [],
+      "removes": [
+        "needs-info",
+        "needs-adr",
+        "rejected",
+        "reviewed"
+      ],
+      "description": "Retire a ticket nobody will finish (obsolete, duplicate, superseded by a re-plan) — any stage except Done to Canceled (GitHub #770). Fired by /ticket-cancel (skills/ticket-cancel/cancel.sh), which also writes the pipeline-log record. Blocked-by dependents are not released.",
+      "precondition": "must_not_be_epic",
+      "refuse_from": [
+        "Done"
+      ],
+      "requires_data": [
+        "reason"
+      ],
+      "allow_from_tombstone": true,
+      "emits": { "event": "ticket-cancelled", "data": { "reason": "{reason}" } }
+    },
     "epic-integration-open": {
       "from": "Backlog",
       "to": "Review",
@@ -389,6 +414,12 @@
       "payload": {},
       "description": "Epic UAT accepted — epic moved to Done."
     },
+    "ticket-cancelled": {
+      "trigger": "cancel",
+      "data_from": ["reason"],
+      "payload": { "reason": "string" },
+      "description": "The ticket was retired without being finished — obsolete, duplicate or superseded. Terminal: no later transition applies. Distinct from ticket-killed, which stops a run and leaves the ticket resumable."
+    },
     "gate-held": {
       "emitted_by": "gate-check.sh",
       "payload": { "reason": "string" },
@@ -471,6 +502,11 @@
         "epic-integration-opened": { "column": "Review" },
         "epic-uat-started": { "column": "UAT" },
         "epic-uat-passed": { "column": "Done" },
+        "ticket-cancelled": {
+          "column": "Canceled",
+          "column_type": "canceled",
+          "remove": ["needs-info", "needs-adr", "rejected", "reviewed"]
+        },
         "gate-held": null,
         "gate-released": null,
         "human-hold-requested": null,

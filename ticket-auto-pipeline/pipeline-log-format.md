@@ -289,6 +289,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|fleet-restart-marker|info|restart-inte
 
 `fleet-restart-marker` entries are scanned by the monitor loop — each one triggers an `ACTION:spawn-restart` directive. `fleet-intervention` and `fleet-restart` entries serve as audit trail; `fleet_can_restart` counts `fleet-restart` entries to enforce the `FLEET_MAX_RESTARTS` circuit breaker.
 
+### Cancel entries (GitHub #770)
+
+Written only by `/ticket-cancel` (`skills/ticket-cancel/cancel.sh`), as a pair, outcome last. `cancelled:` reads as finished to fleet and never as Done to blocked-by. Detail: [docs/skills/ticket-cancel.md](docs/skills/ticket-cancel.md).
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|cancel|info|reason=duplicate; from=Approve; by=operator" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|outcome|info|cancelled: duplicate" >> "$LOG_FILE"
+```
+
 ### Worker exit entries (worker-reap-recovery)
 
 Written by fleetd (`fleet-controller/fleetd/supervisor.py`) at reap time, for every worker exit — natural or fleet-killed:
@@ -1015,7 +1024,7 @@ in between.
 3. **Token META accuracy**: `META|tokens` lines carry the correct PHASE label matching the agent that consumed those tokens. The phase is resolved from the spawn-meta file (`ticket-auto-{ID}-spawn-meta.txt`), not the volatile ctx file.
 4. **Retro-trigger before outcome**: `META|retro-trigger` SHALL appear before `META|outcome`, not after. Retro-trigger entries are idempotent — at most one per pipeline run.
 5. **MAINTENANCE before outcome**: On success and no-op paths, all `MAINTENANCE|*` entries SHALL appear before `META|outcome`.
-6. **Nothing follows outcome** (Branch B, Commercial Evidence MVP): no component SHALL append to the pipeline log after `META|outcome` has been written. Every post-outcome fact (merge truth, human approval, cost) goes to `logs/runs.jsonl` instead — see "runs.jsonl — post-outcome evidence channel" above. The sanctioned fleet-kill postmortem exception (rule 1's note above) predates this rule and is unaffected: it concerns `META|postmortem` timing relative to outcome, not a new pipeline-log append.
+6. **Nothing follows outcome** (Branch B, Commercial Evidence MVP): no component SHALL append to the pipeline log after `META|outcome` has been written. Every post-outcome fact (merge truth, human approval, cost) goes to `logs/runs.jsonl` instead — see "runs.jsonl — post-outcome evidence channel" above. The sanctioned fleet-kill postmortem exception (rule 1's note above) predates this rule and is unaffected: it concerns `META|postmortem` timing relative to outcome, not a new pipeline-log append. Exception: `/ticket-cancel` appends its pair after a closed run; an outcome is still last.
 
 ## Rules
 
