@@ -35,6 +35,12 @@ if [ -f "$LIB_DIR/manifest-read.sh" ]; then
 elif [ -f "$SCRIPT_DIR/manifest-read.sh" ]; then
   source "$SCRIPT_DIR/manifest-read.sh"
 fi
+# ticket-type.sh: Check 2.5b's manifest-first type read (#677).
+if [ -f "$LIB_DIR/ticket-type.sh" ]; then
+  source "$LIB_DIR/ticket-type.sh"
+elif [ -f "$SCRIPT_DIR/ticket-type.sh" ]; then
+  source "$SCRIPT_DIR/ticket-type.sh"
+fi
 # vplan-parse.sh backs Check 2.6's per-criterion table extraction below
 # (dor-readiness-gate-foundation task 3.2) — the same declare-guard
 # sourcing convention as manifest-read.sh above, since dor-check.sh also
@@ -736,7 +742,13 @@ _gate_entry() {
   # A bug ticket without reproduction steps cannot be verified — hard stop.
   # Reproductions steps cannot be derived by the LLM; they must come from the ticket.
   local ticket_type has_repro
-  ticket_type=$(get_ticket_type "$td" 2>/dev/null || echo "feature")
+  # The manifest type decides when the ticket has one (#677: a planned ticket
+  # has no type label); get_ticket_type is the hand-filed fallback.
+  ticket_type=""
+  if declare -f ticket_type_from_manifest >/dev/null 2>&1; then
+    ticket_type=$(ticket_type_from_manifest "$TICKET_ID")
+  fi
+  [ -n "$ticket_type" ] || ticket_type=$(get_ticket_type "$td" 2>/dev/null || echo "feature")
   if [ "$ticket_type" = "bug" ]; then
     has_repro=$(get_has_repro_steps "$td" 2>/dev/null || echo "false")
     if [ "$has_repro" = "false" ]; then
