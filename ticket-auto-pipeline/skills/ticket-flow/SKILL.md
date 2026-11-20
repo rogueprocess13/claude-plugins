@@ -41,6 +41,7 @@ shell command, so a following `_rc=$?` would read nothing, and the phase agents
 | `1` | Usage (`error_type=usage`) or runtime error (`flow_error`) | `META\|flow-error\|fail\|exit 1: <trigger> — <stderr>` |
 | `3`/`8`/`9`/`10`/`12`/`13` | Unknown trigger / precondition / fence: no token / fence: superseded / pending event not replayable / `REPOS_ROOT` unset | `META\|flow-error` |
 | `11` | **Verdict gate blocked** — a `verdict_gate` trigger (`uat-pass`, `pr-review-pass-*`) refused because a trailing FAIL/BLOCK verifier-result is on record. Not transient: do not retry and do not report PASS/Done. | `META\|gate-stop\|fail\|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr` |
+| `14` | Ticket is `Canceled`: no trigger applies. Do not retry. | nothing |
 | `42` | Another `flow.sh` run for this ticket holds the lock | `META\|flow-error` |
 | `127` | `flow.sh` could not be resolved — nothing ran | `META\|flow-error\|fail\|flow.sh not found: <trigger>` |
 

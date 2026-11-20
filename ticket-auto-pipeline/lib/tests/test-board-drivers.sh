@@ -464,6 +464,90 @@ test_real_workflow_merge_pending_projects_no_column() {
 }
 _run "real workflow.json: merge-pending review pass keeps the column, merge-observed projects Done (#765)" test_real_workflow_merge_pending_projects_no_column
 
+# GitHub #770: ticket-cancelled moves the card to the cancelled column and
+# removes the four labels the driver owns, with the real mapping from
+# workflow.json. A label the driver does not own stays.
+_cancel_mapping() {
+  jq -c '{"ticket-cancelled": .board_drivers.linear.events["ticket-cancelled"]}' \
+    "$LIB_DIR/../skills/ticket-flow/workflow.json"
+}
+
+test_real_workflow_cancel_mapping() {
+  local wf="$LIB_DIR/../skills/ticket-flow/workflow.json"
+  jq -e '.board_drivers.linear.events["ticket-cancelled"]
+    | .column == "Canceled" and .column_type == "canceled" and (has("add") | not)
+      and (.remove | sort) == ["needs-adr","needs-info","rejected","reviewed"]' "$wf" >/dev/null || return 1
+  jq -e '(.board_drivers.linear.events["ticket-cancelled"].remove | sort)
+    == (.board_drivers.linear.projected_labels | sort)' "$wf" >/dev/null
+}
+
+test_cancel_moves_column_and_clears_owned_labels() {
+  local ws issue team
+  team=$(echo "$TEAM_JSON" | jq -c '.states += [{"id":"s-cancel","name":"Canceled","type":"canceled"}]
+    | .labels += [{"id":"lbl-claimed","name":"claimed"}]')
+  issue=$(_issue_with_labels "lbl-needs-info:needs-info,lbl-needs-adr:needs-adr,lbl-rejected:rejected,lbl-reviewed:Reviewed,lbl-claimed:claimed,lbl-bug:bug" "s-approve" "Approve")
+  ws=$(_mk_workspace "$(_cancel_mapping)" "$issue" "$team")
+  _apply "$ws" ticket-cancelled 4 '{"reason":"obsolete"}' >/dev/null 2>&1 || {
+    rm -rf "$ws"
+    return 1
+  }
+  local state labels calls
+  state=$(head -1 "$ws/update_issue.calls" | awk '{print $2}')
+  labels=$(head -1 "$ws/update_issue.labels" | jq -c 'sort')
+  calls=$(_call_count "$ws")
+  rm -rf "$ws"
+  [ "$calls" = "1" ] && [ "$state" = "s-cancel" ] && [ "$labels" = '["lbl-bug","lbl-claimed"]' ]
+}
+
+test_cancel_column_resolves_by_state_type() {
+  # A board that spells the column "Cancelled": no state is named Canceled.
+  local ws issue team
+  team=$(echo "$TEAM_JSON" | jq -c '.states += [{"id":"s-dup","name":"Duplicate","type":"completed"},{"id":"s-cancelled","name":"Cancelled","type":"canceled"}]')
+  issue=$(_issue_with_labels "lbl-rejected:rejected" "s-todo" "Todo")
+  ws=$(_mk_workspace "$(_cancel_mapping)" "$issue" "$team")
+  _apply "$ws" ticket-cancelled 2 '{"reason":"duplicate"}' >/dev/null 2>&1 || {
+    rm -rf "$ws"
+    return 1
+  }
+  local state labels
+  state=$(head -1 "$ws/update_issue.calls" | awk '{print $2}')
+  labels=$(head -1 "$ws/update_issue.labels" | jq -c 'sort')
+  rm -rf "$ws"
+  [ "$state" = "s-cancelled" ] && [ "$labels" = '[]' ]
+}
+
+test_cancel_replay_is_a_noop() {
+  local ws issue team
+  team=$(echo "$TEAM_JSON" | jq -c '.states += [{"id":"s-cancel","name":"Canceled","type":"canceled"}]')
+  issue=$(_issue_with_labels "lbl-bug:bug" "s-cancel" "Canceled")
+  ws=$(_mk_workspace "$(_cancel_mapping)" "$issue" "$team")
+  _apply "$ws" ticket-cancelled 5 '{"reason":"again"}' >/dev/null 2>&1
+  local rc=$? calls
+  calls=$(_call_count "$ws")
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ] && [ "$calls" = "0" ]
+}
+
+test_column_type_never_overrides_a_named_column() {
+  # column_type is a fallback only: an event with no column_type and an
+  # unknown column still fails permanently, as before.
+  local ws issue team
+  team=$(echo "$TEAM_JSON" | jq -c '.states += [{"id":"s-cancel","name":"Canceled","type":"canceled"}]')
+  issue=$(_issue_with_labels "" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"appraise-completed":{"column":"NoSuchColumn"}}' "$issue" "$team")
+  _apply "$ws" appraise-completed 1 >/dev/null 2>&1
+  local calls
+  calls=$(_call_count "$ws")
+  rm -rf "$ws"
+  [ "$calls" = "0" ]
+}
+
+_run "real workflow.json: ticket-cancelled maps to the cancelled column and removes every projected label (#770)" test_real_workflow_cancel_mapping
+_run "ticket-cancelled moves the card and clears the owned labels, keeps the rest (#770)" test_cancel_moves_column_and_clears_owned_labels
+_run "ticket-cancelled resolves the column by state type when the name differs (#770)" test_cancel_column_resolves_by_state_type
+_run "ticket-cancelled replay writes nothing (#770)" test_cancel_replay_is_a_noop
+_run "column_type is only a fallback (#770)" test_column_type_never_overrides_a_named_column
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

@@ -125,6 +125,18 @@ states_missing=0
 for state in "${EXPECTED_STATES[@]}"; do
   sid=$(echo "$TEAM_JSON" | jq -r --arg n "$state" \
     '.states[] | select(.name == $n) | .id')
+  # A column the board driver may also resolve by Linear state type
+  # (board_drivers.linear.events[*].column_type, GitHub #770) is present when
+  # the team has any state of that type — a board that spells its cancelled
+  # column "Cancelled" must not fail the whole pipeline's preflight.
+  if [ -z "$sid" ]; then
+    stype=$(jq -r --arg n "$state" '[.board_drivers.linear.events[]? | objects
+      | select(.column == $n) | .column_type // empty] | first // empty' "$SM")
+    if [ -n "$stype" ]; then
+      sid=$(echo "$TEAM_JSON" | jq -r --arg t "$stype" \
+        '[.states[] | select(.type == $t) | .id] | first // empty')
+    fi
+  fi
   if [ -n "$sid" ]; then
     printf "  ✅ %-20s (id: %s)\n" "$state" "$sid"
     ((states_found++)) || true

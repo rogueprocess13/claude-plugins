@@ -220,6 +220,18 @@ _linear_driver_apply() {
   if [ -n "$column" ]; then
     new_state_id=$(echo "$team_json" | jq -r --arg n "$column" \
       '.states[] | select(.name == $n) | .id' | head -1)
+    # column_type (GitHub #770): when no state carries the mapped name, take
+    # the team's first state of that Linear state type. A board that spells
+    # its cancelled column "Cancelled", or renamed it, still gets the card
+    # moved; the name wins whenever it exists.
+    if [ -z "$new_state_id" ]; then
+      local column_type
+      column_type=$(echo "$mapping" | jq -r '.column_type // empty')
+      if [ -n "$column_type" ]; then
+        new_state_id=$(echo "$team_json" | jq -r --arg t "$column_type" \
+          '.states[] | select(.type == $t) | .id' | head -1)
+      fi
+    fi
     if [ -z "$new_state_id" ]; then
       _linear_driver_permanent_fail "$tid" "$event" "$seq" "unknown state '${column}' for team ${team_id}"
       return 0

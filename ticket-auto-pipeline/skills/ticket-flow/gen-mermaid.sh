@@ -29,4 +29,16 @@ jq -r '.triggers | to_entries[]
   | if ($from | type == "array") then $from[] else $from end
   | "    \(.) --> \($to) : \($key)"' "$SM"
 
+# A trigger that changes state from any state (from: null, to set — cancel,
+# GitHub #770) is drawn once, from a composite note state, not once per
+# state: seven identical edges would bury the lifecycle.
+jq -r '.triggers | to_entries[]
+  | select(.value.from == null and .value.to != null)
+  | "    AnyState --> \(.value.to) : \(.key)"' "$SM"
+if jq -e '[.triggers[] | select(.from == null and .to != null)] | length > 0' "$SM" >/dev/null; then
+  refused=$(jq -r '[.triggers[] | select(.from == null and .to != null) | .refuse_from[]?] | unique | join(", ")' "$SM")
+  echo "    AnyState : any state${refused:+ except ${refused}}"
+fi
+
 echo '    Done --> [*]'
+jq -r '(.tombstone_stages // [])[] | "    \(.) --> [*]"' "$SM"

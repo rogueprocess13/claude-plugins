@@ -207,6 +207,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-refinement-carryover.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
+	# cancel transition (#770)
+	bash ticket-auto-pipeline/lib/tests/test-ticket-cancel.sh
 	# ticket-create-skill
 	bash ticket-auto-pipeline/lib/tests/test-ticket-create.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-create-guard.sh

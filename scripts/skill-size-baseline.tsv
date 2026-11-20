@@ -68,6 +68,7 @@ ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
 ticket-auto-pipeline/skills/ticket-auto/SKILL.md	42583	780
 ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
+ticket-auto-pipeline/skills/ticket-cancel/SKILL.md	2076	30
 ticket-auto-pipeline/skills/ticket-create/SKILL.md	6781	71
 # allow-growth: critique BLOCKED message must name the needs-info-resolved trigger, or a passing re-run leaves the ticket gate-blocked (0.113.2)
 ticket-auto-pipeline/skills/ticket-critique/SKILL.md	19132	422
@@ -75,7 +76,8 @@ ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
 ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 # allow-growth: offer to create missing Linear board labels once LINEAR_API_KEY is loaded
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	5412	86
-ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7289	124
+# allow-growth: cancel transition (#770) — exit code 14 row (+77 bytes, 0.128.0)
+ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7366	125
 ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5971	116
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-implement/SKILL.md	33676	491
