@@ -587,6 +587,7 @@ _planner_dispatch_contract_mark() {
   _source_if_missing planner_params_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-params.sh"
   _source_if_missing planner_ownership_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-spec-ownership.sh"
   _source_if_missing planner_acpre_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-ac-precondition.sh"
+  _source_if_missing planner_body_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-body-template.sh"
   if declare -f planner_params_contract_mark >/dev/null 2>&1; then
     planner_params_contract_mark "$1" || return 1
   fi
@@ -595,6 +596,10 @@ _planner_dispatch_contract_mark() {
   fi
   if declare -f planner_acpre_contract_mark >/dev/null 2>&1; then
     planner_acpre_contract_mark "$1" || return 1
+  fi
+  # ticket-body-v2 (GitHub #773): turns on the Crosscheck ticket-body family.
+  if declare -f planner_body_contract_mark >/dev/null 2>&1; then
+    planner_body_contract_mark "$1" || return 1
   fi
   return 0
 }

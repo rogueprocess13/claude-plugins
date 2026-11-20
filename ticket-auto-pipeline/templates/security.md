@@ -4,6 +4,7 @@
 > Fill in `{placeholders}`. Remove any sections that don't apply.
 > Labels to set: `security`
 > ⚠ Do NOT include exploit details or credentials in the Linear ticket — reference a private document or Slack thread instead.
+> Verify mode: replace `{shape}` with exactly one of `browser` (a person uses a page), `api-only` (HTTP endpoints, no page), `live-backend` (running services with no page and no single endpoint), `build-only` (the build or test command passing is the check), `diff-only` (only files to read). The pipeline reads this field first and then makes no guess of its own.
 
 ---
 
@@ -70,6 +71,10 @@ Example: "An authenticated user with role X can call endpoint Y with a forged ID
 ## References
 
 {CVE, OWASP link, internal Slack thread, or security report — no working exploits here.}
+
+## Verify Mode
+
+**Verify mode:** {shape} — {one-line reason}
 
 ## Related Tickets
 

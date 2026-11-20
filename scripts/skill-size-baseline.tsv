@@ -76,7 +76,7 @@ ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
 ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 # allow-growth: offer to create missing Linear board labels once LINEAR_API_KEY is loaded
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	5412	86
-# allow-growth: cancel transition (#770) — exit code 14 row (+77 bytes, 0.128.0)
+# allow-growth: cancel transition (#770) — exit code 14 row (+77 bytes, 0.129.0)
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7366	125
 ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5971	116
 # exception: pending reduction, skill-size programme changes 3-5

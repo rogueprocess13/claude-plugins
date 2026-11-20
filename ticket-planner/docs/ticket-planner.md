@@ -926,6 +926,33 @@ disposition is the first word of a ` — ` segment after the id: `accepted`, `re
 and nit findings are never checked. Without any terminal goldfish line the family is silent,
 so legacy initiatives and the halt goldens are unchanged. It never blocks.
 
+**Ticket-body rules (Crosscheck family `planner_crosscheck_body`; GitHub #773, contract `ticket-body-v2`).**
+A review of one epic's planned tickets found the same gaps in every generated body, so Specify
+now writes them and Crosscheck checks them. An initiative gets the `ticket-body-v2` marker on its
+first Specify dispatch; without it the family is silent.
+
+| Rule | Where it lives | Crosscheck code |
+|------|----------------|-----------------|
+| `## Verify Mode`, first line `**Verify mode:** <shape>`, shape one of `browser`, `api-only`, `diff-only`, `build-only`, `live-backend` | every spec; copied into the ticket, where ticket-auto-pipeline's `lib/verify-mode.sh` reads it before any heuristic | `VERIFY_MODE_INVALID` (blocking) |
+| `## Errors and Edge Cases`: failure, check order, empty or malformed input, late or concurrent responses, unauthorised viewer; each answered or `Not applicable` | feature and improvement specs, and every `api-only` or `live-backend` spec | `EDGE_CASES_MISSING` (blocking) |
+| The `## Scope` table lists every file `## Technical Context` names; a file only read is marked `(read-only)` | every spec | `SCOPE_TC_MISMATCH` (warn) |
+| One criterion per response or behaviour, fields listed in it or in a `Field / Expected` table under it; about 20 criteria at most | every spec | `AC_COUNT_HIGH` (warn) |
+| Each criterion starts with `[unit]` or `[live]`; the tag is part of the criterion text | every spec | `AC_UNTAGGED` (warn) |
+| Criteria hold on the PR branch: no "once merged", no base branch | every spec | `AC_POST_MERGE_STATE` (warn) |
+| `## Security & Identity Decisions` in proposal.md, each decision a `policy` row of `## Parameters` (so a person is asked), copied into the epic | a plan that touches sign-in, accounts, tokens, secrets or personal data | `SECURITY_DECISIONS_MISSING` (warn) |
+
+The two blocking codes are exact structural checks of sections the prompt requires and Specify's
+own Part 4 self-lint runs; `--accept CODE:"reason"` overrides either. The warn codes are pattern
+matches over prose and never block. A file name is a backticked token that ends in a known
+extension (or has a directory part and any extension), so a column (`users.email`) or a parameter
+key is not one; two names are the same file when one is the other's path tail. Specify also
+states constraints instead of exact calls in `## Technical Context`, limits Signals `Decision` to
+the ticket's own slice, pins the major version of a dependency a scaffold installs, and orders
+tickets so the one that creates a state comes before the one that needs it (prompt rules, no
+Crosscheck code). Not covered: the Definition-of-Ready check does not require the new sections,
+so a hand-written ticket without them is unchanged; `ticket-verify` does not treat `[unit]` and
+`[live]` criteria differently; synth-marked test-data specs carry no `## Verify Mode`.
+
 **`CODE_SPAN_EDGE_SPACE` (Crosscheck, warn only; rehearsal F53).** `planner_crosscheck_codespan`
 (`lib/planner-crosscheck-codespan.sh`, after the AC coverage family) emits one warning per
 inline code span whose content starts and ends with a space and is not only spaces. CommonMark

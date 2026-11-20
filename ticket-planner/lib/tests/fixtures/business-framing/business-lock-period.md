@@ -27,13 +27,21 @@ A firm administrator sees a "Lock period" action on a completed financial period
 - Mutating document routes check `matters.locked_at` and return 409 when the period is locked.
 - Each transition writes an `audit_log` row (`action = 'matter.lock' | 'matter.unlock'`).
 
+## Errors and Edge Cases
+
+- **Failure:** when the lock or unlock request fails (network failure or a 5xx response), the period page shows "Could not update the period. Try again." and the period keeps its previous state.
+- **Check order:** a request without a session gets 401 before any other check; a user without the firm administrator role gets 403 before the period is looked up; an unknown period gets 404.
+- **Empty or malformed input:** Not applicable — lock and unlock take no request body.
+- **Late or concurrent responses:** a second lock request for a period that is already locked changes nothing and the page shows the period as Locked.
+- **Unauthorised viewer:** a user without the firm administrator role sees the period page without the Lock period action.
+
 ## Acceptance Criteria
 
-- [ ] A firm administrator can lock a completed financial period from the period page
-- [ ] Editing a document in a locked period shows the error "This period is locked"
-- [ ] The period history lists the lock with the administrator's name and the time
-- [ ] A firm administrator can unlock a locked period
-- [ ] A user without the firm administrator role does not see the Lock period action
+- [ ] [live] A firm administrator can lock a completed financial period from the period page
+- [ ] [live] Editing a document in a locked period shows the error "This period is locked"
+- [ ] [live] The period history lists the lock with the administrator's name and the time
+- [ ] [live] A firm administrator can unlock a locked period
+- [ ] [live] A user without the firm administrator role does not see the Lock period action
 
 ## Out of Scope
 
@@ -44,7 +52,8 @@ Automatic locking on a schedule. Partial (per-document) locks.
 | Layer | Service | Area |
 | ----- | ------- | ---- |
 | FE    | web     | matter-detail |
-| BE    | api     | matters |
+| BE    | api     | `lib/authz.ts` |
+| BE    | api     | matters (routes, migration) |
 
 ## Test User
 
@@ -53,6 +62,10 @@ Automatic locking on a schedule. Partial (per-document) locks.
 ## Navigation Path
 
 `Clients > Matters > Period detail > Lock period`
+
+## Verify Mode
+
+**Verify mode:** browser — a firm administrator locks and unlocks a period on the period page.
 
 ## Verification Plan
 
