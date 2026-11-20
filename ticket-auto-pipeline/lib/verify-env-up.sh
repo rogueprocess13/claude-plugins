@@ -32,7 +32,7 @@
 # a git repo under REPOS_ROOT runs ensure_verify_worktree (destructive on
 # reuse; a failure → VERIFY_WORKTREE_FAILED — <svc> @ <branch>, lock
 # released, exit 1). Services: --services, else every REPOS_ROOT/*/ that has
-# a .git (sorted), mirroring env-start.sh's "no specific services →
+# a .git (sorted) except the tickets root itself, mirroring env-start.sh's "no specific services →
 # everything" fallback. No repo matched → META|gate-warn|warn|
 # VERIFY_WORKTREE_NONE …; always ends with VERIFY|worktree-setup|done|<n>
 # worktree(s) ready for <branch>. With --tickets-root, also warns
@@ -171,12 +171,17 @@ _veu_stop() { # gate-stop-msg stderr-msg
   return 1
 }
 
-# Every repo directory directly under REPOS_ROOT that has a .git, sorted.
+# Every repo directory directly under REPOS_ROOT that has a .git, sorted,
+# except the tickets root ($1, else CWD). A tickets root that is its own git
+# repo is a supported layout (issue #763) and holds plans, never a ticket
+# branch: a worktree of it can only fail.
 _veu_all_repos() {
-  local d
+  local d tickets
+  tickets=$(cd "${1:-.}" 2>/dev/null && pwd -P) || tickets=""
   for d in "$REPOS_ROOT"/*/; do
     [ -d "${d}.git" ] || continue
     d="${d%/}"
+    [ "$(cd "$d" && pwd -P)" != "$tickets" ] || continue
     printf '%s\n' "${d##*/}"
   done | sort | tr '\n' ' ' | sed 's/ $//'
 }
@@ -187,7 +192,7 @@ veu_worktrees() { # tid branch services tickets_root claude_md
     _veu_stop "VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved" "REPOS_ROOT could not be resolved — see stderr above."
     return 1
   }
-  [ -n "$_verify_services" ] || _verify_services=$(_veu_all_repos)
+  [ -n "$_verify_services" ] || _verify_services=$(_veu_all_repos "$tickets_root")
   local _wt_count=0 _svc _repo_path _wt
   for _svc in $_verify_services; do
     _repo_path="$REPOS_ROOT/$_svc"

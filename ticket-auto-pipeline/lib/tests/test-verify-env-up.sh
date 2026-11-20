@@ -245,6 +245,32 @@ for c in $VE_WT_CASES; do
   _ws_rm
 done
 
+echo "=== stage 2: a git tickets root under REPOS_ROOT is never a verify repo (#763) ==="
+# The tickets root may be its own git repo (plans are committed there). It
+# has no ticket branch, so with no --services it must be left out of "every
+# git repo under REPOS_ROOT" rather than gate-stop VERIFY_WORKTREE_FAILED.
+for how in flag cwd; do
+  _ws_new
+  _lock_take
+  _mk_repo svc-a
+  mkdir -p "$WS/repos/tickets"
+  git init -q "$WS/repos/tickets"
+  git -C "$WS/repos/tickets" -c user.email=t@t -c user.name=T commit -q --allow-empty -m init --no-gpg-sign
+  printf '#!/bin/sh\n: "${VERIFY_REPO_PATH_SVC_A:-}"\n' >"$WS/repos/tickets/env-start.sh"
+  rc=0
+  if [ "$how" = flag ]; then
+    (cd "$WS" && bash "$VEU" worktrees "$TID" --branch "$VE_BRANCH" --tickets-root "$WS/repos/tickets") 2>"$WS/err" || rc=$?
+  else
+    (cd "$WS/repos/tickets" && bash "$VEU" worktrees "$TID" --branch "$VE_BRANCH" --claude-md "$WS/CLAUDE.md") 2>"$WS/err" || rc=$?
+  fi
+  _same "git tickets root ($how): exit" 0 "$rc"
+  ! grep -q 'VERIFY_WORKTREE_FAILED' "$TAP_LOG" && _ok "git tickets root ($how): no VERIFY_WORKTREE_FAILED" || _ko "git tickets root ($how): $(cat "$TAP_LOG")"
+  grep -q '|VERIFY|worktree-setup|done|1 worktree(s) ready' "$TAP_LOG" && _ok "git tickets root ($how): one worktree, the code repo" || _ko "git tickets root ($how): $(cat "$TAP_LOG")"
+  [ -d "$WS/repos/.verify-worktrees/svc-a/$TID" ] && [ ! -e "$WS/repos/.verify-worktrees/tickets" ] &&
+    _ok "git tickets root ($how): no worktree of the tickets repo" || _ko "git tickets root ($how): worktree dirs"
+  _ws_rm
+done
+
 echo "=== stage 3: up parity with Steps 1.6a3 to 1.6c ==="
 for c in $VE_UP_CASES; do
   _ws_new

@@ -10,6 +10,9 @@
 # are masked to TS and the workspace path to $WS. In the gate-stop line the
 # prose's {artifact-found} placeholder is filled with what the block found:
 # simple-fix, ambiguous (several change dirs), openspec, else none.
+# Issue #763 changed complex_not_git on purpose (a plain tickets root is a
+# supported layout: info line, COMMIT_RC=0) and added simple_not_git and
+# complex_nested; those three fixtures are the script's intended output.
 #
 # Usage: bash test-appraise-exec-coherence.sh
 # With AEC_TEST_LIB_ONLY=1 the file only defines its helpers.
@@ -20,7 +23,7 @@ AEC_LIB_DIR="$(cd "$AEC_TEST_DIR/.." && pwd)"
 AEC="$AEC_LIB_DIR/appraise-exec-coherence.sh"
 AEC_FX="$AEC_TEST_DIR/fixtures/appraise-exec-coherence"
 TID="T-5"
-AEC_CASES="simple_ok simple_missing simple_openspec complex_ok complex_noop complex_no_tasks no_score ambiguous complex_not_git"
+AEC_CASES="simple_ok simple_missing simple_openspec complex_ok complex_noop complex_no_tasks no_score ambiguous complex_not_git simple_not_git complex_nested"
 
 unset LOG_FILE TAP_LOG HB_LOG_FILE CLAUDE_LOG_FILE REPOS_ROOT FLEET_WORKER_PID FLEET_GENERATION
 
@@ -46,6 +49,8 @@ _ws_new() { # case
   no_score) sf=1 ;;
   ambiguous) score=complex os=1 two=1 ;;
   complex_not_git) score=complex os=1 git=0 ;;
+  simple_not_git) score=simple sf=1 git=0 ;;
+  complex_nested) score=complex os=1 git=2 ;;
   esac
   {
     echo "# Notes"
@@ -65,6 +70,8 @@ _ws_new() { # case
     mkdir -p "$WS/tickets/openspec/changes/t-5-other"
     printf -- '- [ ] 1.1\n' >"$WS/tickets/openspec/changes/t-5-other/tasks.md"
   fi
+  # git=2: the unsupported layout, a tickets root inside another repo.
+  [ "$git" != 2 ] || git -C "$WS" init -q
   if [ "$git" = 1 ]; then
     git -C "$WS/tickets" init -q
     printf 'openspec/\n' >"$WS/tickets/.gitignore"
@@ -104,7 +111,7 @@ for c in $AEC_CASES; do
   out=$(cd "$WS/tickets" && bash "$AEC" "$TID" "$TD") || rc=$?
   _same "$c: log" "$(cat "$AEC_FX/$c.log")" "$(_mask <"$TAP_LOG")"
   case "$c" in
-  simple_ok | complex_ok | complex_noop | complex_not_git) want=0 ;;
+  simple_ok | complex_ok | complex_noop | complex_not_git | simple_not_git | complex_nested) want=0 ;;
   *) want=1 ;;
   esac
   [ "$rc" = "$want" ] && _ok "$c: exit $want" || _ko "$c: exit $rc (want $want)"
@@ -116,8 +123,17 @@ for c in $AEC_CASES; do
     grep -q '|gate|artifact-persisted|ok|committed|' "$HB_LOG_FILE" && _ok "complex_ok: artifact-persisted heartbeat" || _ko "complex_ok: no persisted heartbeat"
     ;;
   complex_not_git)
-    grep -q '^COMMIT_RC=2$' <<<"$out" && _ok "complex_not_git: COMMIT_RC=2" || _ko "complex_not_git: $out"
-    grep -q '|gate|artifact-persisted|warn|commit-failed|' "$HB_LOG_FILE" && _ok "complex_not_git: warn heartbeat" || _ko "complex_not_git: heartbeat"
+    # Issue #763: a plain tickets root is a supported layout, not a failure.
+    grep -q '^COMMIT_RC=0$' <<<"$out" && _ok "complex_not_git: COMMIT_RC=0" || _ko "complex_not_git: $out"
+    grep -q '|gate|artifact-persisted|ok|not-git|' "$HB_LOG_FILE" && _ok "complex_not_git: ok heartbeat" || _ko "complex_not_git: heartbeat"
+    [ ! -e "$WS/tickets/.git" ] && _ok "complex_not_git: no repo created" || _ko "complex_not_git: .git appeared"
+    ;;
+  simple_not_git)
+    ! grep -q 'OPENSPEC_ARTIFACT' "$TAP_LOG" && _ok "simple_not_git: no OPENSPEC_ARTIFACT line" || _ko "simple_not_git: $(cat "$TAP_LOG")"
+    ;;
+  complex_nested)
+    grep -q '^COMMIT_RC=2$' <<<"$out" && _ok "complex_nested: COMMIT_RC=2" || _ko "complex_nested: $out"
+    grep -q '|gate|artifact-persisted|warn|commit-failed|' "$HB_LOG_FILE" && _ok "complex_nested: warn heartbeat" || _ko "complex_nested: heartbeat"
     ;;
   simple_missing)
     grep -q '^ARTIFACT=none$' <<<"$out" && _ok "simple_missing: ARTIFACT=none" || _ko "simple_missing: $out"

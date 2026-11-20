@@ -17,12 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.127.3 (2026-11-20) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
+## 0.127.4 (2026-11-20) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
 
 - **Cause.** A new manifest carries no `stage` field: `write_ticket_manifest` (planner, `/ticket-create`) and `ensure_ticket_manifest` never write one, and a ticket run by hand has no manifest at all. `flow.sh`'s warn-only from-check compared that empty stage with the trigger's `from` (`Backlog`, `Todo` for `appraise-start`), so the first call for every ticket warned. `REPOS_ROOT` was set; this is not #608.
 - **Fix.** `workflow.json` now declares `"initial_state": "Backlog"`. The from-check reads an absent stage as that state. Only the check uses the stand-in: the manifest, the dry-run `current.stage` and the computed stage are unchanged, so a trigger with no `to` still leaves the stage absent. This also covers manifests already on disk and new epic manifests (`epic-integration-open` expects `Backlog`). No manifest writer seeds a stage, because `manifest-backfill.sh` reads a present stage as "already backfilled".
 - **A real illegal transition still warns.** A manifest with a recorded stage is compared as before, and the line names that stage. A trigger that cannot leave the initial state (for example `implement-complete` on a ticket nothing has moved) still warns, as `from Backlog (no stage recorded)`. `<none>` appears only when a `workflow.json` declares no `initial_state`.
 - Tests: `skills/ticket-flow/tests/test-initial-stage.sh` (new, real `flow.sh`); `phase1.sh`'s array-`from` warn case now starts from `Review`.
+## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
+
+Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").
+
+- **Plain (non-git) tickets root: no failed commit, no warning.** `openspec-tracking-check.sh commit` returned 2 there, so every complex ticket logged `OPENSPEC_ARTIFACT_COMMIT — rc=2` as a warning and then `OPENSPEC_ARTIFACT_UNTRACKED`. It now prints `OPENSPEC_COMMIT_STATUS=not-git` and exits 0, and `appraise-exec-coherence.sh` logs one info line, `OPENSPEC_ARTIFACT_NOT_COMMITTED`. `assert` reports `not-git` (exit 0) for a plan that is on disk; a plan that is gone is still `missing`.
+- **Simple-fix tickets never log `OPENSPEC_ARTIFACT_UNTRACKED`.** `assert` ran its git check before it looked for a change dir, so under a plain root a simple-fix ticket got exit 2 and the warning. It now looks first and answers `not-applicable`.
+- **Git tickets root under `REPOS_ROOT`: verify no longer stops.** With no `--services`, `verify-env-up.sh` took every git repo under `REPOS_ROOT`, the tickets repo included. That repo has no ticket branch, so the run gate-stopped `VERIFY_WORKTREE_FAILED`. The tickets root (`--tickets-root`, else the current directory) is now left out.
+- **`/ticket-env-check` reports the layout** as `TICKETS_LAYOUT` (`git repo` or `plain directory`), and warns `UNSUPPORTED` for a tickets root inside another repo's work tree, where plans cannot be committed. `ticket-dir.sh layout [<root>] [--row]` is the one classifier.
+
 ## 0.127.2 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
 
 - **Cause.** `flow.sh` emits exactly one event per invocation, keyed `{tid}:{rev}`, and that is unchanged. The duplicates came from callers that fired a trigger twice for one fact. `appraise-start` was fired by the router before the appraise agent was spawned (complexity `simple`, a placeholder) and again by ticket-appraise Step 4 to pass the real score. `human-approve` was fired again by every repeated `/ticket-approve` on an already approved ticket, and by the entry gate's policy approval (Check 5) on a ticket a person had already approved.
@@ -32,6 +41,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - **Existing outboxes.** Duplicate records already written are harmless: the Linear driver writes desired state (column, assignee, labels), so a repeated event is a no-op, and nothing in this repository counts either event. They are not rewritten; a consumer that counts must count from this release on.
 - **Unchanged on purpose:** `flow.sh` has no dedupe, and the router still claims at the start of every STEP_1 run, so an appraisal that is restarted after a crash writes one `appraise-started` per attempt.
 - Tests: `lib/tests/test-outbox-single-fact.sh` (new; real `flow.sh`, `approve.sh`, `reject.sh` and `appraise-claim.sh`) and two Check 5 cases in `test-gate-check.sh`.
+
 ## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
 
 - **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
