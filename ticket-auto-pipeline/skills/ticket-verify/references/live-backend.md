@@ -12,6 +12,8 @@ Read only under the condition in SKILL.md Step 1f (`VERIFY_MODE=live-backend`). 
 
 ## Step 2 (live-backend variant)
 
+**API-only tickets.** If Step 1e printed `VERIFY_SHAPE=api-only` (on a resume: the latest `load-context` log line says `shape=api-only`), the ticket is an HTTP API or a backend module with no page. Its live checks are `curl` requests against the API that Step 1.6 started, and the test command the ticket names (for example `npm test` in the ticket's worktree). Never open a browser, a probe page or a screenshot for it.
+
 **Derive the running-system checks.** Read the plan artifact and `notes.md`/`context.md` for the affected services and the specific runtime behaviour the acceptance criteria describe (e.g. "all services register with Eureka", "circuit breaker opens after N downstream failures", "service-to-service call succeeds"). Unlike build-only, there is no build command that can confirm these — the check has to run against the live services `env-start.sh` (Step 1.6b) brought up. Determine, per criterion, the concrete check:
 
 - **Registration/discovery claims** (e.g. "registers with Eureka") → an `env-status.sh` read and/or a `curl` against the discovery service's registry endpoint (e.g. `/eureka/apps`), confirming the expected service names appear.

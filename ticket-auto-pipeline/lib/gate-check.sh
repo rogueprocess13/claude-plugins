@@ -796,8 +796,9 @@ _gate_entry() {
     # artifact (an openspec change directory: every *.md in it).
     # The ticket mode is verify's own classification (verify_mode_classify
     # over the plan + context.md, the text verify Step 1e reads), mapped to a
-    # prerequisite profile: live-backend → api-only, build-only → build-only,
-    # browser → browser, or api-only when the text carries no signal at all.
+    # prerequisite profile: live-backend and api-only → api-only, build-only →
+    # build-only, diff-only → diff-only (expected behaviour only), browser →
+    # browser, or api-only when the text carries no signal at all.
     # Scorer unavailable → browser with every prerequisite missing (the
     # strictest profile).
     local _ticket_mode="browser" _required_count=4 has_build_command=0 has_build_outcome=0
@@ -833,7 +834,7 @@ _gate_entry() {
     fi
 
     # Hold if 2+ missing for browser tickets, or any missing for API-only/
-    # build-only (verify_readiness_score's INCOMPLETE threshold; this gate is the
+    # build-only/diff-only (verify_readiness_score's INCOMPLETE threshold; this gate is the
     # only caller that holds on it — appraise-exec Step 3.8 is advisory).
     # Only enforce when a verification plan was attempted (plan section exists)
     # or a critique has been run (indicating the plan SHOULD exist). Tickets

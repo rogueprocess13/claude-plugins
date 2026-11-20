@@ -30,13 +30,15 @@
 #                                                    from the plan table only
 #       VR_BUILD_COMMAND VR_BUILD_OUTCOME            build-only probes
 #       VR_HIT_<probe>   the first matching plan line (artifact scan only)
-#       VR_MODE        browser | build-only | api-only
+#       VR_MODE        browser | build-only | api-only | diff-only
 #       VR_VERIFY_MODE browser | build-only | live-backend
 #       VR_REQUIRED VR_MISSING VR_THRESHOLD VR_MISSING_LIST (comma list)
 #       VR_STATUS      CLEAR (0 missing) | WARNINGS (below the hold
 #                      threshold) | INCOMPLETE (the entry gate holds when it
 #                      enforces: a plan table exists or a critique has run)
-#     Thresholds: browser holds at 2 of 4 missing; the other modes at 1 of 2.
+#     Thresholds: browser holds at 2 of 4 missing; build-only and api-only
+#     at 1 of 2; diff-only (a docs-only or git-only ticket: no login, no
+#     page, no environment, no build) needs the expected behaviour only.
 #
 # CLI (ticket-appraise-exec Step 3.8, advisory):
 #   verify-readiness.sh <TID> --ticket-dir D --artifact A [--no-write] [--no-log]
@@ -194,6 +196,10 @@ verify_readiness_score() {
     [ "$VR_EXPECTED" = 0 ] && miss+=("expected behavior")
     [ "$VR_ENV" = 0 ] && miss+=("environment prerequisites")
     ;;
+  diff-only)
+    VR_REQUIRED=1 VR_THRESHOLD=1
+    [ "$VR_EXPECTED" = 0 ] && miss+=("expected behavior")
+    ;;
   *)
     VR_REQUIRED=4 VR_THRESHOLD=2
     [ "$VR_TEST_USER" = 0 ] && miss+=("test user")
@@ -241,6 +247,8 @@ _vr_notes_section() {
   if [ "$VR_MODE" = build-only ]; then
     _vr_row "Build command" "$VR_BUILD_COMMAND" "$VR_HIT_BUILD_COMMAND" 0
     _vr_row "Build outcome" "$VR_BUILD_OUTCOME" "$VR_HIT_BUILD_OUTCOME" "$VR_PLAN_EXPECTED"
+  elif [ "$VR_MODE" = diff-only ]; then
+    _vr_row "Expected behavior" "$VR_EXPECTED" "$VR_HIT_EXPECTED" "$VR_PLAN_EXPECTED"
   else
     _vr_row "Test user" "$VR_TEST_USER" "$VR_HIT_TEST_USER" "$VR_PLAN_TEST_USER"
     _vr_row "Navigation target" "$VR_NAV" "$VR_HIT_NAV" "$VR_PLAN_NAV"
