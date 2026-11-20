@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.131.0 (2026-11-21) — the Regression Risk gate reads a recorded acknowledgement, not notes.md (#771)
+## 0.132.0 (2026-11-21) — the Regression Risk gate reads a recorded acknowledgement, not notes.md (#771)
 
 ticket-implement's Regression Risk gate was cleared by changing `**Status:** UNACKNOWLEDGED` to `ACKNOWLEDGED` in notes.md by hand. Nothing recorded who did it, an agent could make the same edit, and the hold itself left no line in the pipeline log.
 
@@ -30,6 +30,17 @@ ticket-implement's Regression Risk gate was cleared by changing `**Status:** UNA
 - **The hold is visible.** A hold writes `META|gate-stop|fail|REGRESSION_RISK_UNACKNOWLEDGED — reason=…; risk=…` (fleet lists it under needs attention like any gate-stop) and one `gate-held` event per risk. A pass writes `IMPLEMENT|regression-risk|done|acknowledged: risk=…; provenance=human; by=…; at=…`.
 - **Upgrade:** a ticket whose notes.md was hand-edited to `ACKNOWLEDGED` holds once at its next ticket-implement run, until a person runs `regression-ack.sh` for it. No policy acknowledgement exists; every Regression Risk section, `ADJACENT` and `SUPERSEDES` included, needs a person as before. The gate now needs `REPOS_ROOT` (it exits 2 without it, never a pass).
 - ticket-appraise-exec no longer writes a `**Status:**` line into the section.
+
+## 0.131.0 (2026-11-21) — env-check reports what a run needs besides variables
+
+`/ticket-env-check` passed on a host where verify, appraise and prescan then failed or degraded mid-run (GitHub #772). It now reports five more rows, from `lib/readiness-env-check.sh`:
+
+- **`VERIFY_ENV_START`** — `env-start.sh` at the tickets root: present, readable, passes `bash -n`, reads `VERIFY_REPO_PATH_*`. A missing file made `verify-env-up.sh` exit 127 for every browser and live-backend ticket. The script is never run.
+- **`PLAYWRIGHT_MCP`** — an MCP server keyed `playwright` is configured. The row says "config only": a shell cannot see whether the server is connected in the agent session.
+- **`PLAYWRIGHT_BROWSER`** — the browser that server launches. For an exactly pinned `npx @playwright/mcp@X.Y.Z` already in the npx cache the exact build is checked, which is the failure the rehearsal hit (a firefox build was installed, but not the one the server wanted). Otherwise an installed build is reported as `info` "revision not verified", never `ok`. The note gives the `install-browser` command; nothing is installed.
+- **`GITNEXUS_INDEX`** and **`PRESCAN_DOCS`** — how many code repos under `REPOS_ROOT` are in the GitNexus registry and have `.ticket-auto/<slug>/docs/INDEX.md`, with the command for the first missing one. Freshness is not judged.
+- **All five are warnings.** Each is needed by some tickets only, or the pipeline falls back without it, so none counts as an issue and the exit code is unchanged. `info` marks a row that does not apply (no code repo, a remote Playwright server). fleetd's boot gate runs `fleet-env-check.sh`, which does not read these rows.
+- Validate mode (`env-check.sh --mode=validate`) prints the same five as pass/warn/info lines; a missing `env-start.sh` was silent there.
 
 ## 0.130.1 (2026-11-21) — planner feedback records the real predicted confidence and changed files (#768)
 

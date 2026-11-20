@@ -7,34 +7,34 @@
 # allow-growth: rehearsal F85 — scoped-rescan hold of an untouched contradiction (lineage carry copy, held list, request changed_sections) and its schema-doc paragraph (+4,410 bytes, 0.122.2)
 dor-semantic	114884
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 guidance-extractor	95630
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-appraise	154357
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+208 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+208 bytes, 0.132.0)
 ticket-appraise-exec	121850
 ticket-appraise-exec:conditional	14320
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35284
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-document	79756
 ticket-gate-reconcile	6789
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+29 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+29 bytes, 0.132.0)
 ticket-implement	145476
 ticket-implement:conditional	9949
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-pr-iterate	104926
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-pr-review	131790
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-reproduce	107099
 ticket-reproduce:conditional	2641
 ticket-retro	18240
@@ -42,13 +42,13 @@ ticket-retro:conditional	4179
 # allow-growth: verify-qa-persona — the verify agent's one QA-persona line (+96 bytes, 0.122.0)
 # allow-growth: verify-qa-persona — references/qa-persona.md (Step 1g selection, guard, supporting-check rule and caps, Observations section), read only when VERIFY_QA_PERSONA=true (+6,198 bytes, 0.122.0)
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 ticket-verify	175642
 # allow-growth: ticket-auto-record — references/record.md (fixed viewport, one frame per settled step, the record.sh append call, password rule, failures ignored), read only when recording is on and VERIFY_MODE=browser (+3,984 bytes, 0.126.0)
 # allow-growth: #761 — one paragraph each in references/build-only.md (diff-only tickets: file and diff checks, no build tool) and references/live-backend.md (api-only tickets: curl and the test command, never a browser), read only in those modes (+917 bytes, 0.126.1)
 ticket-verify:conditional	27792
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
-# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.131.0)
+# allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 wiki-maintenance	92659
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042

@@ -62,6 +62,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-readiness-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-shadow.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-complexity-score.sh
