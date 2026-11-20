@@ -325,6 +325,107 @@ test_dispatch_blocker_done_unblocks() {
   }
 }
 
+# GitHub #770: a cancelled blocker (manifest stage Canceled) never releases a
+# dependent — even one whose earlier run completed with no PR, which alone
+# reads as Done — and dispatch names it as the reason.
+_seed_cancelled() {
+  local repos_root="$1" tid="$2" p
+  p=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "$tid") || return 1
+  jq -c '.stage = "Canceled"' "$p" >"$p.tmp" && mv "$p.tmp" "$p"
+}
+
+test_dispatch_cancelled_blocker_keeps_dependent_blocked() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-cancel-blocker REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_blocker_done _seed_cancelled)
+    _seed_epic '$repos_root' INIT-42 true CRE-103
+    _seed_child '$repos_root' CRE-103 INIT-42 false CRE-100
+    _seed_child '$repos_root' CRE-100 INIT-41 true
+    _seed_blocker_done '$ws' CRE-100
+    _seed_cancelled '$repos_root' CRE-100
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root" "$ws"
+  grep -q 'blocked by CRE-100 (cancelled' <<<"$output" &&
+    grep -q '^  blocked CRE-103$' <<<"$output" &&
+    ! grep -q 'would enqueue: .*CRE-103' <<<"$output" &&
+    grep -q 'blocked 1 ' <<<"$output" || {
+    echo "output: $output"
+    return 1
+  }
+}
+
+# A cancelled child is never dispatched, and is named on every pass.
+test_dispatch_skips_cancelled_child() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-cancel-child REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_cancelled)
+    _seed_epic '$repos_root' INIT-42 true CRE-101 CRE-102
+    _seed_child '$repos_root' CRE-101 INIT-42 false
+    _seed_child '$repos_root' CRE-102 INIT-42 false
+    _seed_cancelled '$repos_root' CRE-102
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root" "$ws"
+  grep -q '^  cancelled CRE-102 ' <<<"$output" &&
+    grep -q 'would enqueue: .*CRE-101' <<<"$output" &&
+    ! grep -q 'would enqueue: .*CRE-102' <<<"$output" || {
+    echo "output: $output"
+    return 1
+  }
+}
+
+# The log record /ticket-cancel writes is terminal for every fleet reader:
+# no resume, no detector, no "needs attention" entry.
+test_cancelled_outcome_is_terminal_for_fleet() {
+  local ws
+  ws=$(_setup_workspace)
+  {
+    echo "2026-01-01T00:00:00Z|META|schema|info|1"
+    echo "2026-01-01T00:00:01Z|IMPLEMENT|implement|waiting|spawned"
+    echo "2026-01-01T00:00:02Z|META|cancel|info|reason=obsolete; from=Ready; by=operator"
+    echo "2026-01-01T00:00:02Z|META|outcome|info|cancelled: obsolete"
+  } >"$ws/CRE-9-pipeline.log"
+
+  local output
+  output=$(bash -c "
+    FLEET_INSTANCE_ID=test-cancel-terminal
+    source '$LIB_DIR/fleet-dispatch.sh'
+    source '$LIB_DIR/fleet-detect.sh'
+    echo \"state=\$(fleet_ticket_terminal_state CRE-9 '$ws/CRE-9-pipeline.log')\"
+    _pipeline_genuinely_terminal CRE-9 '$ws' && echo terminal=yes
+    _pipeline_is_held CRE-9 '$ws' || echo held=no
+    echo \"attention=[\$(_pipeline_attention_entry CRE-9 '$ws')]\"
+  " 2>/dev/null || true)
+  local py="unknown"
+  if command -v python3 >/dev/null 2>&1; then
+    py=$(cd "$LIB_DIR/.." && python3 -c "
+import sys
+sys.path.insert(0, '.')
+from fleetd import supervisor
+print(supervisor._log_reached_terminal('$ws', 'CRE-9'))" 2>/dev/null) || py="error"
+  fi
+  rm -rf "$ws"
+  grep -q '^state=done$' <<<"$output" && grep -q '^terminal=yes$' <<<"$output" &&
+    grep -q '^held=no$' <<<"$output" && grep -q '^attention=\[\]$' <<<"$output" &&
+    [ "$py" = "True" ] || {
+    echo "output: $output py=$py"
+    return 1
+  }
+}
+
 test_dispatch_dry_run_no_write() {
   local ws repos_root
   ws=$(_setup_workspace)
@@ -1553,6 +1654,9 @@ _run "dispatch_no_child_tickets" test_dispatch_no_child_tickets
 _run "dispatch_with_children_correctly" test_dispatch_with_children_extracts_correctly
 _run "dispatch_epics_by_label_non_empty" test_dispatch_epics_by_label_site_yields_non_empty_dispatch
 _run "dispatch_blocker_done_unblocks" test_dispatch_blocker_done_unblocks
+_run "dispatch_cancelled_blocker_keeps_dependent_blocked" test_dispatch_cancelled_blocker_keeps_dependent_blocked
+_run "dispatch_skips_cancelled_child" test_dispatch_skips_cancelled_child
+_run "cancelled_outcome_is_terminal_for_fleet" test_cancelled_outcome_is_terminal_for_fleet
 _run "dispatch_dry_run" test_dispatch_dry_run_no_write
 _run "dispatch_queue_idempotent" test_dispatch_queue_idempotent
 _run "dispatch_max_concurrent_enforced" test_dispatch_fleet_max_concurrent_enforced

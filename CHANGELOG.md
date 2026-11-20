@@ -17,13 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.128.1 (2026-11-20) — the complexity score is logged in one format (#769)
+## 0.129.1 (2026-11-20) — the complexity score is logged in one format (#769)
 
 - **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
 - **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
 - **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
 - **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
 - Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
+## 0.129.0 (2026-11-20) — a cancel transition: retire a ticket through flow.sh (#770)
+
+There was no way to retire a ticket nobody will finish. `human-reject` sends it back to Todo, so an obsolete or duplicate ticket had to be set to Canceled by hand in Linear, which left the manifest on its old stage, wrote nothing to the outbox or the pipeline log, and kept the pipeline's labels on the card. Also `fleet-controller` 0.55.1.
+
+- **New `cancel` trigger** (`workflow.json`): any stage except `Done` → `Canceled`. It removes the four projected flags, clears the approval, and emits one `ticket-cancelled` event with the reason. `flow.sh <ID> cancel --reason "<text>"` (`--reason` is short for `--data reason=…`); a reason is required. Not for epics.
+- **`Canceled` is final.** `flow.sh` now refuses every other trigger on a cancelled ticket with **exit 14** and writes nothing, so a worker still running when its ticket was cancelled cannot move it back to Ready or Review. `flow-run.sh` passes 14 through and writes no log line. A superseded generation cannot cancel (exit 9/10), as for any trigger.
+- **Board projection.** `ticket-cancelled` moves the card to the cancelled column and removes `needs-info`, `needs-adr`, `rejected` and `reviewed`; other labels stay. The column is the state named `Canceled`, else the team's first state of type `canceled` (new `column_type` fallback), so a board that spells it "Cancelled" works. `validate-linear-config.sh` accepts the same fallback.
+- **New `/ticket-cancel <ID> --reason "<why>"`** (`skills/ticket-cancel/cancel.sh`), the one actuator. It fires the trigger, then appends `META|cancel|info|reason=…; from=…; by=…` and `META|outcome|info|cancelled: …` to the pipeline log, outcome last. It refuses while a worker for the ticket is alive (exit 6; `--force` cancels under it, never kills it), refuses `Done` tickets and epics (exit 5), and is a no-op on a repeat.
+- **Dependents are not released.** `ticket_pipeline_merge_state` reports `cancelled` (not Done) for a cancelled blocker, checked before any log evidence. Fleet dispatch prints `blocked by <ID> (cancelled — …)` and `/ticket-cancel` lists the blocked tickets. Dispatch never enqueues a cancelled child and names it on every pass; its epic cannot reach "all children Done" while it lists that child.
+- **Not included:** no Linear comment with the reason (the board driver projects a column and labels only), no removal of labels the driver does not own (a leftover `claimed`), no epic cancel, no reopen.
+- The README state diagram and the public pipeline diagram draw the trigger; `gen-mermaid.sh` now draws any-state triggers and tombstone stages.
+
 ## 0.128.0 (2026-11-20) — planned ticket bodies state verify mode, errors and edge cases, and security decisions (#773)
 
 `ticket-planner` 0.56.0. A review of one epic's planned tickets found the same gaps in every generated body. Specify now writes them, and a new Crosscheck family checks them for initiatives planned from this version on (contract marker `ticket-body-v2`, written on the first Specify dispatch; older and in-flight initiatives are unchanged).
@@ -902,8 +914,6 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
-
-
 
 ## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
 
