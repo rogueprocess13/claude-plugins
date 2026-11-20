@@ -28,6 +28,7 @@ Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` ca
 - **The saved Linear session is private.** `recorder.sh login` (headed browser) or `recorder.sh import` (a Playwright storage state on stdin, for a host with no display) writes `$REPOS_ROOT/.ticket-auto/record/linear-session.json` with mode 0600 in a 0700 directory, beside a `.gitignore` holding `*`. It is a full login for its user: use a dedicated read-only Linear user. No code prints it. Playwright is not bundled; the operator installs it under `.ticket-auto/record/`.
 - **`/ticket-env-check` has a Recording section**, printed only when `RECORD_ALLOWED` is set: `RECORD_ALLOWED`, `RECORD_BOARD_DRIVERS`, `RECORD_BOARD_URL`, `RECORD_FFMPEG`, `RECORD_BROWSER`, `RECORD_SESSION`, `RECORD_SESSION_MODE`, `RECORD_SESSION_IGNORED`. Every row is `ok` or `warn`; none changes the exit code.
 - The board layout is read from the live Linear page; that path has no automated test and is checked on a real board before the feature is documented for operators.
+
 ## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
 
 - **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
