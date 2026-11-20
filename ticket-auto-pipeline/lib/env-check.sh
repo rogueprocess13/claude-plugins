@@ -377,16 +377,18 @@ if [ "${_MODE:-full}" = "validate" ]; then
     fi
   fi
 
-  # Verify worktree serving (#419): ticket-verify hands env-start.sh the
-  # ticket's verify worktree as VERIFY_REPO_PATH_<REPO>, then gate-stops
-  # VERIFY_SERVED_WRONG_WORKTREE when the dev server still runs from another
-  # checkout. Surface an unwired env-start.sh here, before a verify run trips.
-  if [ -f "$PROJECT_DIR/env-start.sh" ]; then
-    if grep -q 'VERIFY_REPO_PATH' "$PROJECT_DIR/env-start.sh" 2>/dev/null; then
-      pass "env-start.sh reads VERIFY_REPO_PATH_* (serves the ticket's verify worktree)"
-    else
-      warn "env-start.sh" "does not read VERIFY_REPO_PATH_* — it will serve the primary checkout and ticket-verify will gate-stop VERIFY_SERVED_WRONG_WORKTREE"
-    fi
+  # Run readiness (#772, lib/readiness-env-check.sh): env-start.sh (with the
+  # #419 VERIFY_REPO_PATH_* wiring), the Playwright MCP server and browser,
+  # the GitNexus index and the prescan docs. Warnings only, never a failure.
+  if [ -f "$SCRIPT_DIR/readiness-env-check.sh" ]; then
+    source "$SCRIPT_DIR/readiness-env-check.sh"
+    while IFS='|' read -r _rd_name _rd_status _rd_value _rd_loc _rd_note; do
+      case "$_rd_status" in
+      ok) pass "$_rd_name: ${_rd_value:-ok} — $_rd_note" ;;
+      warn) warn "$_rd_name${_rd_value:+ ($_rd_value)}" "$_rd_note" ;;
+      *) [ -z "$_rd_name" ] || info "$_rd_name" "$_rd_note" ;;
+      esac
+    done < <(readiness_env_check_rows "$PROJECT_DIR" 2>/dev/null || true)
   fi
 
   # VERIFY_SERVED_PORTS (optional) — extra ports whose listener must also serve
@@ -768,6 +770,17 @@ if [ -f "$SCRIPT_DIR/record-env-check.sh" ]; then
   while IFS='|' read -r _rc_name _rc_status _rc_value _rc_loc _rc_note; do
     [ -n "$_rc_name" ] && _var "$_rc_name" "$_rc_status" "$_rc_value" "$_rc_loc" "$_rc_note"
   done < <(record_env_check_rows "$PROJECT_DIR" 2>/dev/null || true)
+fi
+
+# ── Run readiness ───────────────────────────────────────────────────────────
+# env-start.sh, Playwright MCP server and browser, GitNexus index, prescan
+# docs (#772). Every row is ok, warn or info, never an issue
+# (lib/readiness-env-check.sh).
+if [ -f "$SCRIPT_DIR/readiness-env-check.sh" ]; then
+  source "$SCRIPT_DIR/readiness-env-check.sh"
+  while IFS='|' read -r _rd_name _rd_status _rd_value _rd_loc _rd_note; do
+    [ -n "$_rd_name" ] && _var "$_rd_name" "$_rd_status" "$_rd_value" "$_rd_loc" "$_rd_note"
+  done < <(readiness_env_check_rows "$PROJECT_DIR" 2>/dev/null || true)
 fi
 
 # ── Skill shadowing ─────────────────────────────────────────────────────────
