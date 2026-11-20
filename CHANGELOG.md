@@ -17,11 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.126.2 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
+## 0.126.3 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
 
 - **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
 - **One derivation: `lib/ticket-type.sh`.** The manifest `type`, else a whole `bug` label, else `feature`. `persona-select.sh` (`PERSONA_TYPE`, debugger overlay) now calls it instead of its own copy.
 - **Entry gate Check 2.5b (`BUG_NO_REPRO`) reads the manifest type first.** A ticket with a manifest type is no longer classified by label or by wording; a ticket with none keeps `get_ticket_type`.
+
+## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
+
+- **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.
+- **Test code is not blast radius.** `get_blast_radius_override` counted `smoke test (test/smoke.test.js)` as a second execution flow, and test files as d=1 callers. A flow that names a test file or directory, or is named for a test ("test harness", "supertest suite"), is no longer a flow. A d=1 count drops the test files listed in its parentheses, but only when the list names every caller: a bare `5 callers` stays 5. The HIGH/CRITICAL risk trigger is unchanged. The Blast Radius template now asks for the caller files.
+- **Not changed.** The fast-path keyword scan (`detect_reversibility_trigger`) still escalates on any auth word; it is the deliberate over-inclusive floor for planned tickets. Two flows that are both production flows still escalate, including flows on an `additive` row.
+- Tests: 9 new in `test-notes-parse.sh`, 9 new in `test-complexity-score.sh`; 12 of them fail on the old code, the rest guard the cases that must stay complex.
 
 ## 0.126.1 (2026-11-20) — verify-mode.sh no longer sends API-only, git-only and docs-only tickets to the browser (#761)
 
