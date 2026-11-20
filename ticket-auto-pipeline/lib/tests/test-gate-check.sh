@@ -1193,6 +1193,42 @@ test_bug_no_repro_high_score_still_stops() {
   }
 }
 
+# 27b. #677: the manifest type decides Check 2.5b when the ticket has one. A
+# planned bug carries no bug label; a planned feature is never judged by a
+# stray label. The manifest-exists mock keeps Check 2.7 out of the way.
+_bug_repro_manifest_case() { # <manifest type> <context labels> → 0 when BUG_NO_REPRO stopped the gate
+  _setup
+  local repos_root
+  repos_root=$(mktemp -d)
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "$1" '[]' >/dev/null
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "$2" "false" # no repro steps
+  _scaffold_critique 75 CLEAR
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local stopped=1
+  grep -q 'BUG_NO_REPRO' "$LOG_FILE" 2>/dev/null && stopped=0
+  rm -rf "$repos_root"
+  _teardown
+  return "$stopped"
+}
+
+test_bug_no_repro_manifest_bug_without_label_stops() {
+  _bug_repro_manifest_case "bug" "backend" || {
+    echo "expected BUG_NO_REPRO for manifest type bug with no bug label"
+    return 1
+  }
+}
+
+test_bug_no_repro_manifest_feature_ignores_label() {
+  if _bug_repro_manifest_case "feature" "bug"; then
+    echo "unexpected BUG_NO_REPRO: manifest type feature must win over a bug label"
+    return 1
+  fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Check 2.5 — Critique score/status gates (previously untested)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3363,6 +3399,8 @@ for fn in \
   test_bug_no_repro_gate_stop \
   test_bug_with_repro_passes \
   test_bug_no_repro_high_score_still_stops \
+  test_bug_no_repro_manifest_bug_without_label_stops \
+  test_bug_no_repro_manifest_feature_ignores_label \
   test_critique_blocked_gate_stop \
   test_critique_score_below_40_held \
   test_critique_started_but_missing_gate_stops \

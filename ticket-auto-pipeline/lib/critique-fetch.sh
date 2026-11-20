@@ -17,6 +17,11 @@
 # --workspace (no recognised flag): finds the `<TID>*` workspace dir under
 #   ., prints TICKET_DIR, exit 3 when there is none (run /ticket-appraise
 #   first).
+# Every mode also prints TICKET_TYPE (#677): ticket-type.sh's answer — the
+#   local manifest type, else `bug` for a whole `bug` label (the issue's
+#   labels, or context.md's `**Labels:**` line), else `feature`. Checks 5/6
+#   branch on it, so a planned bug, which has no label, gets the bug checks.
+#   REPOS_ROOT comes from the env, else ./CLAUDE.md.
 #
 # Exit codes: 0 ok, 1 fetch failed, 3 no workspace, 2 usage.
 
@@ -39,6 +44,20 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
+# shellcheck source=ticket-type.sh
+source "$_CF_DIR/ticket-type.sh"
+# shellcheck source=claude-md-field.sh
+source "$_CF_DIR/claude-md-field.sh"
+_cf_type() {
+  local t
+  if [ -z "${REPOS_ROOT:-}" ]; then
+    REPOS_ROOT=$(claude_md_field CLAUDE.md REPOS_ROOT 2>/dev/null) || REPOS_ROOT=""
+    export REPOS_ROOT
+  fi
+  t=$(ticket_type_resolve "$TID" "$1")
+  printf 'TICKET_TYPE=%q\n' "${t:-feature}"
+}
+
 _cf_workspace() {
   local d
   d=$(find . -maxdepth 3 -type d -name "${TID}*" 2>/dev/null | head -1)
@@ -47,6 +66,7 @@ _cf_workspace() {
     exit 3
   fi
   printf 'TICKET_DIR=%q\n' "$d"
+  _cf_type "$(ticket_type_context_labels "$d/context.md")"
 }
 
 case "$MODE" in
@@ -76,6 +96,7 @@ require_issue_payload "$ISSUE_JSON" || {
 printf 'TITLE=%q\n' "$(jq -r '.title' <<<"$ISSUE_JSON")"
 printf 'LABELS=%q\n' "$(jq -r '[(.labels.nodes? // .labels // [])[]?.name] | join(", ")' <<<"$ISSUE_JSON" 2>/dev/null)"
 printf 'STATE=%q\n' "$(jq -r '.state.name' <<<"$ISSUE_JSON")"
+_cf_type "$(jq -r '[(.labels.nodes? // .labels // [])[]?.name] | join(",")' <<<"$ISSUE_JSON" 2>/dev/null)"
 [ -z "$_marker" ] || printf 'SOURCE_MARKER=%q\n' "$_marker"
 echo "=== DESCRIPTION ==="
 jq -r '.description // ""' <<<"$ISSUE_JSON"
