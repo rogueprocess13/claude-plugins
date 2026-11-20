@@ -29,12 +29,24 @@
 #     and a real outage still surfaces as a counted verify attempt.
 #   source verify-preflight.sh; verify_preflight_playwright_source [project_dir]
 #     Prints the config file that declares the server; exits 1 if none does.
+#   verify_preflight_playwright_server [project_dir]
+#     Prints that server's JSON object instead (lib/readiness-env-check.sh).
 
 # _vp_has_server <json_file> <jq_path_to_mcpServers>
 _vp_has_server() {
   local file="$1" path="$2"
   [ -f "$file" ] || return 1
-  jq -e --arg d "${3:-}" "${path} | objects | has(\"playwright\")" "$file" >/dev/null 2>&1
+  jq -e --arg d "${3:-}" "${path} | objects | has(\"playwright\")" "$file" >/dev/null 2>&1 || return 1
+  _VP_HIT=("$file" "$path" "${3:-}")
+}
+
+# verify_preflight_playwright_server [project_dir] — the configured server's
+# own JSON object (command, args, env, type, url), from the same source
+# verify_preflight_playwright_source names; exits 1 if none declares it.
+verify_preflight_playwright_server() {
+  _VP_HIT=()
+  verify_preflight_playwright_source "${1:-$PWD}" >/dev/null || return 1
+  jq -c --arg d "${_VP_HIT[2]}" "${_VP_HIT[1]} | .playwright" "${_VP_HIT[0]}" 2>/dev/null
 }
 
 verify_preflight_playwright_source() {

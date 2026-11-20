@@ -361,6 +361,7 @@ Each gate-stop emits a `|META|gate-stop|fail|<CODE>` line into the pipeline log.
 - **`LINEAR_API_KEY` missing**: Add to `~/.claude/settings.local.json` under `env`. Generate from Linear → Settings → API.
 - **`GITHUB_PERSONAL_ACCESS_TOKEN` missing**: Add to same `env` block. Generate from GitHub → Settings → Developer settings → Personal access tokens. Needs `repo` and `pull_requests` scopes.
 - **CLAUDE.md fields missing**: Add `REPOS_ROOT`, `LOCAL_URL`, `UAT_URL` to your project's `CLAUDE.md`. These are project-specific, not global.
+- **Run-readiness rows (`VERIFY_ENV_START`, `PLAYWRIGHT_MCP`, `PLAYWRIGHT_BROWSER`, `GITNEXUS_INDEX`, `PRESCAN_DOCS`)**: warnings, never a FAIL. Each note says which tickets need the item and gives the command to run. The check starts, installs, indexes and scans nothing, and it cannot see whether an MCP server is connected in the agent session; the row says so. The browser revision is checked only for an exactly pinned `npx @playwright/mcp@X.Y.Z` that is already in the npx cache.
 - **`/ticket-approve` fails with "could not make … manifest-addressable" (exit 3)**: `REPOS_ROOT` is in `CLAUDE.md` but not in the environment. Export it (e.g. the `env` block of `~/.claude/settings.local.json`) and start a new session.
 
 ### State machine drift

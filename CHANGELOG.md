@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.131.0 (2026-11-21) — env-check reports what a run needs besides variables
+
+`/ticket-env-check` passed on a host where verify, appraise and prescan then failed or degraded mid-run (GitHub #772). It now reports five more rows, from `lib/readiness-env-check.sh`:
+
+- **`VERIFY_ENV_START`** — `env-start.sh` at the tickets root: present, readable, passes `bash -n`, reads `VERIFY_REPO_PATH_*`. A missing file made `verify-env-up.sh` exit 127 for every browser and live-backend ticket. The script is never run.
+- **`PLAYWRIGHT_MCP`** — an MCP server keyed `playwright` is configured. The row says "config only": a shell cannot see whether the server is connected in the agent session.
+- **`PLAYWRIGHT_BROWSER`** — the browser that server launches. For an exactly pinned `npx @playwright/mcp@X.Y.Z` already in the npx cache the exact build is checked, which is the failure the rehearsal hit (a firefox build was installed, but not the one the server wanted). Otherwise an installed build is reported as `info` "revision not verified", never `ok`. The note gives the `install-browser` command; nothing is installed.
+- **`GITNEXUS_INDEX`** and **`PRESCAN_DOCS`** — how many code repos under `REPOS_ROOT` are in the GitNexus registry and have `.ticket-auto/<slug>/docs/INDEX.md`, with the command for the first missing one. Freshness is not judged.
+- **All five are warnings.** Each is needed by some tickets only, or the pipeline falls back without it, so none counts as an issue and the exit code is unchanged. `info` marks a row that does not apply (no code repo, a remote Playwright server). fleetd's boot gate runs `fleet-env-check.sh`, which does not read these rows.
+- Validate mode (`env-check.sh --mode=validate`) prints the same five as pass/warn/info lines; a missing `env-start.sh` was silent there.
+
 ## 0.130.0 (2026-11-21) — board frames for a recording, and a Recording section in env-check
 
 Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` can now also keep a picture of the board each time its card moves.

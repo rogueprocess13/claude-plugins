@@ -276,3 +276,4 @@ bash ticket-auto-pipeline/lib/tests/test-template-select.sh	0.0
 bash ticket-auto-pipeline/lib/tests/test-ticket-audit-cache.sh	0.0
 bash ticket-auto-pipeline/lib/tests/test-ticket-audit-checklist.sh	0.0
 bash ticket-planner/lib/tests/test-skill-arg-substitution.sh	0.0
+bash ticket-auto-pipeline/lib/tests/test-readiness-env-check.sh	3.0
