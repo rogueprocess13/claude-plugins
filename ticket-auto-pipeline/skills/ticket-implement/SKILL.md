@@ -221,21 +221,11 @@ Work through each change in `simple-fix.md` in order. **As each acceptance crite
 
 ### Openspec mode
 
-Spawn a `general-purpose` agent to apply the change and return a difficulty summary. The worktree is already created at `$WORKTREE_PATH` — all edits happen there.
+Apply the change yourself, in the worktree at `$WORKTREE_PATH`: no agent spawn and no slash command (a phase agent has neither tool). Read `proposal.md`, `design.md` and `specs/` under `CHANGE_DIR` (Step 2), then work through its `tasks.md` in order. Check each task's box (`- [ ]` → `- [x]`) as it is done.
 
-**Prompt the agent with:**
-```
-Apply the openspec change `{change-name}` by running `/opsx:apply` in the worktree at `{WORKTREE_PATH}`. Follow its instructions fully.
+Count as you work, and keep the result as `{DIFFICULTY_SUMMARY}` — Step 4c uses it:
 
-Locate code with Grep, then Read confirmed targets only — never scan whole files. Before starting edits, run GitNexus `impact()` on target symbols to map blast radius.
-
-Track these metrics as you work:
-- fix_cycles: how many times did you need to fix and re-run tests?
-- discovery_rounds: how many rounds of unexpected investigation beyond the plan were needed?
-- plan_deviation: "followed" (as-written) | "adapted" (one step changed) | "rewrote" (approach changed)
-- changes_made: list of "file:line — what changed" entries
-
-When complete, return ONLY this JSON (no other text):
+```json
 {
   "fix_cycles": N,
   "discovery_rounds": N,
@@ -245,7 +235,7 @@ When complete, return ONLY this JSON (no other text):
 }
 ```
 
-**Save the returned JSON as `{DIFFICULTY_SUMMARY}` — Step 4c uses it.**
+`fix_cycles`: times you fixed and re-ran tests. `discovery_rounds`: rounds of investigation beyond the plan. `plan_deviation`: as written, one step changed, or approach changed.
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement done "{N} files changed"
 
@@ -300,18 +290,20 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT run-tests done "Tests pass"
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review start "Reviewing changes"
 
-Spawn a `general-purpose` agent for each repo with changes. Pass it:
-- The worktree path and branch name
-- The list of changed files (`git -C "$WORKTREE_PATH" fetch origin "$BASE_BRANCH" --quiet 2>/dev/null; git -C "$WORKTREE_PATH" diff --name-only "${BASE_REF:-origin/$BASE_BRANCH}"` — always the remote base ref: a stale local epic ref would attribute earlier tickets' commits to this one)
-- The ticket ID and a one-sentence description of what was implemented
-- This exact instruction: **Invoke `Skill("superpowers:requesting-code-review")` — use the Skill tool with this exact name. Do NOT use any other review tool, plugin, or slash command.**
+Review the diff yourself, in this session: no agent spawn and no review skill (a phase agent has neither tool; the independent review is the PR-REVIEW phase). For each repo with changes, read the whole diff as a reviewer who did not write it (`git -C "$WORKTREE_PATH" fetch origin "$BASE_BRANCH" --quiet 2>/dev/null; git -C "$WORKTREE_PATH" diff "${BASE_REF:-origin/$BASE_BRANCH}"` — always the remote base ref: a stale local epic ref would attribute earlier tickets' commits to this one). List findings as `file:line`, summary and severity (`low`/`medium`/`high`) against this checklist:
 
-The agent returns a findings list, each tagged with a severity. **Only `medium` severity and above are blockers** — `low`-severity findings (style preferences, naming opinions) never gate the commit.
+- every acceptance criterion in the plan is met by code in the diff, and nothing outside the plan's scope changed
+- error paths, empty or missing inputs and boundary values are handled
+- callers of every changed signature (Step 4's `impact` d=1 list) still work
+- new or changed logic has a test that fails without it
+- no secret, debug output, commented-out code or unresolved TODO is left in the diff
+
+**Only `medium` severity and above are blockers** — `low`-severity findings (style preferences, naming opinions) never gate the commit.
 
 This fix-and-re-review loop is **capped at 3 cycles**, tracked with a `cycle#N` counter on the log line:
 
-- Cycle 1: spawn the agent. If there are no medium+ findings, the review is clean — stop here.
-- If medium+ findings exist and `cycle < 3`: fix each one, re-run unit tests, re-spawn the agent with the updated file list as the next cycle.
+- Cycle 1: review. If there are no medium+ findings, the review is clean — stop here.
+- If medium+ findings exist and `cycle < 3`: fix each one, re-run unit tests, review the updated diff again as the next cycle.
 - If medium+ findings still exist at `cycle == 3`: gate-stop and stop — do not commit:
   ```bash
   bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review fail "cycle#3 CODE_REVIEW_EXHAUSTED"
@@ -329,7 +321,7 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
 
 ## Step 4c — Rate actual complexity and update Linear label
 
-Rate the outcome from `{DIFFICULTY_SUMMARY}` (openspec: write the agent's JSON to `{ticket-dir}/difficulty-summary.json`) or from your own counts (simple-fix):
+Rate the outcome from `{DIFFICULTY_SUMMARY}` (openspec: write that JSON to `{ticket-dir}/difficulty-summary.json`) or from your own counts (simple-fix):
 ```bash
 bash ~/.claude/skills/lib/implement-rate.sh --summary "{ticket-dir}/difficulty-summary.json"   # or: --fix-cycles N --discovery-rounds N --plan-deviation followed|adapted|rewrote
 ```
@@ -407,7 +399,7 @@ An unresolvable base ref counts as a diff, so the skip line is only written on p
 evidence that there is nothing to ship.
 
 For each affected repo:
-1. Run `/commit-commands:commit` from the worktree (`cd "$WORKTREE_PATH"` first).
+1. Commit with plain git, never a slash command: `git -C "$WORKTREE_PATH" add <paths>` for the files this ticket changed (never `add -A`), then `git -C "$WORKTREE_PATH" commit -m "<title>"` with a title from the template below.
 2. **Pre-push safety check — GitNexus `detect_changes`:** The worktree is a full git checkout — `detect_changes` operates on the branch, not the filesystem path.
    - **Branch verification first (#359):** call `mcp__gitnexus__list_repos`, find the entry for this repo, and read its `lastCommit`. Then run:
      ```bash

@@ -122,7 +122,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-reconcile|done|cycle#2 reconci
 
 `IMPLEMENT`'s `code-review` terminal entry carries a `cycle#N` counter in `MSG`, same
 convention as PR feedback reconciliation. The fix-and-re-review loop is capped at 3 cycles;
-only `medium`-severity-and-above findings are blockers and drive re-spawns, `low`-severity
+only `medium`-severity-and-above findings are blockers and drive another cycle, `low`-severity
 findings are recorded to notes.md but never gate the commit. Exhausting all 3 cycles with
 medium+ findings still open is a gate-stop (`CODE_REVIEW_EXHAUSTED`, see below):
 
@@ -423,9 +423,8 @@ jq -s '[.[] | select(.kind == "run")]
 
 **Limits of this attribution — all of them load-bearing when reading the numbers:**
 
-- **Cross-plugin skills are not fingerprinted.** `ticket-implement` invokes
-  `/commit-commands:commit`, which is rooted in another plugin's `CLAUDE_PLUGIN_ROOT` and is
-  unresolvable from ours. A change there does not move the fingerprint.
+- **Cross-plugin skills are not fingerprinted.** A skill rooted in another plugin's
+  `CLAUDE_PLUGIN_ROOT` is unresolvable from ours. A change there does not move the fingerprint.
 - **The fingerprint is session-scoped.** It is computed once at `SessionStart`, so a plugin
   upgrade mid-session stamps subsequent runs with the *previous* value until the next session.
   `generated_at` and `plugin_version` in the artifact make the skew inspectable after the fact.

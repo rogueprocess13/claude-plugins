@@ -32,6 +32,16 @@ ticket-implement's Regression Risk gate was cleared by changing `**Status:** UNA
 - **Upgrade:** a ticket whose notes.md was hand-edited to `ACKNOWLEDGED` holds once at its next ticket-implement run, until a person runs `regression-ack.sh` for it. No policy acknowledgement exists; every Regression Risk section, `ADJACENT` and `SUPERSEDES` included, needs a person as before. The gate now needs `REPOS_ROOT` (it exits 2 without it, never a pass).
 - ticket-appraise-exec no longer writes a `**Status:**` line into the section.
 
+## 0.131.2 (2026-11-21) — ticket-implement no longer tells its agent to use tools it does not have (#667)
+
+`ticket-implement-agent` holds Bash, Read, Write, Edit, Grep, Glob and three GitNexus tools. Three steps of `ticket-implement/SKILL.md` needed the Agent tool, the Skill tool or another plugin's slash command, so under the router and under fleetd the agent skipped them or made something up. No tool was granted: each step now runs with the tools the agent already has.
+
+- **Step 4, openspec mode.** The agent applies the change itself (read `proposal.md`, `design.md`, `specs/`, then work through `tasks.md` and tick each box) and keeps the same difficulty JSON for Step 4c. It no longer spawns a `general-purpose` agent to run `/opsx:apply`.
+- **Step 4b, code review.** The agent reviews its own full diff against a fixed five-point checklist, with the same severity rule, 3-cycle cap and `CODE_REVIEW_EXHAUSTED` gate-stop. It no longer spawns a reviewer that calls `Skill("superpowers:requesting-code-review")`, a skill from a plugin this marketplace does not ship. The independent review of the change is the PR-REVIEW phase, which runs in its own session.
+- **Step 5, commit.** Plain `git add <paths>` and `git commit -m`, with the title from the existing template, in place of `/commit-commands:commit`.
+- **New test `lib/tests/test-agent-tool-coverage.sh`.** For every skill and agent pair in `dispatch-table.json` it scans the skill's `SKILL.md` and `references/` for instructions that need the Agent tool, the Skill tool, a task or web tool, or an `mcp__…` tool, and fails when the agent's `tools:` line lacks it. Gaps in other phases that predate the test (ticket-appraise, ticket-appraise-exec, ticket-reproduce, ticket-verify, ticket-pr-review, ticket-gate-reconcile) are listed in its `KNOWN_GAPS` ratchet: a new gap fails, and so does a listed one that has been fixed.
+- **Not included:** the other phases' gaps, and the ADR gate (`skill-preamble-auto.md` § 8 tells every phase to invoke `/adr-gate`, which needs the Skill tool).
+
 ## 0.131.1 (2026-11-20) — the complexity score is logged in one format (#769)
 
 - **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
