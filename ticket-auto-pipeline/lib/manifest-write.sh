@@ -405,28 +405,40 @@ set_ticket_approval() {
   fi
 }
 
-# set_ticket_regression_risk <TID> <risk_sha256> [body]
+# set_ticket_regression_risk <TID> <risk_sha256> <body> <plain: true|false>
 # Records that the ticket has a Regression Risk (GitHub #771): appends
-# `{risk, recorded_at, body}` to `.regression_risks` unless that fingerprint
-# is already there. The list is append-only: this never changes or removes
-# an entry, so a risk once seen stays on record whatever notes.md says
-# later. `body` is the section text that was fingerprinted, kept so a person
-# can still read a version notes.md no longer shows. Exit 3 on a bad
-# fingerprint, 1 when no manifest exists yet or the write fails.
+# `{risk, recorded_at, plain, body}` to `.regression_risks` unless that
+# fingerprint is already there. The list is append-only: this never changes
+# or removes an entry, so a risk once seen stays on record whatever notes.md
+# says later. `body` is the section text that was fingerprinted, kept so a
+# person can still read a version notes.md no longer shows. It is kept only
+# when the caller found it plain (regression_risk_plain); for anything else
+# the entry carries `plain: false` and no text, so text with control
+# characters is never stored for display. Exit 3 on a bad argument, 1 when
+# no manifest exists yet or the write fails.
 set_ticket_regression_risk() {
-  local tid="$1" risk="$2" body="${3:-}"
+  local tid="$1" risk="$2" body="${3:-}" plain="${4:-}"
   if ! [[ "$risk" =~ ^[0-9a-f]{64}$ ]]; then
     echo "manifest-write: invalid risk fingerprint (expected 64 hex)" >&2
     return 3
   fi
+  case "$plain" in
+  true) ;;
+  false) body="" ;;
+  *)
+    echo "manifest-write: plain must be true or false" >&2
+    return 3
+    ;;
+  esac
   local manifest_path
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
   _manifest_update "$manifest_path" \
     '(.regression_risks // []) as $l
      | .regression_risks = (if ($l | any(.risk == $r)) then $l
-         else $l + [{risk: $r, recorded_at: $at, body: $b}] end)' \
-    --arg r "$risk" --arg b "$body" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+         else $l + [{risk: $r, recorded_at: $at, plain: $p,
+           body: (if $p then $b else null end)}] end)' \
+    --arg r "$risk" --arg b "$body" --argjson p "$plain" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 
 # set_ticket_regression_ack <TID> <risk_sha256> <provenance> <by> [note]

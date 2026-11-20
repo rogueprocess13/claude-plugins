@@ -567,7 +567,7 @@ test_record_is_append_only() {
   [ "$(jq '.regression_risks | length' "$(_manifest "$t")")" = "2" ] || return 1
   [ "$(jq -r '.regression_risks[0].risk' "$(_manifest "$t")")" = "$a" ] || return 1
   # The writer has no way to drop or rewrite an entry.
-  _env "$t" bash -c "source '$LIB_DIR/manifest-write.sh'; set_ticket_regression_risk $TID $a 'other text'" || return 1
+  _env "$t" bash -c "source '$LIB_DIR/manifest-write.sh'; set_ticket_regression_risk $TID $a 'other text' true" || return 1
   [ "$(jq -r '.regression_risks[0].body' "$(_manifest "$t")")" != "other text" ]
 }
 
@@ -646,25 +646,189 @@ test_bidi_and_c1_refused() {
   _expect_rc 7 _ack "$t" "$(_id "$t")"
 }
 
-# Once recorded, a version with escape sequences cannot be rewritten. After
-# the section is cleaned it is shown escaped, under a warning, and never raw.
-test_recorded_escape_version_shown_escaped() {
+# A version recorded while it held escape sequences keeps no text. After the
+# section is cleaned, the person is told it cannot be shown; nothing an agent
+# wrote for it reaches the terminal.
+test_recorded_unsafe_version_is_withheld() {
   local t out bad
   t=$(_mk)
   _write_notes "$t" UNACKNOWLEDGED $'removes the guard\e[2Khidden'
   bad=$(_sha "$t")
   _expect_rc 1 _check "$t" || return 1
+  jq -e --arg r "$bad" '.regression_risks | any(.risk == $r and .plain == false and .body == null)' "$(_manifest "$t")" >/dev/null || {
+    echo "text with an ESC sequence was stored in the manifest" >&2
+    return 1
+  }
   _write_notes "$t" UNACKNOWLEDGED "removes the guard, stated plainly"
   out=$(_ack "$t" "$(_id "$t")") || {
     echo "a cleaned section could not be acknowledged: $out" >&2
     return 1
   }
   ! grep -q $'\e' <<<"$out" || return 1
-  grep -q 'WARNING' <<<"$out" || return 1
-  grep -qF 'removes the guard^[[2Khidden' <<<"$out" || return 1
+  ! grep -q 'hidden' <<<"$out" || return 1
+  grep -q 'cannot be shown' <<<"$out" || return 1
+  grep -q 'stated plainly' <<<"$out" || return 1
   [ "$(jq '[.regression_acks[] | select(.provenance == "human")] | length' "$(_manifest "$t")")" = "2" ] || return 1
-  jq -e --arg r "$bad" '.regression_acks | any(.risk == $r)' "$(_manifest "$t")" >/dev/null || return 1
   _check "$t" >/dev/null
+}
+
+# Review round 3, finding 1: what is shown is what is acknowledged.
+# An earlier version's stored text must hash to its id.
+test_stored_text_must_match_its_id() {
+  local t a b
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED "the plan removes the prior guard"
+  a=$(_sha "$t")
+  _expect_rc 1 _check "$t" || return 1
+  _write_notes "$t" UNACKNOWLEDGED "second version"
+  b=$(_sha "$t")
+  _expect_rc 1 _check "$t" || return 1
+  # Someone swaps the stored text of the earlier version for something mild.
+  jq -c --arg r "$a" '(.regression_risks[] | select(.risk == $r) | .body) = "| `README.md` | none | ADJACENT | a typo fix |"' \
+    "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  local out rc=0
+  out=$(_ack "$t" "${b:0:12}" 2>&1) || rc=$?
+  [ "$rc" -eq 7 ] || {
+    echo "a stored text that does not hash to its id was accepted (rc=$rc)" >&2
+    return 1
+  }
+  ! grep -q 'a typo fix' <<<"$out" || {
+    echo "the swapped text was shown" >&2
+    return 1
+  }
+  [ -z "$(_ack_field "$t" risk)" ]
+}
+
+# The current version is shown from notes.md, never from the manifest copy.
+test_current_version_is_shown_from_notes() {
+  local t a out
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED "the plan removes the prior guard"
+  a=$(_sha "$t")
+  _expect_rc 1 _check "$t" || return 1
+  jq -c --arg r "$a" '(.regression_risks[] | select(.risk == $r) | .body) = "MANIFEST COPY: nothing to see"' \
+    "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  out=$(_ack "$t" "${a:0:12}") || return 1
+  grep -q 'the plan removes the prior guard' <<<"$out" || return 1
+  ! grep -q 'MANIFEST COPY' <<<"$out"
+}
+
+test_non_sha_risk_id_refused() {
+  local t
+  t=$(_mk)
+  _write_notes "$t" none
+  jq -c '.regression_risks = [{risk: "not-a-sha", plain: true, body: "x"}]' "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  _expect_rc 1 _check "$t" || return 1
+  _expect_rc 7 _ack "$t" "not-a-sha"
+}
+
+# Finding 2: the validator does not depend on grep -P and fails closed.
+# _stub <tmp> <name> <script body> — a command that shadows the real one.
+_stub() {
+  mkdir -p "$1/bin"
+  printf '#!/usr/bin/env bash\n%s\n' "$3" >"$1/bin/$2"
+  chmod +x "$1/bin/$2"
+}
+
+test_no_pcre_grep_still_refuses() {
+  local t real
+  t=$(_mk)
+  real=$(command -v grep)
+  # A grep with no PCRE: any -P (alone or in a flag cluster) is an error.
+  _stub "$t" grep "for a in \"\$@\"; do case \"\$a\" in --) break ;; -*P*) echo 'grep: -P not supported' >&2; exit 2 ;; esac; done; exec '$real' \"\$@\""
+  _write_notes "$t" UNACKNOWLEDGED $'removes the guard\e[2Khidden'
+  PATH="$t/bin:$PATH" _expect_rc 7 _ack "$t" "$(_id "$t")" || return 1
+  PATH="$t/bin:$PATH" _expect_rc 1 _check "$t" || return 1
+  # And plain text still works on that host.
+  local t2
+  t2=$(_mk)
+  cp -r "$t/bin" "$t2/bin"
+  _write_notes "$t2" UNACKNOWLEDGED "plain text, no PCRE needed"
+  PATH="$t2/bin:$PATH" _ack "$t2" "$(_id "$t2")" >/dev/null || {
+    echo "plain text could not be acknowledged without grep -P" >&2
+    return 1
+  }
+  PATH="$t2/bin:$PATH" _check "$t2" >/dev/null
+}
+
+test_validator_failure_is_refusal() {
+  local t
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED "plain text"
+  _stub "$t" iconv "exit 1"
+  PATH="$t/bin:$PATH" _expect_rc 7 _ack "$t" "$(_id "$t")" || return 1
+  [ -z "$(_ack_field "$t" risk)" ]
+}
+
+test_invalid_utf8_refused() {
+  local t
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED $'bad \xff byte'
+  _expect_rc 7 _ack "$t" "$(_id "$t")" || return 1
+  _write_notes "$t" UNACKNOWLEDGED $'lone \x9b c1 byte'
+  _expect_rc 7 _ack "$t" "$(_id "$t")"
+}
+
+test_plain_predicate() {
+  (
+    # shellcheck source=/dev/null
+    source "$RISK_SH"
+    regression_risk_plain "café — 日本 😀 | \`x\` → y"$'\t'"tab"$'\n'"line" || exit 1
+    regression_risk_plain "" || exit 1
+    ! regression_risk_plain $'a\eb' || exit 1
+    ! regression_risk_plain $'a\rb' || exit 1
+    ! regression_risk_plain $'a\x7fb' || exit 1
+    ! regression_risk_plain $'a\xc2\x85b' || exit 1
+    ! regression_risk_plain $'a\xe2\x80\x8bb' || exit 1
+    ! regression_risk_plain $'a\xe2\x80\xaeb' || exit 1
+    ! regression_risk_plain $'a\xe2\x81\xa6b' || exit 1
+    ! regression_risk_plain $'a\xffb' || exit 1
+    ! regression_risk_plain $'a\xc3' || exit 1
+  )
+}
+
+# Fail closed on the check path: nothing that cannot be read is a pass.
+test_unreadable_inputs_never_pass() {
+  local t rc
+  t=$(_mk)
+  # A manifest that does not parse.
+  _write_notes "$t" none
+  echo '{not json' >"$(_manifest "$t")"
+  _expect_rc 2 _check "$t" || return 1
+  # The lists in the wrong shape.
+  t=$(_mk)
+  _write_notes "$t" none
+  jq -c '.regression_risks = "none"' "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  _expect_rc 2 _check "$t" || return 1
+  t=$(_mk)
+  _write_notes "$t" none
+  jq -c '.regression_risks = [42]' "$(_manifest "$t")" >"$t/m" && mv "$t/m" "$(_manifest "$t")"
+  _expect_rc 2 _check "$t" || return 1
+  # A NUL byte in notes.md (awk and bash drop what follows one).
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  printf 'tail\0hidden\n' >>"$(_notes "$t")"
+  _expect_rc 2 _check "$t" || return 1
+  # awk fails.
+  t=$(_mk)
+  _write_notes "$t" none
+  _stub "$t" awk "exit 3"
+  PATH="$t/bin:$PATH" _expect_rc 2 _check "$t" || return 1
+  # jq fails.
+  t=$(_mk)
+  _write_notes "$t" none
+  _stub "$t" jq "exit 5"
+  rc=0
+  PATH="$t/bin:$PATH" _check "$t" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || {
+    echo "a failing jq let the gate through" >&2
+    return 1
+  }
+  # No sha256 tool that works.
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  _stub "$t" sha256sum "exit 1"
+  PATH="$t/bin:$PATH" _expect_rc 2 _check "$t"
 }
 
 # ── skill prose ──────────────────────────────────────────────────────────────
@@ -710,7 +874,15 @@ _run "ticket-implement stops on any non-zero exit of the gate" test_skill_treats
 _run "a section with an ESC sequence is refused and never printed" test_escape_sequence_refused
 _run "direction-override and C1 control characters are refused" test_bidi_and_c1_refused
 _run "ordinary non-ASCII text is shown and accepted" test_plain_unicode_accepted
-_run "a recorded version with ESC sequences is shown escaped under a warning" test_recorded_escape_version_shown_escaped
+_run "a version recorded with ESC sequences keeps no text and is shown as withheld" test_recorded_unsafe_version_is_withheld
+_run "a stored text that does not hash to its id is refused" test_stored_text_must_match_its_id
+_run "the current version is shown from notes.md, not the manifest copy" test_current_version_is_shown_from_notes
+_run "a recorded risk whose id is not a sha256 holds and is refused" test_non_sha_risk_id_refused
+_run "a host whose grep has no -P still refuses ESC and still accepts plain text" test_no_pcre_grep_still_refuses
+_run "a failing validator (iconv) is a refusal" test_validator_failure_is_refusal
+_run "invalid UTF-8 and a lone C1 byte are refused" test_invalid_utf8_refused
+_run "regression_risk_plain accepts text and rejects every control class" test_plain_predicate
+_run "an unparseable manifest, a NUL byte and failing tools never pass the gate" test_unreadable_inputs_never_pass
 _run "a repeated hold emits gate-held once per risk" test_hold_event_once_per_risk
 _run "the gate does not evaluate without REPOS_ROOT (exit 2)" test_check_needs_repos_root
 _run "the actuator clears the gate and records provenance, who and when" test_ack_clears_and_records_provenance
