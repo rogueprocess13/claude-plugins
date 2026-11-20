@@ -17,13 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.130.1 (2026-11-20) — the complexity score is logged in one format (#769)
+## 0.130.2 (2026-11-20) — the complexity score is logged in one format (#769)
 
 - **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
 - **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
 - **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
 - **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
 - Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
+## 0.130.1 (2026-11-21) — planner feedback records the real predicted confidence and changed files (#768)
+
+`planned-feedback-write.sh` wrote `confidence_predicted: 0`, empty `files_changed` and `services_touched`, and `decision_drift: "major"` for every planned ticket, Smooth runs included. Three causes:
+
+- The Planner Context block was read only from the tracker, and only when the calling shell had `get_issue` loaded. The router's post-implement block sources this file alone, so the read never ran. The block now also comes from the planner's own `body.md`, then from the workspace `context.md`; a failed tracker read falls back to them.
+- The ticket branch was read from a `META|branch|info|` log line that nothing writes, the diff ran only when the cwd was a git repo (the router runs from the tickets root), and the base was fixed at `origin/main`. Branch and base now come from `META|branch-context`, and the diff runs in the ticket's worktrees under `$REPOS_ROOT/.ticket-auto/worktrees/<TID>/`. Paths carry the repo directory name, as Target Symbols do.
+- A missing prediction was written as `0`. It is now `null`, with `decision_drift: "unknown"`. `planner_drift_compute` already skips a null prediction.
+
+Refs #774: the planner's confidence values in that report are what the documented formula gives for a one-repo greenfield project; no threshold or formula changed here.
+
 ## 0.130.0 (2026-11-21) — board frames for a recording, and a Recording section in env-check
 
 Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` can now also keep a picture of the board each time its card moves.
