@@ -59,6 +59,40 @@ test_two_weak_axes_complex() { _write_case "multi-service,cross-layer" 4 complex
 test_reversibility_alone_complex() { _write_case "reversibility:schema-migration" 3 complex && [ "$(_line 'Axes fired')" = "reversibility:3 (schema-migration)" ]; }
 test_framework_migration_marker() { _write_case "cross-layer:framework-migration" 3 complex && [ "$(_line 'Axes fired')" = "cross-layer (framework-migration):3" ]; }
 test_prior_rejection_complex() { _write_case prior-rejection 3 complex; }
+
+# ── write: auth triggers (issue #762) ─────────────────────────────────────────
+# Reusing an unchanged auth check on new endpoints, and greenfield auth nothing
+# depends on, held simple tickets at the complex gate with reversibility:3.
+test_auth_reuse_is_simple() { _write_case "reversibility:auth-reuse" 0 simple && [ "$(_line 'Axes fired')" = "reversibility:0 (auth-reuse)" ]; }
+test_auth_new_alone_is_simple() { _write_case "reversibility:auth-new" 2 simple && [ "$(_line 'Axes fired')" = "reversibility:2 (auth-new)" ]; }
+# Guards: changed auth behaviour, and any unrecognised auth spelling, stay complex.
+test_auth_modify_is_complex() { _write_case "reversibility:auth-modify" 3 complex && [ "$(_line 'Axes fired')" = "reversibility:3 (auth-modify)" ]; }
+test_auth_legacy_qualifiers_stay_complex() {
+  local q
+  for q in auth authorization auth-rule Auth-Reuse auth-reused auth_new; do
+    _write_case "reversibility:$q" 3 complex || return 1
+  done
+}
+test_auth_new_with_weak_axis_is_complex() { _write_case "cross-layer,reversibility:auth-new" 4 complex; }
+test_auth_reuse_does_not_hide_other_axes() { _write_case "multi-service,cross-layer,reversibility:auth-reuse" 4 complex; }
+test_auth_cannot_be_listed_beside_another_reversibility() { _refuses "reversibility:auth-reuse,reversibility:schema-migration"; }
+# A reused check on new endpoints whose only other caller is a test: simple
+# end to end, sweep plus blast write-back.
+test_auth_reuse_with_test_callers_stays_simple() {
+  _scored reversibility:auth-reuse '| `buildApp` | LOW | 4 callers (src/server.js, test/smoke.test.js, test/store.test.js, test/users.test.js) | 0 indirect | server start, every supertest suite | modifying |\n' || return 1
+  local out
+  out=$(bash "$CS" blast "$TMP") || return 1
+  grep -qx 'COMPLEXITY=simple' <<<"$out" && grep -qx 'WEIGHTED=0' <<<"$out" && [ "$(_get)" = simple ]
+}
+# Guard: changed auth with production flows stays complex on both axes.
+test_auth_modify_with_production_flows_scores_both() {
+  _scored reversibility:auth-modify '| `buildApp` | LOW | 5 callers (src/server.js:5, test/a.test.js, test/b.test.js, test/c.test.js, test/d.test.js) | 0 indirect | server start-up, test harness | modifying |\n| `register handler` | LOW | 1 callers | 0 | register | modifying |\n| `login handler` | LOW | 0 callers | 0 | login | modifying |\n' || return 1
+  local out
+  out=$(bash "$CS" blast "$TMP") || return 1
+  grep -qx 'COMPLEXITY=complex' <<<"$out" && grep -qx 'WEIGHTED=6' <<<"$out" &&
+    [ "$(_line Reason)" = "Base. Blast radius: 3 execution flows." ]
+}
+
 test_spaces_tolerated() { _write_case " multi-service , reversibility " 5 complex; }
 
 test_block_shape_and_neighbours() {
