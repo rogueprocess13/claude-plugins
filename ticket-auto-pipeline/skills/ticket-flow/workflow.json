@@ -285,7 +285,12 @@
       "trigger": "appraise-start",
       "data_from": ["complexity"],
       "payload": { "complexity": "string" },
-      "description": "A ticket was claimed and appraisal began."
+      "description": "A ticket was claimed and appraisal began. `complexity` is only what was known at claim time (the router claims with the placeholder `simple` before the appraise agent runs); the score is the `complexity-scored` fact."
+    },
+    "complexity-scored": {
+      "emitted_by": "lib/appraise-claim.sh (ticket-appraise Step 4)",
+      "payload": { "complexity": "string" },
+      "description": "The appraisal scored the ticket simple or complex. A fact of its own, not a second appraise-started (GitHub #767). No trigger and no manifest change; idempotency key `{tid}:complexity-scored:{rev}:{complexity}`."
     },
     "appraise-completed": {
       "trigger": "appraise-complete",
@@ -470,6 +475,7 @@
       "projected_labels": ["needs-info", "needs-adr", "rejected", "reviewed"],
       "events": {
         "appraise-started": { "column": "Todo", "assignee": "me" },
+        "complexity-scored": null,
         "appraise-completed": { "column": "Approve" },
         "human-approved": { "column": "Ready", "remove": ["rejected"] },
         "human-rejected": { "column": "Todo" },

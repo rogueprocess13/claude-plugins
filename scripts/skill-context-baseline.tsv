@@ -10,7 +10,7 @@ dor-semantic	114884
 guidance-extractor	95410
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.128.0)
-ticket-appraise	154719
+ticket-appraise	154137
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.128.0)
 ticket-appraise-exec	121836
 ticket-appraise-exec:conditional	14320
