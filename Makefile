@@ -297,6 +297,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-refresh.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
+	# every tool a phase skill tells its agent to use is in the agent's tools: line (#667)
+	bash ticket-auto-pipeline/lib/tests/test-agent-tool-coverage.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-agent-guard.sh
 	# version-aware plugin-cache lookup (#468)
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh

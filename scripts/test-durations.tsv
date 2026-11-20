@@ -269,6 +269,7 @@ bash ticket-auto-pipeline/lib/tests/test-reconcile-decide.sh	0.1
 bash ticket-auto-pipeline/lib/tests/test-retro-claude-log-marker.sh	0.1
 bash ticket-auto-pipeline/lib/tests/test-capture-transcript.sh	0.0
 bash ticket-auto-pipeline/lib/tests/test-critique-status.sh	0.0
+bash ticket-auto-pipeline/lib/tests/test-agent-tool-coverage.sh	0.3
 bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh	0.0
 bash ticket-auto-pipeline/lib/tests/test-prescan-route.sh	0.0
 bash ticket-auto-pipeline/lib/tests/test-prescan-verify.sh	0.0
