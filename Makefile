@@ -384,6 +384,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh
 	bash ticket-planner/lib/tests/test-planner-business-framing.sh
+	bash ticket-planner/lib/tests/test-planner-body-template.sh
 	bash ticket-planner/lib/tests/test-planner-ac-checklist.sh
 	bash ticket-planner/lib/tests/test-planner-sibling-rules.sh
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh

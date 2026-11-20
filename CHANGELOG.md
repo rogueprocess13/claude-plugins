@@ -17,13 +17,27 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.127.4 (2026-11-20) — the complexity score is logged in one format (#769)
+## 0.128.1 (2026-11-20) — the complexity score is logged in one format (#769)
 
 - **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
 - **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
 - **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
 - **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
 - Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
+## 0.128.0 (2026-11-20) — planned ticket bodies state verify mode, errors and edge cases, and security decisions (#773)
+
+`ticket-planner` 0.56.0. A review of one epic's planned tickets found the same gaps in every generated body. Specify now writes them, and a new Crosscheck family checks them for initiatives planned from this version on (contract marker `ticket-body-v2`, written on the first Specify dispatch; older and in-flight initiatives are unchanged).
+
+- **Verify mode.** Every spec carries `## Verify Mode` with the line `**Verify mode:** <shape>` (`browser`, `api-only`, `diff-only`, `build-only` or `live-backend`). The composer copies it into the ticket, where `lib/verify-mode.sh` already reads it before any heuristic (#779), so an API, git or scaffold ticket no longer runs in browser mode. Missing or malformed: `VERIFY_MODE_INVALID` (blocking).
+- **Errors and edge cases.** Feature and improvement specs, and every `api-only` or `live-backend` spec, carry `## Errors and Edge Cases` with five prompts: failure, check order of 401/403/404/422, empty or malformed input, late or concurrent responses, unauthorised viewer. Missing: `EDGE_CASES_MISSING` (blocking).
+- **Criteria.** One criterion per response or behaviour instead of one per field, about 20 at most (`AC_COUNT_HIGH`, warn); each tagged `[unit]` or `[live]` (`AC_UNTAGGED`, warn); worded to hold on the PR branch, never "once merged" or "on `develop`" (`AC_POST_MERGE_STATE`, warn).
+- **Scope and Technical Context agree.** The Scope table lists every file Technical Context names, read-only ones marked; `SCOPE_TC_MISMATCH` (warn) names the files that differ.
+- **Security and identity decisions.** A plan that touches sign-in, accounts, tokens, secrets or personal data lists identifier normalisation, secret policy per environment and token handling in proposal.md `## Security & Identity Decisions`, each as a `policy` row of `## Parameters`, so a person is asked before Review instead of the epic carrying an unconfirmed assumption. Epic Gen copies the section into the epic. `SECURITY_DECISIONS_MISSING` (warn).
+- **Smaller prompt rules:** Technical Context states constraints, not exact calls; Signals `Decision` covers only the ticket's own slice; a scaffold pins the major version of what it installs; a ticket that needs a state is blocked by the one that creates it.
+- **Templates.** `templates/*.md` (read by `/ticket-create`) gain `## Verify Mode`; `feature.md` and `improvement.md` gain `## Errors and Edge Cases`. A template left unfilled classifies as before.
+- **Not changed:** the Definition-of-Ready check does not require the new sections, `ticket-verify` does not treat `[unit]` and `[live]` criteria differently, and the five warn codes do not block. Each is a decision left for a later change.
+- New libs `ticket-planner/lib/planner-body-template.sh` and `planner-crosscheck-body.sh`; new test `test-planner-body-template.sh` (135 cases; composed bodies go through `verify_mode_shape` for all five shapes, and the golden bodies keep the same readiness verdict with and without the new sections); three Crosscheck fixtures (`body-v2-*`); the business-framing golden bodies carry the new sections.
+
 ## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
 
 Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").

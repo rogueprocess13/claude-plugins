@@ -1,0 +1,16 @@
+{
+  "contracts": ["ticket-body-v2"],
+  "blocking": 2,
+  "warn": 2,
+  "accepted": 0,
+  "codes": ["VERIFY_MODE_INVALID", "EDGE_CASES_MISSING"],
+  "message_contains": [
+    "invoice-form.md has no ## Verify Mode section",
+    "invoice-form.md is a feature spec with no ## Errors and Edge Cases section"
+  ],
+  "log_contains": [
+    "|META|crosscheck|warn|info SCOPE_TC_MISMATCH invoice-form.md named in Technical Context but not in the Scope table: `web/src/totals.ts`",
+    "|META|crosscheck|warn|info AC_UNTAGGED invoice-form.md 2 of 2 acceptance criteria"
+  ],
+  "notes": "GitHub #773: a spec with no Verify Mode, no Errors and Edge Cases, untagged criteria and a Technical Context file missing from Scope, under the ticket-body-v2 marker. The two exact structural rules block; the pattern-matched ones (Scope does not list a Technical Context file, untagged criteria) warn."
+}
