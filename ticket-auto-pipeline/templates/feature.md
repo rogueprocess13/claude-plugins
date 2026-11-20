@@ -3,6 +3,7 @@
 > Copy everything below this line into the Linear ticket description.
 > Fill in `{placeholders}`. Remove any sections that don't apply.
 > Labels to set: `feature`
+> Verify mode: replace `{shape}` with exactly one of `browser` (a person uses a page), `api-only` (HTTP endpoints, no page), `live-backend` (running services with no page and no single endpoint), `build-only` (the build or test command passing is the check), `diff-only` (only files to read). The pipeline reads this field first and then makes no guess of its own.
 
 ---
 
@@ -19,6 +20,16 @@
 ## Proposed Behaviour
 
 {How it should work, screen by screen or step by step. Be specific about UI elements, labels, and states.}
+
+## Errors and Edge Cases
+
+- **Failure:** {what the user or caller sees on a network failure or a 5xx response}
+- **Check order:** {when more than one of 401, 403, 404 and 422 could apply, which is returned first}
+- **Empty or malformed input:** {empty body, missing or wrong-typed field}
+- **Late or concurrent responses:** {an action taken while an earlier request is still running}
+- **Unauthorised viewer:** {what someone without the right sees on an edit page; a request with no or an expired token}
+
+> Answer each line with the behaviour, or `Not applicable — {why}`. Every behaviour stated here needs its own acceptance criterion.
 
 ## Acceptance Criteria
 
@@ -50,6 +61,10 @@
 ## Test Data Prerequisites
 
 {What must exist before verification can run — e.g. "Org with at least one active handover."}
+
+## Verify Mode
+
+**Verify mode:** {shape} — {one-line reason}
 
 ## Related Tickets
 

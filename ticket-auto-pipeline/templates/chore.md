@@ -3,6 +3,7 @@
 > Copy everything below this line into the Linear ticket description.
 > Fill in `{placeholders}`. Remove any sections that don't apply.
 > Labels to set: `chore`
+> Verify mode: replace `{shape}` with exactly one of `browser` (a person uses a page), `api-only` (HTTP endpoints, no page), `live-backend` (running services with no page and no single endpoint), `build-only` (the build or test command passing is the check), `diff-only` (only files to read). The pipeline reads this field first and then makes no guess of its own.
 
 ---
 
@@ -47,6 +48,10 @@
 
 - [ ] Local (`http://localhost:9000`)
 - [ ] UAT (`https://uat.credit-network.biz/`)
+
+## Verify Mode
+
+**Verify mode:** {shape} — {one-line reason}
 
 ## Related Tickets
 
