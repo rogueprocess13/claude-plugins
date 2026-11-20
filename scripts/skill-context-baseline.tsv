@@ -8,7 +8,7 @@
 dor-semantic	114884
 guidance-extractor	94828
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
-ticket-appraise	154060
+ticket-appraise	153478
 ticket-appraise-exec	121177
 ticket-appraise-exec:conditional	14320
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042

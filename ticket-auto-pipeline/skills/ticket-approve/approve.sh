@@ -46,11 +46,33 @@ ensure_ticket_manifest "$TICKET_ID" || {
   exit 3
 }
 
-_rc=0
-bash "$FLOW_SH" "$TICKET_ID" human-approve --provenance human || _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  echo "ticket-approve: flow.sh human-approve failed (exit $_rc)" >&2
-  exit "$_rc"
+# One approval is one fact (GitHub #767). flow.sh emits an event on every
+# invocation by design, so a second /ticket-approve on a ticket this script
+# already approved used to write a second `human-approved` record with a new
+# idem key. When the manifest already records exactly what this run would
+# write — approved, by a human, at Ready — there is nothing to approve:
+# report it and fire nothing. Anything that ends the approval (re-claim,
+# /ticket-reject, implement-complete) clears the fact or moves the stage, so a
+# real re-approval after a re-hold still fires, and a human approving over a
+# policy approval still records the new provenance. A manifest still holding
+# a pending_event (an earlier emit failed) goes through flow.sh, which
+# replays it.
+ALREADY_APPROVED="false"
+_pending=$(get_ticket_manifest_field "$TICKET_ID" pending_event 2>/dev/null || true)
+if { [ -z "$_pending" ] || [ "$_pending" = "null" ]; } &&
+  [ "$(get_ticket_manifest_field "$TICKET_ID" approved 2>/dev/null || true)" = "true" ] &&
+  [ "$(get_ticket_manifest_field "$TICKET_ID" approval_provenance 2>/dev/null || true)" = "human" ] &&
+  [ "$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)" = "Ready" ]; then
+  ALREADY_APPROVED="true"
+fi
+
+if [ "$ALREADY_APPROVED" != "true" ]; then
+  _rc=0
+  bash "$FLOW_SH" "$TICKET_ID" human-approve --provenance human || _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    echo "ticket-approve: flow.sh human-approve failed (exit $_rc)" >&2
+    exit "$_rc"
+  fi
 fi
 
 APPROVED=$(get_ticket_manifest_field "$TICKET_ID" approved 2>/dev/null || true)
@@ -60,6 +82,7 @@ STAGE=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)
 echo "approved=${APPROVED:-false}"
 echo "approval_provenance=${PROVENANCE:-}"
 echo "stage=${STAGE:-}"
+echo "already_approved=${ALREADY_APPROVED}"
 
 if [ "$APPROVED" != "true" ]; then
   echo "ticket-approve: manifest does not reflect the approval after flow.sh succeeded" >&2
