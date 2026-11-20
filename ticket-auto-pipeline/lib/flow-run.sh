@@ -54,7 +54,8 @@
 #   9    fence guard — missing generation token for a fenced ticket
 #   10   fence guard — caller's generation is superseded
 #   11   VERDICT GATE BLOCKED — a verdict-gated trigger (uat-pass,
-#        pr-review-pass-done, pr-review-pass-uat) was refused because a trailing
+#        pr-review-pass-done, pr-review-pass-uat,
+#        pr-review-pass-merge-pending) was refused because a trailing
 #        FAIL/BLOCK verifier-result is still on record. Not a transient error:
 #        do not retry, do not report the step as passed. A human resolves it or
 #        re-runs with --override "<reason>".
