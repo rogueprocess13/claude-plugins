@@ -10,6 +10,11 @@
 # write: <list> is comma-separated, or `none`. Axes (SKILL.md Step 2.5 rubric):
 #   multi-service (2), cross-layer (2), cross-layer:framework-migration (3),
 #   reversibility[:<trigger>] (3), prior-rejection (3).
+#   Two auth triggers weigh less (issue #762): reversibility:auth-new (2) is
+#   new auth logic nothing existing depends on, reversibility:auth-reuse (0)
+#   only applies an unchanged check to new endpoints; the 0 is recorded, not
+#   scored. Every other trigger, auth-modify and a bare `auth` included,
+#   weighs 3, so an unrecognised spelling can only over-score.
 #   Any other axis or qualifier, a repeated axis, or `none` with another axis
 #   exits 2 — cross-layer qualified with anything but framework-migration is
 #   the double-count rule (migrations and payment paths are Reversibility).
@@ -95,6 +100,8 @@ write)
     cross-layer:framework-migration) w=3 r="cross-layer (framework-migration):3" ;;
     cross-layer:*) _cs_die 2 "cross-layer:$qual refused — migrations and payment paths fire reversibility only (no double-counting)" ;;
     reversibility:) w=3 r="reversibility:3" ;;
+    reversibility:auth-new) w=2 r="reversibility:2 (auth-new)" ;;
+    reversibility:auth-reuse) w=0 r="reversibility:0 (auth-reuse)" ;;
     reversibility:*) w=3 r="reversibility:3 ($qual)" ;;
     prior-rejection:) w=3 r="prior-rejection:3" ;;
     *) _cs_die 2 "unknown axis: $item" ;;

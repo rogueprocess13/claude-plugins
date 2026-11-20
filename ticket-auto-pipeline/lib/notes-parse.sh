@@ -464,6 +464,15 @@ get_test_users_by_env() {
 #   - any target with 3+ d=1 callers                 -> override, UNLESS that
 #     row's Edit column is `additive`
 #   - 2+ distinct execution flows across all targets -> override
+# Test code is not production blast radius (issue #762), so it is left out of
+# both counts, on evidence in the table only:
+#   - a flow is skipped when its text names a test file or directory
+#     (`x.test.js`, `x.spec.ts`, `x_test.go`, `test_x.py`, `XTest.java`,
+#     `test/`, `tests/`, `__tests__/`, `spec/`) or its name is a test's
+#     ("smoke test", "store wiring tests", "test harness", "supertest suite");
+#   - a d=1 count drops the test files listed in the cell's parentheses, and
+#     only when that list enumerates every caller (entries == count). A bare
+#     `5 callers`, or a partial list, keeps the stated count.
 # The Edit column (`additive` | `modifying`) is the appraiser's judgement of
 # whether the planned edit to that target can change any existing caller's
 # behaviour. Purely additive edits (new union members, new case/switch arms
@@ -499,6 +508,47 @@ get_blast_radius_override() {
     awk -F'|' -v q="'" '
       function trim(s) { gsub(/^[ \t`]+|[ \t`]+$/, "", s); return s }
       function join(acc, item) { return acc == "" ? item : acc "; " item }
+      # is_test_path(s): s names a test file or a test directory.
+      function is_test_path(s,  l) {
+        if (s ~ /[a-z0-9]Tests?\.(java|kt|cs|scala|groovy)/) return 1
+        l = tolower(s)
+        return l ~ /[._-](test|spec)s?\.[a-z0-9]+/ || l ~ /(^|[^a-z0-9_])test_[a-z0-9_]+\.py/ ||
+          l ~ /(^|[^a-z0-9_.-])(tests?|__tests__|specs?)\//
+      }
+      # is_test_name(n): n (lower case, parentheses removed) is the name of a
+      # test, not of a flow that merely ends in the word: "tests", "test
+      # suite", "test harness" or "<kind> test". "a/b test" stays a flow.
+      function is_test_name(n) {
+        return n ~ /(^|[^a-z])(super)?tests$/ ||
+          n ~ /(^|[^a-z])(super)?tests? (suites?|harness|runners?|cases?|files?|callers?)$/ ||
+          n ~ /(^|[^a-z])(unit|integration|smoke|e2e|end-to-end|regression|acceptance|contract|snapshot) test$/
+      }
+      # split_top(s, out, seps): split s on any character of seps that is not
+      # inside parentheses. Returns the item count.
+      function split_top(s, out, seps,  i, c, depth, n, cur) {
+        n = 0; cur = ""; depth = 0
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (c == "(") depth++
+          else if (c == ")" && depth > 0) depth--
+          if (depth == 0 && index(seps, c)) { out[++n] = cur; cur = "" }
+          else cur = cur c
+        }
+        out[++n] = cur
+        return n
+      }
+      # test_callers(cell, d1): how many of the d1 callers are test files, when
+      # the parenthesised list in the cell enumerates all d1 of them.
+      function test_callers(cell, d1,  a, b, n, k, t, inner, tc) {
+        a = index(cell, "("); if (!a) return 0
+        inner = substr(cell, a + 1)
+        b = match(inner, /\)[^)]*$/); if (b) inner = substr(inner, 1, b - 1)
+        n = split_top(inner, tc, ",;")
+        if (n != d1) return 0
+        t = 0
+        for (k = 1; k <= n; k++) if (is_test_path(tc[k])) t++
+        return t
+      }
       /^[ \t]*\|/ {
         # Header row: locate columns by name, so column order and extra
         # columns do not matter.
@@ -519,6 +569,7 @@ get_blast_radius_override() {
         risk = c_r ? toupper(trim($c_r)) : ""
         d1 = 0
         if (c_d1 && match($c_d1, /[0-9]+/)) d1 = substr($c_d1, RSTART, RLENGTH) + 0
+        if (d1 > 0) d1 -= test_callers($c_d1, d1)
         edit = c_e ? tolower(trim($c_e)) : ""
         if (risk ~ /(^|[^A-Z])(HIGH|CRITICAL)([^A-Z]|$)/)
           reason = join(reason, "risk " risk " (" sym ")")
@@ -530,12 +581,14 @@ get_blast_radius_override() {
         }
         if (c_f) {
           # A flow may list its callers in parentheses, "Render (home, article)":
-          # drop them first, or each comma inside would count as another flow.
-          fc = $c_f; gsub(/\([^)]*\)/, "", fc)
-          n = split(fc, parts, ",")
+          # split outside them, or each comma inside would count as another
+          # flow, and name the flow without them.
+          n = split_top($c_f, parts, ",")
           for (j = 1; j <= n; j++) {
-            f = tolower(trim(parts[j]))
+            f = parts[j]; gsub(/\([^)]*\)/, "", f)
+            f = tolower(trim(f))
             if (f == "" || f == "none" || f == "-" || f == "n/a") continue
+            if (is_test_path(parts[j]) || is_test_name(f)) continue
             if (!(f in flows)) { flows[f] = 1; nflows++ }
           }
         }
