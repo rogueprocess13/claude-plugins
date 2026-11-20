@@ -78,6 +78,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh
 	bash ticket-auto-pipeline/lib/tests/test-record.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-record-reference.sh
+	bash ticket-auto-pipeline/lib/tests/test-record-stitch.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
 	bash ticket-auto-pipeline/lib/tests/test-merge-poll.sh
