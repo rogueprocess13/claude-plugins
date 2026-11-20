@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.127.1 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
+## 0.127.2 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
 
 - **Cause.** `flow.sh` emits exactly one event per invocation, keyed `{tid}:{rev}`, and that is unchanged. The duplicates came from callers that fired a trigger twice for one fact. `appraise-start` was fired by the router before the appraise agent was spawned (complexity `simple`, a placeholder) and again by ticket-appraise Step 4 to pass the real score. `human-approve` was fired again by every repeated `/ticket-approve` on an already approved ticket, and by the entry gate's policy approval (Check 5) on a ticket a person had already approved.
 - **`appraise-started` once, `complexity-scored` for the score.** Step 4 now runs `lib/appraise-claim.sh <TID> --complexity simple|complex`. It fires `appraise-start` only when the manifest stage is not `Todo` yet (a standalone `/ticket-appraise`), then emits the new vocabulary event `complexity-scored {complexity}` through `emit_event`. The event has no trigger, changes no manifest state and projects nothing to the board (`board_drivers.linear.events` maps it to `null`). Its idempotency key is `{tid}:complexity-scored:{rev}:{complexity}`: re-running Step 4 is a no-op, a corrected score or a re-appraisal emits again. `appraise-started.complexity` is only what was known at claim time; read the score from `complexity-scored`.
@@ -26,6 +26,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - **Existing outboxes.** Duplicate records already written are harmless: the Linear driver writes desired state (column, assignee, labels), so a repeated event is a no-op, and nothing in this repository counts either event. They are not rewritten; a consumer that counts must count from this release on.
 - **Unchanged on purpose:** `flow.sh` has no dedupe, and the router still claims at the start of every STEP_1 run, so an appraisal that is restarted after a crash writes one `appraise-started` per attempt.
 - Tests: `lib/tests/test-outbox-single-fact.sh` (new; real `flow.sh`, `approve.sh`, `reject.sh` and `appraise-claim.sh`) and two Check 5 cases in `test-gate-check.sh`.
+## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
+
+- **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
+- **One derivation: `lib/ticket-type.sh`.** The manifest `type`, else a whole `bug` label, else `feature`. `persona-select.sh` (`PERSONA_TYPE`, debugger overlay) now calls it instead of its own copy.
+- **Entry gate Check 2.5b (`BUG_NO_REPRO`) reads the manifest type first.** A ticket with a manifest type is no longer classified by label or by wording; a ticket with none keeps `get_ticket_type`.
+
 ## 0.127.0 (2026-11-20) — stitch a recording into a video
 
 Third slice of the `ticket-auto-record` change: the frames a `--record` run saved can now be turned into a video.
@@ -36,6 +42,7 @@ Third slice of the `ticket-auto-record` change: the frames a `--record` run save
 - **New skill `/ticket-record-stitch <id>... [--out FILE]`** (`--clip <id>` for one ticket's clip): a thin wrapper around the script, with no pipeline preamble.
 - CI installs `ffmpeg` (`.github/actions/install-deps`): the render cases of `lib/tests/test-record-stitch.sh` use the real `ffmpeg` and `ffprobe` and fail without them. The planner cases run with a tripwire `ffmpeg` on PATH.
 - `docs/skills/`: new `ticket-record-stitch` page; the `ticket-verify` page now describes Step 1h (recording).
+
 ## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
 
 - **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.

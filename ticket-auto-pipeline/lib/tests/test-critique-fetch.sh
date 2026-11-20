@@ -18,7 +18,7 @@ set -eo pipefail
 CF_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CF_LIB_DIR="$(cd "$CF_TEST_DIR/.." && pwd)"
 
-unset LOG_FILE TAP_LOG HB_LOG_FILE LINEAR_API_KEY
+unset LOG_FILE TAP_LOG HB_LOG_FILE LINEAR_API_KEY REPOS_ROOT
 
 PASS=0 FAIL=0
 _ok() {
@@ -98,7 +98,7 @@ export FAKE_ISSUE="$ISSUE" FAKE_COMMENTS="$COMMENTS"
 orc=0 nrc=0
 old=$(_old 2>/dev/null) || orc=$?
 new=$(_new 2>/dev/null) || nrc=$?
-_same "issue: output (LABELS aside)" "$(grep -v '^LABELS=' <<<"$old")" "$(grep -v '^LABELS=' <<<"$new")"
+_same "issue: output (LABELS, TICKET_TYPE aside)" "$(grep -v '^LABELS=' <<<"$old")" "$(grep -v '^LABELS=\|^TICKET_TYPE=' <<<"$new")"
 grep -qxF 'LABELS=bug\,\ ui' <<<"$new" && _ok "LABELS read from .labels.nodes" || _ko "LABELS: $(grep LABELS <<<"$new")"
 _same "issue: exit" "$orc" "$nrc"
 [ ! -e "$WS/t/PWNED" ] && _ok "hostile title is data, never run" || _ko "title was executed"
@@ -120,13 +120,66 @@ grep -qx 'SOURCE_MARKER=AUD-1:T-1:needs-info' <<<"$out" && _ok "--source-marker 
 echo "=== workspace modes ==="
 mkdir -p "$WS/t/tickets/T-1--x"
 out=$(cd "$WS/t" && bash "$WS/lib/critique-fetch.sh" T-1 --workspace)
-_same "workspace: found" "TICKET_DIR=./tickets/T-1--x" "$out"
+_same "workspace: found" "TICKET_DIR=./tickets/T-1--x" "$(grep '^TICKET_DIR=' <<<"$out")"
 rc=0
 (cd "$WS/t" && bash "$WS/lib/critique-fetch.sh" T-9 --workspace >/dev/null 2>&1) || rc=$?
 _same "workspace: missing exits 3" 3 "$rc"
 rc=0
 bash "$WS/lib/critique-fetch.sh" T-1 >/dev/null 2>&1 || rc=$?
 _same "usage exits 2" 2 "$rc"
+
+echo "=== TICKET_TYPE: manifest type, else a whole bug label (#677) ==="
+RR="$WS/repos"
+_manifest() { # <TID> <manifest json>
+  mkdir -p "$RR/.ticket-auto/initiatives/_index" "$RR/.ticket-auto/initiatives/INIT-7/tickets/$1/planner"
+  echo "INIT-7" >"$RR/.ticket-auto/initiatives/_index/$1.initiative"
+  echo "$2" >"$RR/.ticket-auto/initiatives/INIT-7/tickets/$1/planner/manifest.json"
+}
+_issue() { # <TID> <labels json array>
+  printf '{"identifier":"%s","title":"t","description":"d","labels":{"nodes":%s},"state":{"name":"Todo"}}' "$1" "$2"
+}
+_type() { # <TID> <labels json array> → the TICKET_TYPE line of --from-audit
+  (cd "$WS/t" && FAKE_ISSUE="$(_issue "$1" "$2")" REPOS_ROOT="$RR" bash "$WS/lib/critique-fetch.sh" "$1" --from-audit 2>/dev/null) |
+    grep '^TICKET_TYPE=' || true
+}
+_manifest P-1 '{"type":"bug"}'
+_manifest P-2 '{"type":"feature"}'
+_manifest P-3 '{"type":null}'
+_manifest P-4 '{"type":"hotfix"}'
+_same "planned bug, no label → bug checks" "TICKET_TYPE=bug" "$(_type P-1 '[]')"
+_same "planned feature, no label → feature checks" "TICKET_TYPE=feature" "$(_type P-2 '[]')"
+_same "labelled ad-hoc bug, no manifest → bug checks" "TICKET_TYPE=bug" "$(_type A-1 '[{"name":"ui"},{"name":"Bug"}]')"
+_same "ad-hoc, no bug label → feature checks" "TICKET_TYPE=feature" "$(_type A-2 '[{"name":"debugging"},{"name":"bugfix"}]')"
+_same "manifest type wins over a bug label" "TICKET_TYPE=feature" "$(_type P-2 '[{"name":"bug"}]')"
+_same "null manifest type falls back to the label" "TICKET_TYPE=bug" "$(_type P-3 '[{"name":"bug"}]')"
+_same "unknown manifest type is dropped" "TICKET_TYPE=feature" "$(_type P-4 '[]')"
+_same "no REPOS_ROOT: label only" "TICKET_TYPE=feature" \
+  "$(cd "$WS/t" && FAKE_ISSUE="$(_issue P-1 '[]')" bash "$WS/lib/critique-fetch.sh" P-1 --from-audit 2>/dev/null | grep '^TICKET_TYPE=')"
+mkdir -p "$WS/t2"
+printf 'REPOS_ROOT = `%s`\n' "$RR" >"$WS/t2/CLAUDE.md"
+_same "REPOS_ROOT read from ./CLAUDE.md" "TICKET_TYPE=bug" \
+  "$(cd "$WS/t2" && FAKE_ISSUE="$(_issue P-1 '[]')" bash "$WS/lib/critique-fetch.sh" P-1 --from-audit 2>/dev/null | grep '^TICKET_TYPE=')"
+
+mkdir -p "$WS/t/tickets/P-1--planned-bug" "$WS/t/tickets/A-3--labelled" "$WS/t/tickets/A-4--plain"
+printf '# P-1\n\n**Labels:** \n' >"$WS/t/tickets/P-1--planned-bug/context.md"
+printf '# A-3\n\n**Labels:** backend, bug\n' >"$WS/t/tickets/A-3--labelled/context.md"
+printf '# A-4\n\n**Labels:** backend\n\nThe bug label is absent.\n' >"$WS/t/tickets/A-4--plain/context.md"
+_ws_type() { (cd "$WS/t" && REPOS_ROOT="$RR" bash "$WS/lib/critique-fetch.sh" "$1" "$2" 2>/dev/null) | grep '^TICKET_TYPE=' || true; }
+_same "workspace: planned bug, no label" "TICKET_TYPE=bug" "$(_ws_type P-1 --workspace)"
+_same "from-appraise: planned bug, no label" "TICKET_TYPE=bug" "$(_ws_type P-1 --from-appraise)"
+_same "workspace: context.md bug label" "TICKET_TYPE=bug" "$(_ws_type A-3 --workspace)"
+_same "workspace: no manifest, no bug label" "TICKET_TYPE=feature" "$(_ws_type A-4 --workspace)"
+
+echo "=== SKILL.md branches Checks 5/6 on TICKET_TYPE ==="
+SKILL="$CF_LIB_DIR/../skills/ticket-critique/SKILL.md"
+_c5=$(awk '/^### Check 5 /{f=1;next} f&&/^### /{exit} f' "$SKILL")
+_c6=$(awk '/^### Check 6 /{f=1;next} f&&/^\*\*6a\./{exit} f' "$SKILL")
+grep -q '^If `TICKET_TYPE=bug`' <<<"$_c5" && _ok "Check 5 runs on TICKET_TYPE=bug" || _ko "Check 5 does not branch on TICKET_TYPE"
+grep -q '`TICKET_TYPE` is not `bug`' <<<"$_c6" && _ok "Check 6 runs when TICKET_TYPE is not bug" || _ko "Check 6 does not branch on TICKET_TYPE"
+grep -q '`bug` label' <<<"$_c5$_c6" && _ko "Checks 5/6 still read the bug label" || _ok "Checks 5/6 do not read the bug label"
+_n=$(grep -c 'critique-fetch.sh {TICKET-ID} --\(from-audit\|workspace\)' "$SKILL")
+[ "$_n" -ge 2 ] && grep -q 'prints `TICKET_DIR`, `TICKET_TYPE`' "$SKILL" && grep -q '`STATE`, `TICKET_TYPE`' "$SKILL" &&
+  _ok "every input mode gets TICKET_TYPE from critique-fetch.sh" || _ko "an input mode does not load TICKET_TYPE"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

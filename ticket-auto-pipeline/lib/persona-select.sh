@@ -181,38 +181,18 @@ fi
 
 # ── --ticket-dir: ticket text and type derivation ─────────────────────────────
 
-# The type list the skills used to filter on before passing --type; keep it in
-# step with template-select.sh's KNOWN_TYPES (refactor is an alias there).
-_PS_DERIVABLE_TYPES=" bug feature improvement security chore refactor "
-
-# Manifest `type` for the ticket, or empty. TICKET_ID from the env, else the
-# workspace name before `--` ({ID}--slug, ticket-dir.sh's convention).
-_ps_manifest_type() {
-  local tid="${TICKET_ID:-}" t=""
+# Type derivation (manifest type, else a whole `bug` label) is ticket-type.sh's.
+# TICKET_ID from the env, else the workspace name before `--` ({ID}--slug,
+# ticket-dir.sh's convention).
+# shellcheck source=ticket-type.sh
+source "$SCRIPT_DIR/ticket-type.sh"
+_ps_derive_type() {
+  local tid="${TICKET_ID:-}"
   if [ -z "$tid" ]; then
     tid=$(basename "$TICKET_DIR")
     tid="${tid%%--*}"
   fi
-  if [ -z "$tid" ] || [ -z "${REPOS_ROOT:-}" ] || [ ! -f "$SCRIPT_DIR/manifest-read.sh" ]; then
-    return 0
-  fi
-  # shellcheck source=manifest-read.sh
-  source "$SCRIPT_DIR/manifest-read.sh"
-  # `|| true`: a missing index/manifest returns 1/3, fatal under set -e.
-  t=$(TICKET_ID="$tid" get_ticket_manifest_field "$tid" type 2>/dev/null || true)
-  echo "$t"
-}
-
-# `bug` when context.md's first `**Labels:**` line carries a whole `bug`
-# label (comma-separated, case-insensitive), else nothing.
-_ps_labels_type() {
-  local ctx="$TICKET_DIR/context.md"
-  [ -f "$ctx" ] || return 0
-  if grep -m1 '^\*\*Labels:\*\*' "$ctx" 2>/dev/null |
-    sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
-    echo bug
-  fi
-  return 0
+  ticket_type_resolve "$tid" "$(ticket_type_context_labels "$TICKET_DIR/context.md")"
 }
 
 if [ "$TICKET_DIR_SET" = "true" ] && [ -n "$TICKET_DIR" ] && [ -d "$TICKET_DIR" ]; then
@@ -220,15 +200,7 @@ if [ "$TICKET_DIR_SET" = "true" ] && [ -n "$TICKET_DIR" ] && [ -d "$TICKET_DIR" 
     TICKET_TEXT_FILE="$TICKET_DIR/context.md"
   fi
   if [ -z "$TYPE" ] && [ -f "$TICKET_DIR/context.md" ]; then
-    _ps_t=$(_ps_manifest_type)
-    # Unknown (or empty / JSON null) manifest type: dropped, not an error.
-    case "$_PS_DERIVABLE_TYPES" in
-    *" ${_ps_t} "*) ;;
-    *) _ps_t="" ;;
-    esac
-    if [ -z "$_ps_t" ]; then
-      _ps_t=$(_ps_labels_type)
-    fi
+    _ps_t=$(_ps_derive_type)
     TYPE="$_ps_t"
   fi
 fi
