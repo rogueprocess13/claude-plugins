@@ -381,6 +381,46 @@ test_artifact_type_sources() {
 
 FILTER="${1:-}"
 
+# ── tickets_root_layout (issue #763) ─────────────────────────────────────────
+
+test_layout_plain_git_nested() {
+  local d out rc ok=1
+  d=$(mktemp -d)
+  mkdir -p "$d/plain" "$d/own" "$d/outer/tickets"
+  git init -q "$d/own"
+  git init -q "$d/outer"
+  rc=0
+  out=$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/plain") || rc=$?
+  [ "$out" = plain ] && [ "$rc" -eq 0 ] || ok=0
+  rc=0
+  out=$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/own") || rc=$?
+  [ "$out" = git ] && [ "$rc" -eq 0 ] || ok=0
+  rc=0
+  out=$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/outer/tickets") || rc=$?
+  [ "$out" = nested ] && [ "$rc" -eq 1 ] || ok=0
+  rc=0
+  out=$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/absent") || rc=$?
+  [ "$out" = missing ] && [ "$rc" -eq 1 ] || ok=0
+  # Default root is the current directory.
+  out=$(cd "$d/own" && bash "$LIB_DIR/ticket-dir.sh" layout)
+  [ "$out" = git ] || ok=0
+  rm -rf "$d"
+  [ "$ok" -eq 1 ]
+}
+
+test_layout_row() {
+  local d ok=1
+  d=$(mktemp -d)
+  mkdir -p "$d/plain" "$d/own" "$d/outer/tickets"
+  git init -q "$d/own"
+  git init -q "$d/outer"
+  [[ "$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/plain" --row)" == "ok|plain directory|supported"* ]] || ok=0
+  [[ "$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/own" --row)" == "ok|git repo|supported"* ]] || ok=0
+  [[ "$(bash "$LIB_DIR/ticket-dir.sh" layout "$d/outer/tickets" --row)" == "warn|inside another git repo|UNSUPPORTED"* ]] || ok=0
+  rm -rf "$d"
+  [ "$ok" -eq 1 ]
+}
+
 for fn in \
   test_resolves_single_match \
   test_no_match_exits_1 \
@@ -409,7 +449,9 @@ for fn in \
   test_rpa_root_flag_from_other_cwd \
   test_rpa_type_restricts_mode \
   test_rpa_cli \
-  test_artifact_type_sources; do
+  test_artifact_type_sources \
+  test_layout_plain_git_nested \
+  test_layout_row; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done
