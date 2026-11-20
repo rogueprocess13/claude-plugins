@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.126.3 (2026-11-20) — the complexity score is logged in one format (#769)
+
+- **Two log lines disagreed.** One appraisal logged `complexity-sweep|done|complex, score: 3/3, …` and then `appraise|done|complex (score 6: …)`. Both numbers were right: the sweep summed 3, and the blast-radius write-back added 3. But the sweep line was a template the agent filled in, the done line was free text the router composed, and `/3` read as a maximum when 3 is the threshold.
+- **One formatter.** `complexity-score.sh summary <ticket-dir> [sweep|final]` renders the score from the `## Complexity` block of notes.md. The sweep line is now `sweep: complex, score 3 (threshold 3, blast radius not yet applied), axes: reversibility:3 (auth-modify)`. The done line is now `final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3`.
+- **The done line no longer depends on the router's wording.** `phase_terminal_write` writes the `final` line for `APPRAISE|appraise|done` whenever notes.md has a score, on the manual path and on fleetd's. Without a ticket dir or a score, the caller's message stays as before.
+- **Not changed.** notes.md, the weights, the threshold and every exit code of `write` and `blast`. No parser reads either message: `detect-resume.sh`, `gate-check.sh`, `reconcile-comments.sh`, `run-summary.sh`, the dashboards and the fleet detectors match these lines by phase, step and status only, and read the score from notes.md.
+- Tests: 10 new in `test-complexity-score.sh`, 3 new in `test-spawn-helper.sh`; 11 of them fail on the old code.
+
 ## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
 
 - **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.
