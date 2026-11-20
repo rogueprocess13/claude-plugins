@@ -1014,7 +1014,13 @@ _gate_entry() {
       _gate_emit_held "open-human-questions"
       return 1
     fi
-    if [ -n "$FLOW_SH" ] && [ -f "$FLOW_SH" ]; then
+    # One approval is one fact (GitHub #767): a ticket the manifest already
+    # records as approved at Ready (a human's /ticket-approve after an
+    # earlier hold, or this check on a run that died before IMPLEMENT) is
+    # not approved again — that wrote a second `human-approved` record and
+    # replaced a human provenance with `policy`.
+    if [ "$(_gate_manifest_approved "$TICKET_ID" "Ready")" != "pass" ] &&
+      [ -n "$FLOW_SH" ] && [ -f "$FLOW_SH" ]; then
       bash "$FLOW_SH" "$TICKET_ID" "human-approve" --provenance policy || true
     fi
     _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved"

@@ -83,6 +83,7 @@ bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh	6.2
 bash ticket-auto-pipeline/lib/tests/test-dor-semantic-harness.sh	6.0
 bash ticket-auto-pipeline/lib/tests/test-manifest-write.sh	5.8
 bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh	5.6
+bash ticket-auto-pipeline/lib/tests/test-outbox-single-fact.sh	5.6
 python3 -m pytest fleet-controller/fleetd/tests/test_http_control_auth.py -v	5.6
 bash ticket-planner/lib/tests/test-planner-answers-durability.sh	5.5
 bash ticket-planner/lib/tests/test-planner-base-branch.sh	5.4

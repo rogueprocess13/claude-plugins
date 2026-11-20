@@ -60,8 +60,8 @@ ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26372	465
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	35602	516
-ticket-auto-pipeline/skills/ticket-approve/SKILL.md	2190	27
+ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	35020	511
+ticket-auto-pipeline/skills/ticket-approve/SKILL.md	2185	27
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	8285	185
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
 # exception: router floor ~22-26 KB (spawn bracketing, Agent-tool instruction, dispatch table, verdict rules)

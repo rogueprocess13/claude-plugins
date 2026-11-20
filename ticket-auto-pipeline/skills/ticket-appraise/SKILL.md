@@ -418,18 +418,13 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE claim-verify done "{N} confirmed, {M}
 
 ## Step 4 — Update ticket in Linear
 
-When called via `/ticket-auto`, the ticket was already claimed (Backlog → Todo + `claimed`) before the appraise agent spawned. This call is a **corrective idempotent pass** — it ensures the complexity label matches the actual investigation result. When called standalone (not via ticket-auto), this is the initial claim.
-
-Delegate to the flow executor (safe to re-call — `flow.sh` skips if nothing changed):
+Claim the ticket if the router has not, and record the score (one script; safe to re-run, any failure is logged and non-fatal — continue):
 
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} appraise-start --data complexity={simple|complex}
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# appraise-start carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
+bash ~/.claude/skills/lib/appraise-claim.sh --log-file "{LOG_FILE}" {TICKET-ID} --complexity {simple|complex}
 ```
 
-This sets state → `Todo`, assignee → `me`, and adds `claimed` + the complexity label. If the ticket was already claimed by the router, only the complexity label is corrected (if different from the default `simple`).
+It fires `appraise-start` only when the ticket is not in `Todo` yet (standalone run), then emits `complexity-scored`.
 
 ---
 

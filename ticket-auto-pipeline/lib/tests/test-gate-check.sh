@@ -3311,8 +3311,39 @@ test_t0_open_needs_human_with_human_approval_passes() {
   _teardown
   return $ok
 }
+# GitHub #767: one approval is one fact. A ticket the manifest already
+# records as approved at Ready is not approved again by Check 5 — the second
+# flow.sh call wrote a second human-approved outbox record and replaced a
+# human provenance with policy.
+test_767_check5_already_approved_does_not_fire_again() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  local rc=0
+  (
+    _gate_manifest_approved() { echo pass; }
+    _gate_entry
+  ) || rc=$?
+  local ok=0
+  [ "$rc" -eq 0 ] && grep -q 'auto-approved' "$LOG_FILE" &&
+    ! grep -q 'human-approve' "$_flow_log" 2>/dev/null || ok=1
+  _teardown
+  return $ok
+}
+# Guard: a ticket not yet approved still gets exactly one policy approval.
+test_767_check5_unapproved_still_fires_once() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  local rc=0
+  _gate_entry || rc=$?
+  local ok=0
+  [ "$rc" -eq 0 ] && [ "$(grep -c 'human-approve' "$_flow_log" 2>/dev/null)" = "1" ] || ok=1
+  _teardown
+  return $ok
+}
 
 for fn in \
+  test_767_check5_already_approved_does_not_fire_again \
+  test_767_check5_unapproved_still_fires_once \
   test_t0_critique_status_mixed_case_blocked_stops \
   test_t0_critique_status_bold_colon_variant_stops \
   test_t0_critique_status_missing_stops \
