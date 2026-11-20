@@ -74,7 +74,7 @@ Both new hooks deliberately avoid two payload assumptions the observed `SessionS
 - `ticket-appraise` — investigation + complexity scoring
 - `ticket-appraise-exec` — artifact creation (simple-fix.md or OpenSpec change)
 - `ticket-implement` — code changes against workspace
-- `ticket-verify` — Playwright UAT verification (Step 1.6c applies merged test-data blockers' seeds first — `seed-apply.sh`)
+- `ticket-verify` — Playwright UAT verification (Step 1.6c applies merged test-data blockers' seeds first — `seed-apply.sh`; under `--record`, Step 1h loads `references/record.md` and browser mode hands one screenshot per settled step to `record.sh append`)
 - `ticket-pr-review` — PR code review pass
 - `ticket-pr-iterate` — iteration on PR feedback
 - `ticket-auto` — thin stateless dispatch router (zero inline LLM reasoning, bash-only gates, named agent types)
