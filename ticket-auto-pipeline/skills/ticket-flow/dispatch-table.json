@@ -602,6 +602,7 @@
         "plugin:skills/ticket-verify/references/qa-persona.md",
         "plugin:skills/ticket-verify/references/live-backend.md",
         "plugin:skills/ticket-verify/references/templates.md",
+        "plugin:skills/ticket-verify/references/record.md",
         "plugin:agents/ticket-verify-agent.md",
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",

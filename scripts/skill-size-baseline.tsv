@@ -89,7 +89,7 @@ ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14166	373
 ticket-auto-pipeline/skills/ticket-retro/SKILL.md	18240	356
 ticket-auto-pipeline/skills/ticket-setup/SKILL.md	4615	86
 # exception: floor ~45-60 KB (REMEDIATION_BRIEF contract, browser flow)
-ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58395	948
+ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58386	942
 ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	19979	345
 # allow-growth: the agent may read the neighbour specs its prompt lists, read-only, so assumptions match them (rehearsal F84)
 ticket-planner/agents/draft-revise-agent.md	1671	8
