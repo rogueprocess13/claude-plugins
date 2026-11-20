@@ -17,6 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.130.0 (2026-11-21) — the Regression Risk gate reads a recorded acknowledgement, not notes.md (#771)
+
+ticket-implement's Regression Risk gate was cleared by changing `**Status:** UNACKNOWLEDGED` to `ACKNOWLEDGED` in notes.md by hand. Nothing recorded who did it, an agent could make the same edit, and the hold itself left no line in the pipeline log.
+
+- **The gate is a script.** `lib/regression-risk.sh check <ID> <notes.md>` (ticket-implement Step 1) passes only when the ticket manifest holds `regression_ack` with `provenance: human` for the section's current content. It no longer reads the status line: a hand edit clears nothing (`reason=hand-edit`).
+- **One actuator, for a person.** `bash ~/.claude/skills/lib/regression-ack.sh <ID>` shows the section and a risk id; `… <ID> --risk <id> [--note "<why>"]` records `regression_ack = {risk, provenance: "human", by, at, note}` and one `gate-released` outbox event (`gate: regression-risk`). It never edits notes.md. A repeat is a no-op.
+- **An agent cannot clear it for itself.** The script and the manifest writer (`set_ticket_regression_ack`) refuse when `CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID` or `FLEET_GENERATION` is set (exit 4), and the writer accepts no provenance but `human`. Same stance as `adversarial-override.sh`: it raises the bar, it is not a sandbox.
+- **The acknowledgement names the risk.** `risk` is a sha256 of the section's table. When a re-appraisal changes the table, the gate holds again (`reason=risk-changed`) until a person acknowledges the new content.
+- **The hold is visible.** A hold writes `META|gate-stop|fail|REGRESSION_RISK_UNACKNOWLEDGED — reason=…; risk=…` (fleet lists it under needs attention like any gate-stop) and one `gate-held` event per risk. A pass writes `IMPLEMENT|regression-risk|done|acknowledged: risk=…; provenance=human; by=…; at=…`.
+- **Upgrade:** a ticket whose notes.md was hand-edited to `ACKNOWLEDGED` holds once at its next ticket-implement run, until a person runs `regression-ack.sh` for it. No policy acknowledgement exists; every Regression Risk section, `ADJACENT` and `SUPERSEDES` included, needs a person as before.
+- ticket-appraise-exec no longer writes a `**Status:**` line into the section.
+
 ## 0.129.0 (2026-11-20) — a cancel transition: retire a ticket through flow.sh (#770)
 
 There was no way to retire a ticket nobody will finish. `human-reject` sends it back to Todo, so an obsolete or duplicate ticket had to be set to Canceled by hand in Linear, which left the manifest on its old stage, wrote nothing to the outbox or the pipeline log, and kept the pipeline's labels on the card. Also `fleet-controller` 0.55.1.

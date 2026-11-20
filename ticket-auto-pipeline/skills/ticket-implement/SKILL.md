@@ -94,23 +94,11 @@ If not found → tell the user to run `/ticket-appraise {TICKET-ID}` first. Stop
 
 Read `context.md` and `notes.md`.
 
-**Regression Risk gate:** Check notes.md for a `## ⚠️ Regression Risk` section.
-
-If it exists AND `**Status:** UNACKNOWLEDGED` is present → stop immediately:
-
+**Regression Risk gate** (the ticket dir's notes.md):
+```bash
+bash ~/.claude/skills/lib/regression-risk.sh check "{TICKET-ID}" "{TICKET_DIR}/notes.md"
 ```
-⚠️  Implementation blocked — unacknowledged regression risk.
-
-Open notes.md for {TICKET-ID} and review the ## Regression Risk section.
-Then change:
-  **Status:** UNACKNOWLEDGED
-to:
-  **Status:** ACKNOWLEDGED
-
-Re-run /ticket-implement {TICKET-ID} after acknowledging.
-```
-
-If the section is absent, or Status is `ACKNOWLEDGED` → proceed normally.
+Exit 0 → proceed. Any other exit → stop immediately and show its output. Only a person clears this gate: never edit the section, and never run the command the output names.
 
 Append a session checkpoint:
 ```markdown

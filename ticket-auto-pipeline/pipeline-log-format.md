@@ -988,6 +988,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `CRITIQUE_NOT_RUN` | Check 2.5: `APPRAISE\|critique\|start` logged but notes.md has no `## Readiness Critique` (the critique died) |
 | `LINEAR_FETCH_FAILED` | Entry-gate `get_issue` failed or returned an unparseable payload. Reached only after `GATE_FETCH_MAX_ATTEMPTS` (default 3) consecutive holds (see "Gate fetch-attempt entries"); earlier attempts hold. `_gate_reapprove` still gate-stops on the first failure, never conflated with `APPROVAL_REVOKED` |
 | `APPROVAL_REVOKED` | The local manifest records no approval at re-approve time — approval was never granted, or was cleared by `re-claim` / `/ticket-reject` (tracker-approval-by-script; the Linear `approved` label is no longer read) |
+| `REGRESSION_RISK_UNACKNOWLEDGED` | ticket-implement Step 1 (`regression-risk.sh check`, #771): no human `regression_ack` in the manifest for the notes.md Regression Risk section as it stands. Only a person clears it |
 | `REMEDIATION_BRIEF_TRUNCATED` | REMEDIATION_BRIEF from verify exceeded length limit (Phase 2) |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review returned no parseable ✅/⚠️/❌ verdict line (Phase 2) |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the implementation plan (Phase 2). Detail is `ADVERSARIAL_BLOCKED — round N — …`; the `EXEC\|adversarial-review\|done\|BLOCKED` line is written just before it. From round 3 on the reviewer also does an approach review (`lib/adversarial-rounds.sh`, #203) |

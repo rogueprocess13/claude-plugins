@@ -67,6 +67,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-complexity-score.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh
+	bash ticket-auto-pipeline/lib/tests/test-regression-risk.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh

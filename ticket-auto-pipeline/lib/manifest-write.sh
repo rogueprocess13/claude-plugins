@@ -405,6 +405,43 @@ set_ticket_approval() {
   fi
 }
 
+# set_ticket_regression_ack <TID> <risk_sha256> <provenance> <by> [note]
+# Records a person's acknowledgement of the ticket's Regression Risk section
+# (GitHub #771): `.regression_ack = {risk, provenance, by, at[, note]}`.
+# `risk` is the fingerprint of the section the person reviewed
+# (lib/regression-risk.sh), so an acknowledgement never covers a risk that
+# changed afterwards. Only provenance `human` is accepted: there is no policy
+# acknowledgement. Refuses an agent or fleetd-worker context (exit 4), like
+# adr_accept. The only caller is lib/regression-ack.sh. Exit 3 on a bad
+# argument, 1 when no manifest exists yet.
+set_ticket_regression_ack() {
+  local tid="$1" risk="$2" provenance="$3" by="$4" note="${5:-}"
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${FLEET_WORKER_PID:-}" ] || [ -n "${FLEET_GENERATION:-}" ]; then
+    echo "manifest-write: a regression-risk acknowledgement is a person's — refused in an agent or fleetd-worker context" >&2
+    return 4
+  fi
+  if ! [[ "$risk" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "manifest-write: invalid risk fingerprint (expected 64 hex)" >&2
+    return 3
+  fi
+  if [ "$provenance" != "human" ]; then
+    echo "manifest-write: invalid regression-ack provenance '$provenance' (only human)" >&2
+    return 3
+  fi
+  [ -n "$by" ] || {
+    echo "manifest-write: by must be non-empty" >&2
+    return 3
+  }
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+  _manifest_update "$manifest_path" \
+    '.regression_ack = ({risk: $r, provenance: $p, by: $b, at: $at}
+       + (if $n == "" then {} else {note: $n} end))' \
+    --arg r "$risk" --arg p "$provenance" --arg b "$by" --arg n "$note" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
 # set_ticket_transition <TID> <STAGE> <FLAGS_JSON> <PENDING_JSON>
 # The transition executor's one write (tracker-flow-projection-cutover):
 # `stage`, `flags` (sorted), `rev` (current + 1) and `pending_event` land in
