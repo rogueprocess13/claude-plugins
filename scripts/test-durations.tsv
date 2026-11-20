@@ -47,6 +47,7 @@ bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh	18.3
 bash ticket-auto-pipeline/lib/tests/test-record.sh	6.0
 bash ticket-auto-pipeline/lib/tests/test-verify-record-reference.sh	1.0
 bash ticket-auto-pipeline/lib/tests/test-record-stitch.sh	15.0
+bash ticket-auto-pipeline/lib/tests/test-recorder-driver.sh	9.0
 bash grill-me/lib/tests/test-grill-score.sh	18.2
 python3 -m pytest fleet-controller/fleetd/tests/test_worker_status_api.py -v	16.2
 bash grill-me/lib/tests/test-grill-render.sh	15.5
