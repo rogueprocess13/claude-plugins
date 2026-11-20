@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.126.2 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
+
+- **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
+- **One derivation: `lib/ticket-type.sh`.** The manifest `type`, else a whole `bug` label, else `feature`. `persona-select.sh` (`PERSONA_TYPE`, debugger overlay) now calls it instead of its own copy.
+- **Entry gate Check 2.5b (`BUG_NO_REPRO`) reads the manifest type first.** A ticket with a manifest type is no longer classified by label or by wording; a ticket with none keeps `get_ticket_type`.
+
 ## 0.126.1 (2026-11-20) — verify-mode.sh no longer sends API-only, git-only and docs-only tickets to the browser (#761)
 
 - **Negated phrases and code are not browser signals.** `verify-mode.sh` counted "**No screen**", "no **login**" and "**open the** PR" as browser signals. It also counted `login` inside a path (`POST /api/users/login`), a file name, a branch slug (`epic/…-sign-up-login-and-…`) and the readiness scorer's own `**Mode:** browser (verify: browser)` line in notes.md. All of these are now dropped before browser words are counted.

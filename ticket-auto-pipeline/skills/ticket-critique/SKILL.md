@@ -35,14 +35,14 @@ one was given):
 bash ~/.claude/skills/lib/critique-fetch.sh {TICKET-ID} --from-audit --source-marker "{SOURCE_MARKER}"
 ```
 
-It prints `TITLE`, `LABELS`, `STATE`, the description, the first comment bodies and the test-user /
+It prints `TITLE`, `LABELS`, `STATE`, `TICKET_TYPE`, the description, the first comment bodies and the test-user /
 `UAT_URL` / `LOCAL_URL` lines of CLAUDE.md. Exit 1 means the fetch failed or the payload is
 unreadable: stop, never score blank fields as an empty ticket (#362). Analyse all of it, including
 the acceptance criteria in the description (numbered lists, "AC:", "Acceptance Criteria:"), and
 proceed to the Checklist — the same checks apply regardless of input source.
 
-### If `--from-appraise` is in the arguments, the workspace is guaranteed to exist.
-Otherwise (no recognized flag), find it with `bash ~/.claude/skills/lib/critique-fetch.sh {TICKET-ID} --workspace`;
+### Otherwise (`--from-appraise`, or no recognized flag)
+Run `bash ~/.claude/skills/lib/critique-fetch.sh {TICKET-ID} --workspace` (prints `TICKET_DIR`, `TICKET_TYPE`);
 exit 3 → tell the user to run `/ticket-appraise {TICKET-ID}` first and stop.
 
 ---
@@ -152,7 +152,7 @@ Record:
 
 ### Check 5 — Bug tickets: reproduction steps
 
-If the ticket has the `bug` label:
+If `TICKET_TYPE=bug`:
 - Check whether numbered reproduction steps are present in the description
 - Acceptable: "1. Go to X, 2. Click Y, 3. See error Z"
 
@@ -167,7 +167,7 @@ Record:
 
 ### Check 6 — Feature tickets: clarity analysis
 
-If the ticket has the `feature` or `enhancement` label, OR has no `bug` label (default: feature), run these sub-checks. If the ticket is a bug, skip this check entirely.
+If `TICKET_TYPE` is not `bug`, run these sub-checks. If it is `bug`, skip this check entirely.
 
 **6a. Acceptance criteria specificity:**
 
