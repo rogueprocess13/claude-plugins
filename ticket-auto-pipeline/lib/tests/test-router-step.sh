@@ -105,7 +105,6 @@ _case_insp_verify_ready() {
 _case_insp_pr_ready() { _case_insp_verify_ready; }
 _case_insp_done_verify() {
   printf -- '--- Attempt 1 ---\nverify said PASS\n' >"$WS/logs/$TID-verify-agent.log"
-  printf 'inspector return\n' >"$WS/logs/$TID-agent-return.txt"
   (
     source "$RS_LIB_DIR/spawn-helper.sh"
     spawn_agent_pre PHASE=VERIFY STEP=phase-inspector-verify TICKET_ID=$TID \
@@ -113,6 +112,9 @@ _case_insp_done_verify() {
       AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent \
       DESCRIPTION="Phase inspector for VERIFY" INSTRUCTIONS=x >/dev/null 2>&1
   ) || true
+  # The return is written after the spawn, as the router does (spawn_agent_pre
+  # removes the previous spawn's return file, #764).
+  printf 'inspector return\n' >"$WS/logs/$TID-agent-return.txt"
 }
 
 # Retro cases: the log body after the schema line; HB is the heartbeat log.
@@ -352,6 +354,99 @@ test_post_spawn_tolerates_missing_return_file() {
   [ $rc -eq 0 ]
 }
 
+# ── #764: a phase verdict never comes from a stale agent-return file ─────────
+# _pre PHASE STEP — the router's spawn_agent_pre for one agent (cwd = $WS).
+_pre() {
+  (
+    source "$RS_LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE="$1" STEP="$2" TICKET_ID=$TID LOG_FILE="$LOG" \
+      SKILL=/ticket-auto-pipeline:ticket-x DESCRIPTION="$1 agent" INSTRUCTIONS=x >/dev/null 2>&1
+  ) || true
+}
+# _route_is OUT VERDICT SOURCE
+_route_is() {
+  grep -qx "ROUTE_VERDICT=$2" <<<"$1" && grep -qx "ROUTE_SOURCE=$3" <<<"$1" || {
+    echo "  got: $(tr '\n' ' ' <<<"$1"), want $2/$3" >&2
+    return 1
+  }
+}
+
+# A VERIFY return (BLOCK) left on disk, then a fresh PR-REVIEW PASS: OK.
+test_764_fresh_return_wins_over_previous_phase() {
+  _ws_new
+  local out rc=0
+  out=$(
+    cd "$WS"
+    _pre VERIFY verify
+    _return_file VERIFY BLOCK
+    bash "$RS" post-spawn VERIFY $TID --log-file "$LOG" --attempt 1 >/dev/null 2>&1
+    _pre PR-REVIEW pr-review
+    _return_file PR-REVIEW PASS
+    bash "$RS" post-spawn PR-REVIEW $TID --log-file "$LOG" --attempt 1 2>/dev/null
+  ) || rc=1
+  _route_is "$out" OK phase-result || rc=1
+  _ws_rm
+  return $rc
+}
+
+# An old PASS return file and no fresh write: no result, never the old PASS.
+test_764_stale_return_file_is_no_result() {
+  _ws_new
+  local out rc=0
+  out=$(
+    cd "$WS"
+    _pre PR-REVIEW pr-review
+    _return_file PR-REVIEW PASS
+    bash "$RS" post-spawn PR-REVIEW $TID --log-file "$LOG" --attempt 1 >/dev/null 2>&1
+    # Attempt 2: the router never wrote this agent's return.
+    _pre PR-REVIEW pr-review
+    bash "$RS" post-spawn PR-REVIEW $TID --log-file "$LOG" --attempt 2 2>/dev/null
+  ) || rc=1
+  _route_is "$out" BLOCK no-verdict || rc=1
+  [ ! -e "$WS/logs/$TID-agent-return.txt" ] || {
+    echo "  spawn_agent_pre left the previous return file" >&2
+    rc=1
+  }
+  grep -q '|META|agent-return|warn|PR-REVIEW attempt=2: no return file' "$LOG" || rc=1
+  _ws_rm
+  return $rc
+}
+
+# No return file, but an earlier attempt's PASS in the capture: still no result.
+test_764_missing_return_does_not_reparse_capture() {
+  _ws_new
+  local out rc=0 cap="$WS/logs/$TID-verify-agent.log"
+  printf -- '--- Attempt 1 ---\n' >"$cap"
+  _return_file VERIFY PASS
+  cat "$WS/logs/$TID-agent-return.txt" >>"$cap"
+  out=$(
+    cd "$WS"
+    _pre VERIFY verify
+    bash "$RS" post-spawn VERIFY $TID --log-file "$LOG" --attempt 2 --ticket-dir "$WS/ticket" 2>/dev/null
+  ) || rc=1
+  _route_is "$out" FAIL no-verdict || rc=1
+  _ws_rm
+  return $rc
+}
+
+# A fresh attempt with no PHASE_RESULT block never inherits the previous one's.
+test_764_blockless_attempt_ignores_earlier_block() {
+  _ws_new
+  local out rc=0
+  out=$(
+    cd "$WS"
+    _pre PR-REVIEW pr-review
+    _return_file PR-REVIEW PASS
+    bash "$RS" post-spawn PR-REVIEW $TID --log-file "$LOG" --attempt 1 >/dev/null 2>&1
+    _pre PR-REVIEW pr-review
+    printf 'Reviewed. Verdict: 71/71 ACs.\n' >"$WS/logs/$TID-agent-return.txt"
+    bash "$RS" post-spawn PR-REVIEW $TID --log-file "$LOG" --attempt 2 2>/dev/null
+  ) || rc=1
+  _route_is "$out" BLOCK invalid || rc=1
+  _ws_rm
+  return $rc
+}
+
 test_usage() {
   local rc=0
   bash "$RS" >/dev/null 2>&1 || rc=$?
@@ -562,6 +657,10 @@ _run "retro-check: missing log, unfilled HB placeholder" test_retro_missing_log_
 _run "inspector failure is non-blocking (exit 0, skip)" test_inspector_failure_is_non_blocking
 _run "post-spawn tolerates a missing return file" test_post_spawn_tolerates_missing_return_file
 _run "usage errors exit 2" test_usage
+_run "#764 a fresh return wins over the previous phase's file" test_764_fresh_return_wins_over_previous_phase
+_run "#764 a stale return file reads as no result" test_764_stale_return_file_is_no_result
+_run "#764 a missing return never re-parses an earlier capture" test_764_missing_return_does_not_reparse_capture
+_run "#764 a block-less attempt ignores an earlier attempt's block" test_764_blockless_attempt_ignores_earlier_block
 _run "DET-SU-1 inspector-done overrides a disagreeing agent verdict" test_inspector_done_overrides_disagreeing_agent
 _run "DET-SU-1 inspector-done keeps an agreeing agent verdict" test_inspector_done_keeps_agreeing_agent
 _run "DET-SU-1 inspector-done adds nothing without an agent line" test_inspector_done_no_agent_line_adds_nothing

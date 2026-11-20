@@ -134,8 +134,8 @@ JSON as the canonical form would:
 - Fields in any order.
 - Unknown fields. They are recorded under `extra` and are **not** a contract violation —
   a future emitter adding a field must not break a current parser.
-- More than one block in the capture file. The **last** block wins, because
-  `capture_agent_result` appends retried attempts to a single file.
+- More than one block in the capture file. The last block of the last
+  `--- Attempt N ---` wins; a block-less last attempt is absent.
 
 **Rejected at the contract boundary** — every one of these degrades the claim to
 `UNKNOWN`:

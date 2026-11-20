@@ -20,6 +20,9 @@
 # BEFORE spawn_agent_post (VERIFY/PR-REVIEW RESULT=/VERDICT= come from 3b):
 #   1. spawn_capture TICKET_ID PHASE RESULT_FILE [ATTEMPT=--attempt]
 #      → ./logs/<TID>-<phase>-agent.log (append per attempt when ATTEMPT is set)
+#      No RESULT_FILE (spawn_agent_pre removed the previous spawn's, and the
+#      router wrote none): META|agent-return|warn|, and steps 2-3 are skipped,
+#      so VERIFY / PR-REVIEW route no-verdict, never a stale capture (#764).
 #   2. IMPLEMENT | VERIFY | PR-REVIEW: phase-result-parse.sh on that capture
 #      (advisory, writes META|phase-result|info|{json}; || true)
 #   3. VERIFY: verdict-recompute.sh --ticket-dir D (META|claim-delta)
@@ -157,7 +160,16 @@ _rs_phase_lower=$(printf '%s' "$_rs_phase" | tr '[:upper:]' '[:lower:]')
 _rs_post_spawn() {
   [ -n "$_rs_log_file" ] || _rs_usage
   _rs_spawn_helper
-  if [ -n "$_rs_attempt" ]; then
+  # No return file for this spawn (#764): spawn_agent_pre removed the last
+  # one, so the router never wrote this agent's return. The capture below
+  # then still holds an earlier attempt's or run's text; parsing it would
+  # route on a stale verdict. Parse nothing: VERIFY / PR-REVIEW fail closed
+  # (no-verdict), the zombie/retry path, never a verdict.
+  local _rs_have_return=true
+  if [ ! -f "$_rs_result_file" ]; then
+    _rs_have_return=false
+    _rs_plog META agent-return warn "$_rs_phase attempt=${_rs_attempt:-1}: no return file for this spawn ($_rs_result_file) — no verdict; an earlier capture is not read"
+  elif [ -n "$_rs_attempt" ]; then
     spawn_capture TICKET_ID="$_rs_tid" PHASE="$_rs_phase" \
       RESULT_FILE="$_rs_result_file" ATTEMPT="$_rs_attempt" ||
       echo "router-step: spawn_capture failed for $_rs_phase (continuing)" >&2
@@ -179,14 +191,17 @@ _rs_post_spawn() {
     esac
     # Exit 1 (absent/malformed block → claimed_verdict=UNKNOWN) is normal.
     # IMPLEMENT: advisory. VERIFY / PR-REVIEW: routed by phase-route.sh; an
-    # exit 2 (nothing logged) leaves no record after the anchor → no verdict.
-    bash "$_RS_DIR/phase-result-parse.sh" --phase "$_rs_phase" \
-      --return-file "$_capture" \
-      --log-file "$_rs_log_file" >/dev/null 2>&1 || true
+    # exit 2 (nothing logged) leaves no record after the anchor → no verdict,
+    # as does a spawn with no return file (#764).
+    if [ "$_rs_have_return" = true ]; then
+      bash "$_RS_DIR/phase-result-parse.sh" --phase "$_rs_phase" \
+        --return-file "$_capture" \
+        --log-file "$_rs_log_file" >/dev/null 2>&1 || true
+    fi
     ;;
   esac
 
-  if [ "$_rs_phase" = VERIFY ]; then
+  if [ "$_rs_phase" = VERIFY ] && [ "$_rs_have_return" = true ]; then
     # Never halts; an optimistic delta on fresh evidence fails the route.
     bash "$_RS_DIR/verdict-recompute.sh" --phase VERIFY \
       --return-file "$_capture" \
