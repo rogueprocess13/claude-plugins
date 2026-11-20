@@ -357,6 +357,22 @@ if [ "${_MODE:-full}" = "validate" ]; then
     warn "WIKI_ROOT" "missing — appraise will skip wiki bootstrapping"
   fi
 
+  # RECORD_ALLOWED (optional, ticket-auto-record) — environments `--record`
+  # may capture: `local` and/or `uat`, comma-separated. They must hold
+  # synthetic data only; `uat` also needs RECORD_UAT_SYNTHETIC=true.
+  # RECORD_BOARD_URL (optional) is the Linear project/view the board
+  # recorder opens. Silent when RECORD_ALLOWED is not set.
+  val=$(claude_md_field "$CLAUDE_MD" RECORD_ALLOWED) || val="${RECORD_ALLOWED:-}"
+  if [ -n "$val" ]; then
+    _syn=$(claude_md_field "$CLAUDE_MD" RECORD_UAT_SYNTHETIC || echo "${RECORD_UAT_SYNTHETIC:-}")
+    _rec=$(source "$SCRIPT_DIR/record.sh" && record_allowed_parse "$val" "$_syn" 2>/dev/null | tr '\n' ' ')
+    if [ -n "$_rec" ]; then
+      pass "RECORD_ALLOWED (${_rec% }) — synthetic data only"
+    else
+      warn "RECORD_ALLOWED" "'$val' allows nothing — use local and/or uat (uat needs RECORD_UAT_SYNTHETIC=true); --record will be refused"
+    fi
+  fi
+
   # Verify worktree serving (#419): ticket-verify hands env-start.sh the
   # ticket's verify worktree as VERIFY_REPO_PATH_<REPO>, then gate-stops
   # VERIFY_SERVED_WRONG_WORKTREE when the dev server still runs from another

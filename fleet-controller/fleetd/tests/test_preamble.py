@@ -91,6 +91,19 @@ class TestParseResultBlock(unittest.TestCase):
         )
         self.assertEqual(fields, {'TICKET_ID': 'CRE-9'})
 
+    def test_a_record_field_changes_nothing_parsed(self):
+        # ticket-auto-record appended `RECORD:` to the block. fleetd does not
+        # route on it, so a block with it must parse exactly like one without.
+        base = (
+            'TICKET_PREAMBLE_RESULT:\n'
+            '  TICKET_ID: CRE-9\n'
+            '  ENV_FILE: /scratch/ticket-auto-CRE-9-env.sh\n'
+            '  BASE_BRANCH: develop\n'
+            '  REPOS_ROOT: /repos\n'
+        )
+        self.assertEqual(preamble.parse_result_block(base + '  RECORD: true\n'),
+                         preamble.parse_result_block(base))
+
     def test_no_block_is_an_empty_dict_not_an_error(self):
         self.assertEqual(preamble.parse_result_block('boom\n'), {})
         self.assertEqual(preamble.parse_result_block(''), {})

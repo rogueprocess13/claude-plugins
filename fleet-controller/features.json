@@ -104,6 +104,20 @@
       "docs": "fleet-controller/README.md#migrating-to-board-projection-tracker-flow-projection-cutover"
     },
     {
+      "name": "TICKET_RECORD",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Every ticket run records as if /ticket-auto --record were passed: VERIFY screenshots (and, with the recorder board driver, board frames) are kept under the ticket's artifacts/recordings/ for a demo video.",
+      "requires": [
+        { "env": "RECORD_ALLOWED" }
+      ],
+      "recommend": "situational",
+      "why": "For demos on a project with synthetic data only. Without a valid RECORD_ALLOWED it only warns and records nothing, so it can never stall fleetd. RECORD_DISABLE=true turns it off again for one ticket.",
+      "docs": "ticket-auto-pipeline/lib/record.sh"
+    },
+    {
       "name": "STATE_ROOT_STRICT",
       "plugin": "ticket-auto-pipeline",
       "default": "false",

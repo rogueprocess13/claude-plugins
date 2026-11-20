@@ -99,7 +99,8 @@ The router's deterministic step tails follow the same rule. `ticket-auto-pipelin
 
 - `linear-api.sh` — GraphQL API client with retry logic (3 attempts, exponential backoff). Provides `get_issue`, `get_comments`, `get_team`, `update_issue`, `get_me`, `get_project_config`. Also resolves `UAT_URL` from env → REPOS_ROOT CLAUDE.md files → git root → ancestor walk.
 - `ticket-dir.sh` — `resolve_ticket_dir <ID>` finds workspace directories matching `{ID}--slug`.
-- `validate-env.sh` — Validates `LINEAR_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`, and CLAUDE.md fields (`REPOS_ROOT`, `LOCAL_URL`, `UAT_URL`, optional `BE_TEST_CMD`, `SLACK_CHANNEL`, `WIKI_ROOT`).
+- `validate-env.sh` — Validates `LINEAR_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`, and CLAUDE.md fields (`REPOS_ROOT`, `LOCAL_URL`, `UAT_URL`, optional `BE_TEST_CMD`, `SLACK_CHANNEL`, `WIKI_ROOT`, and the recording fields `RECORD_ALLOWED` — `local` and/or `uat`, environments holding **synthetic data only**; `uat` also needs `RECORD_UAT_SYNTHETIC=true` — and `RECORD_BOARD_URL`).
+- `record.sh` — recording mode (`/ticket-auto {ID} --record`, or `TICKET_RECORD=true`): `record_enabled <log>` (the log's `META|record|info|on`, off with `RECORD_DISABLE=true`), the `RECORD_ALLOWED` parser and `record.sh append`, which checks a captured screenshot's environment, names it and lists it in the ticket's `artifacts/recordings/manifest.jsonl`.
 - `notes-parse.sh` — Extracts complexity score from `notes.md` `## Complexity` section.
 - `gate-check.sh` — Deterministic bash gate logic (entry + reapprove modes). Replaces inline LLM reasoning at the gate step.
 - `outcome-label-check.sh` — Bash-only post-implement guard for Smooth/Rough/Hard outcome label.

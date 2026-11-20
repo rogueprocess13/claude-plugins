@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.124.0 (2026-11-20) — `--record` flag, recordable-environment guard, `record.sh` (fleet-controller 0.55.0)
+
+First slice of the `ticket-auto-record` change: one run of a ticket can be kept as a short demo video. This release adds the switch and the library; VERIFY capture, the stitch command and the board recorder follow.
+
+- **`/ticket-auto {ID} --record`** (or `TICKET_RECORD=true`) turns recording on for a ticket. The preamble writes `META|record|info|on` once; resumes keep it, `RECORD_DISABLE=true` turns it off. The result block gains `RECORD:`. An explicit `RECORD=` key argument is accepted and wins over `TICKET_ARG`.
+- **New CLAUDE.md fields `RECORD_ALLOWED`, `RECORD_UAT_SYNTHETIC`, `RECORD_BOARD_URL`.** `RECORD_ALLOWED` lists the environments that may be recorded (`local`, `uat`); it must only name environments holding synthetic data, and `uat` also needs `RECORD_UAT_SYNTHETIC=true`. `--record` without a valid field exits 1 before anything is written; `TICKET_RECORD=true` without one only warns, so a fleet-wide default never stalls fleetd. All three go into the env file (`spawn_write_env`, which also inherits them from the caller's environment so the router's resume rewrite keeps them) and are checked by validate-mode `/ticket-env-check` when set.
+- **New `lib/record.sh`**: `record_enabled`, `record_allowed_parse`, `record_env_allowed`, `record_field`, `record_url_env`, `record_append_entry`, and `record.sh append --tid --phase --step --src --url`. `append` maps the page URL's origin to `local`/`uat`, refuses (and deletes the file) for any other or a not-allowed environment, and otherwise copies the screenshot to `artifacts/recordings/{phase}-a{attempt}-{NNN}.png` and lists it in `manifest.jsonl` under a `flock`. It never writes the pipeline log and exits non-zero only on bad arguments.
+- The preamble warns when recording is on and `FLEET_BOARD_DRIVERS` does not list `recorder` after `linear`.
+- fleet-controller 0.55.0: `TICKET_RECORD` catalog entry in `features.json`; a fleetd test that a result block with `RECORD:` parses unchanged.
+- New test `lib/tests/test-record.sh` (38 cases, including 20 concurrent appends and a torn manifest line).
+
 ## 0.123.1 (2026-11-20) — fix the create-guard test's stdin race (#755)
 
 - **`test-ticket-create-guard.sh` no longer fails at random.** Its harness fed the hook with `printf | bash` under `pipefail`. With `TICKET_CREATE_GUARD=off` the hook exits before it reads stdin, so when the hook won the race `printf` got EPIPE and the test failed (nightly run on 2026-11-18, `test_guard_off_allowed`). The harness now passes the payload as a here-string, as `test_missing_jq_fails_open` already did. New test `test_guard_off_unread_large_payload_allowed` sends a payload larger than a pipe buffer with the guard off; the old harness fails it every time. Test-only change; the hook is unchanged.
