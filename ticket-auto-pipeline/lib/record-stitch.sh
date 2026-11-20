@@ -360,7 +360,9 @@ record_stitch_render() {
 
   # The real concat list: title cards become PNGs, every frame is re-checked
   # and normalised into the work directory, and the last file is named twice (the concat demuxer ignores
-  # the last entry's duration otherwise).
+  # the last entry's duration otherwise). How long that second naming lasts
+  # differs between ffmpeg versions, so the encode is cut at the sum of the
+  # plan's durations (-t).
   local line path last="" n=0 secs tid title card list="$tmp/list.ffconcat"
   local _RS_DEADLINE=$((SECONDS + ${RECORD_STITCH_TIMEOUT:-300}))
   echo "ffconcat version 1.0" >"$list"
@@ -421,9 +423,10 @@ record_stitch_render() {
 
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$last" >>"$list"
-    local part="$tmp/out.mp4"
+    local part="$tmp/out.mp4" total
+    total=$(awk '$1 == "duration" { t += $2 } END { printf "%.3f", t }' "$list")
     _rs_ffmpeg -f concat -safe 0 -i "$list" \
-      -vf "fps=25,format=yuv420p" \
+      -vf "fps=25,format=yuv420p" -t "$total" \
       -c:v libx264 -an -movflags +faststart -f mp4 "$part" >"$tmp/ffmpeg.log" 2>&1 || rc=5
     if [ "$rc" -eq 0 ] && [ ! -s "$part" ]; then
       rc=5
