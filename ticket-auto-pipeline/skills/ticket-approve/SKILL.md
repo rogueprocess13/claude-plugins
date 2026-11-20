@@ -22,8 +22,8 @@ bash ~/.claude/skills/ticket-approve/approve.sh "<TICKET-ID>"
 ```
 
 The script:
-1. Makes the ticket manifest-addressable (`ensure_ticket_manifest` — a hand-created ticket with no planner-assigned initiative gets a reserved `_adhoc` one, so approval never silently no-ops on it).
-2. Runs `flow.sh <TICKET-ID> human-approve --provenance human`, which moves the ticket to `Ready` and writes `approved: true`, `approval_provenance: human`, and `stage: Ready` to the manifest.
+1. Makes the ticket manifest-addressable (`ensure_ticket_manifest`; a hand-created ticket gets initiative `_adhoc`).
+2. Runs `flow.sh <TICKET-ID> human-approve --provenance human`, which moves the ticket to `Ready` and writes `approved: true`, `approval_provenance: human`, and `stage: Ready` to the manifest. Skipped (`already_approved=true`) when the manifest already says exactly that.
 3. Reads the three fields back from the manifest and prints them (`approved=`, `approval_provenance=`, `stage=`).
 4. Exits non-zero if the manifest does not show `approved=true` afterward — never report success on an unverified write.
 5. If the manifest's `flags` array carries `needs-info`, runs `flow.sh <TICKET-ID> needs-info-resolved` to clear it and prints `needs_info_cleared=true`/`false`. No-op when the flag isn't set. This un-gates a ticket held at Check 2.7e's `TICKET_NOT_READY` (`FLAG_NEEDS_INFO`) gate-stop immediately, since that check reads the flag live regardless of the cached readiness verdict.

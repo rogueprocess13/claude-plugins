@@ -208,6 +208,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-refinement-carryover.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
+	# one fact, one outbox record (#767)
+	bash ticket-auto-pipeline/lib/tests/test-outbox-single-fact.sh
 	# ticket-create-skill
 	bash ticket-auto-pipeline/lib/tests/test-ticket-create.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-create-guard.sh
