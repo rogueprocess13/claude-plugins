@@ -28,6 +28,11 @@ Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` ca
 - **The saved Linear session is private.** `recorder.sh login` (headed browser) or `recorder.sh import` (a Playwright storage state on stdin, for a host with no display) writes `$REPOS_ROOT/.ticket-auto/record/linear-session.json` with mode 0600 in a 0700 directory, beside a `.gitignore` holding `*`. It is a full login for its user: use a dedicated read-only Linear user. No code prints it. Playwright is not bundled; the operator installs it under `.ticket-auto/record/`.
 - **`/ticket-env-check` has a Recording section**, printed only when `RECORD_ALLOWED` is set: `RECORD_ALLOWED`, `RECORD_BOARD_DRIVERS`, `RECORD_BOARD_URL`, `RECORD_FFMPEG`, `RECORD_BROWSER`, `RECORD_SESSION`, `RECORD_SESSION_MODE`, `RECORD_SESSION_IGNORED`. Every row is `ok` or `warn`; none changes the exit code.
 - The board layout is read from the live Linear page; that path has no automated test and is checked on a real board before the feature is documented for operators.
+## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
+
+- **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
+- **One derivation: `lib/ticket-type.sh`.** The manifest `type`, else a whole `bug` label, else `feature`. `persona-select.sh` (`PERSONA_TYPE`, debugger overlay) now calls it instead of its own copy.
+- **Entry gate Check 2.5b (`BUG_NO_REPRO`) reads the manifest type first.** A ticket with a manifest type is no longer classified by label or by wording; a ticket with none keeps `get_ticket_type`.
 
 ## 0.127.0 (2026-11-20) — stitch a recording into a video
 
@@ -39,6 +44,7 @@ Third slice of the `ticket-auto-record` change: the frames a `--record` run save
 - **New skill `/ticket-record-stitch <id>... [--out FILE]`** (`--clip <id>` for one ticket's clip): a thin wrapper around the script, with no pipeline preamble.
 - CI installs `ffmpeg` (`.github/actions/install-deps`): the render cases of `lib/tests/test-record-stitch.sh` use the real `ffmpeg` and `ffprobe` and fail without them. The planner cases run with a tripwire `ffmpeg` on PATH.
 - `docs/skills/`: new `ticket-record-stitch` page; the `ticket-verify` page now describes Step 1h (recording).
+
 ## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
 
 - **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.
