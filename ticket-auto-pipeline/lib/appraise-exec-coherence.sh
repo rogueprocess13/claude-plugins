@@ -18,7 +18,9 @@
 # the tickets repo (openspec-tracking-check.sh commit, issue #363) and
 # META|gate-warn|info|OPENSPEC_ARTIFACT_COMMIT — rc=<rc> dir=<dir> (warn on a
 # failed commit) is
-# written; a failed commit never halts.
+# written; a failed commit never halts. Under a tickets root that is not a git
+# repo (a supported layout, issue #763) nothing is committed and the line is
+# META|gate-warn|info|OPENSPEC_ARTIFACT_NOT_COMMITTED — ... instead.
 #
 # The coherence-check and artifact-persisted heartbeats (hb-wrap.sh gate) are
 # written here too.
@@ -96,12 +98,17 @@ aec_main() {
   echo "COMMIT_RC=$commit_rc"
   local level=warn
   [ "$commit_rc" -eq 0 ] && level=info
-  bash "$_AEC_DIR/plog.sh" META gate-warn "$level" "OPENSPEC_ARTIFACT_COMMIT — rc=$commit_rc dir=$change_dir" || true
   case "$commit_out" in
   *OPENSPEC_COMMIT_STATUS=noop*) status=noop ;;
   *OPENSPEC_COMMIT_STATUS=committed*) status=committed ;;
+  *OPENSPEC_COMMIT_STATUS=not-git*) status=not-git ;;
   *) status=commit-failed ;;
   esac
+  if [ "$status" = not-git ]; then
+    bash "$_AEC_DIR/plog.sh" META gate-warn info "OPENSPEC_ARTIFACT_NOT_COMMITTED — tickets root is not a git repo (supported layout) dir=$change_dir" || true
+  else
+    bash "$_AEC_DIR/plog.sh" META gate-warn "$level" "OPENSPEC_ARTIFACT_COMMIT — rc=$commit_rc dir=$change_dir" || true
+  fi
   local hb_status=ok
   [ "$commit_rc" -eq 0 ] || hb_status=warn
   bash "$_AEC_DIR/hb-wrap.sh" gate "artifact-persisted" "$hb_status" "$status" \

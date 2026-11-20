@@ -78,14 +78,17 @@ commit <change-dir> <TICKET-ID>
   modified relative to HEAD. Idempotent: a no-op when the dir is already
   tracked and unchanged. Refuses any <change-dir> not under openspec/changes/
   (defensive path guard — this subcommand force-adds past .gitignore).
-  Exit 0 committed or no-op, 2 usage/git error.
+  A tickets root outside every git work tree is a supported layout: prints
+  OPENSPEC_COMMIT_STATUS=not-git and commits nothing.
+  Exit 0 committed, no-op or not-git; 2 usage/git error.
 
 assert <TICKET-ID> [--expect] [--root <path>]
   Locates the openspec change dir for TICKET-ID under <path>/openspec/changes/
   (default --root: current directory; case-insensitive whole-ID match on the
   directory name via ticket-dir.sh's resolve_change_dir — the name is the id
   or starts with "<id>-", so TEST-7 never matches test-77-*) and reports its
-  tracking status: tracked, partial (some files untracked, or a tracked file
+  tracking status: not-git (the tickets root is outside every git work tree,
+  a supported layout, exit 0), tracked, partial (some files untracked, or a tracked file
   has an uncommitted modification — unstaged or staged), untracked,
   gitignored, or missing. Two or more matching dirs: status `ambiguous`
   (exit 1, dirs listed on stderr). Without a match: status `not-applicable` (exit 0) unless --expect
@@ -100,8 +103,8 @@ assert-warn <TICKET-ID> [--root <path>] --ticket-dir <dir>
   <path>. On a non-zero assert, writes
   META|gate-warn|info|OPENSPEC_ARTIFACT_UNTRACKED — ... through plog.sh and
   appends the "plan artifact durability warning" entry to <dir>/notes.md.
-  Prints assert's KEY=value lines. Exit: assert's own code (0 tracked or
-  not-applicable, 1 warned); 2 usage or git error (also warned).
+  Prints assert's KEY=value lines. Exit: assert's own code (0 tracked,
+  not-git or not-applicable, 1 warned); 2 usage or git error (also warned).
 
 audit [--root <path>]
   Scans <path>/openspec/changes/*/ (default: current directory) and reports
@@ -168,10 +171,12 @@ _cmd_commit() {
   local dir="$1" ticket_id="$2"
 
   [ -n "$dir" ] && [ -n "$ticket_id" ] || usage
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-    echo "ERROR: not inside a git repo: $(pwd)" >&2
-    return 2
-  }
+  # A plain (non-git) tickets root is a supported layout (issue #763): there
+  # is nothing to commit into, so say so and succeed. The plan is still used.
+  if [ "$(tickets_root_layout . 2>/dev/null || true)" = plain ]; then
+    echo "OPENSPEC_COMMIT_STATUS=not-git"
+    return 0
+  fi
 
   # Defensive path guard: only ever force-add something under
   # openspec/changes/ — never an arbitrary caller-supplied path. A string
@@ -259,10 +264,15 @@ _cmd_assert() {
   done
   [ -n "$ticket_id" ] || usage
 
-  git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-    echo "ERROR: not inside a git repo: $root" >&2
+  # A plain (non-git) tickets root is a supported layout (issue #763). The
+  # change dir is still looked up first, so `missing` and `ambiguous` are
+  # reported there too; only the tracking question has no answer (`not-git`).
+  local layout
+  layout=$(tickets_root_layout "$root" 2>/dev/null || true)
+  if [ "$layout" = missing ]; then
+    echo "ERROR: tickets root not found: $root" >&2
     return 2
-  }
+  fi
 
   # Every git call below must run with CWD == $root (relative pathspecs like
   # "openspec/changes/*/" and the dir _find_change_dir/_dir_status resolve
@@ -294,7 +304,11 @@ _cmd_assert() {
     return 0
   fi
 
-  status=$(cd "$root" && _dir_status "$change_dir")
+  if [ "$layout" = plain ]; then
+    status="not-git"
+  else
+    status=$(cd "$root" && _dir_status "$change_dir")
+  fi
   echo "OPENSPEC_TRACK_STATUS=$status"
   echo "TICKET_ID=$ticket_id"
   if [ "$root" = "." ]; then
@@ -304,7 +318,7 @@ _cmd_assert() {
   fi
 
   case "$status" in
-  tracked)
+  tracked | not-git)
     return 0
     ;;
   *)
