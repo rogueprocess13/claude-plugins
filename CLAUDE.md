@@ -62,7 +62,7 @@ Skills are Claude Code `.md` files with YAML frontmatter. Claude Code runs them 
 
 **Pipeline skills** (the core workflow): `ticket-auto` (thin stateless dispatch router), `ticket-appraise` (investigation + complexity scoring), `ticket-appraise-exec` (artifact creation), `ticket-implement` (code changes), `ticket-verify` (Playwright UAT), `ticket-flow` (state/label mutations), `ticket-pr-review`, `ticket-pr-iterate`, `ticket-setup`, `ticket-retro`.
 
-**Support skills**: `ticket-critique`, `ticket-detect-resume`, `ticket-document`, `ticket-overseer`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-reproduce`, `ticket-gate-reconcile`, `ticket-prescan`, `wiki-maintenance`, `nav-hints`, `app-knowledge`, `adr-gate`, `ticket-create` (the one sanctioned single-ticket creation path; `hooks/ticket-create-guard.sh` denies direct Linear creates).
+**Support skills**: `ticket-critique`, `ticket-detect-resume`, `ticket-document`, `ticket-overseer`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-reproduce`, `ticket-gate-reconcile`, `ticket-prescan`, `wiki-maintenance`, `nav-hints`, `app-knowledge`, `adr-gate`, `ticket-record-stitch` (video from a `--record` ticket's frames; `lib/record-stitch.sh`), `ticket-create` (the one sanctioned single-ticket creation path; `hooks/ticket-create-guard.sh` denies direct Linear creates).
 
 ## Skill size budget
 
