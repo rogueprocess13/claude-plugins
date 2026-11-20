@@ -15,7 +15,7 @@ ticket-appraise	154137
 ticket-appraise-exec	121836
 ticket-appraise-exec:conditional	14320
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
-ticket-appraise:conditional	35284
+ticket-appraise:conditional	35282
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
 ticket-document	79536
 ticket-gate-reconcile	6789

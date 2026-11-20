@@ -895,7 +895,14 @@ phase_bracket_open() {
 # Usage: phase_terminal_write PHASE=<phase> STEP=<step> RESULT=<done|fail> \
 #          [MSG=<message>] [VERDICT=<PASS|FAIL|OK|WARN|BLOCK>] \
 #          [NEXT_PHASE=<phase>] [FAIL_ACTION=<stop|warn-continue>] \
-#          [LOG_FILE=<path>] [HB_LOG_FILE=<path>] [CLAUDE_LOG_FILE=<path>]
+#          [LOG_FILE=<path>] [HB_LOG_FILE=<path>] [CLAUDE_LOG_FILE=<path>] \
+#          [TICKET_ID=<id>] [TICKET_DIR=<path>]
+#
+# An APPRAISE|appraise|done line carries the complexity score, and the caller's
+# MSG is free text an LLM composed, so it is replaced by `complexity-score.sh
+# summary <ticket-dir> final` whenever notes.md has a score (issue #769).
+# TICKET_DIR, else TICKET_ID (else the id in the log's file name) names the
+# ticket. No ticket dir or no score keeps MSG.
 #
 # PHASE and STEP are normalized here (phase uppercased, step lowercased) rather
 # than by the caller, so both callers produce byte-identical lines.
@@ -913,9 +920,33 @@ _phase_gate_stopped_in_bracket() {
   ' "$log" 2>/dev/null
 }
 
+# _appraise_score_msg <ticket-dir> <ticket-id> <log>: the deterministic
+# `final:` score line for the ticket, or nothing (rc 1).
+_appraise_score_msg() {
+  local dir="$1" tid="$2" log="$3" root matches
+  if [ -z "$dir" ]; then
+    if [ -z "$tid" ] && [[ "${log##*/}" == *-pipeline.log ]]; then
+      tid="${log##*/}"
+      tid="${tid%-pipeline.log}"
+    fi
+    [[ "$tid" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    # Same rule as resolve_ticket_dir (ticket-dir.sh): one `{ID}--slug` dir.
+    for root in . "${REPOS_ROOT:-}"; do
+      [ -n "$root" ] && [ -d "$root" ] || continue
+      matches=$(find "$root" -maxdepth 2 -type d -iregex ".*/${tid}--[a-z0-9-]+$" 2>/dev/null || true)
+      [ "$(grep -c . <<<"$matches" || true)" -eq 1 ] || continue
+      dir="$matches"
+      break
+    done
+  fi
+  [ -n "$dir" ] && [ -f "$dir/notes.md" ] || return 1
+  bash "$(dirname "${BASH_SOURCE[0]}")/complexity-score.sh" summary "$dir" final 2>/dev/null
+}
+
 phase_terminal_write() {
   local PHASE="" STEP="" RESULT="" MSG="" VERDICT="" NEXT_PHASE=""
   local FAIL_ACTION="" LOG_FILE="" HB_LOG_FILE="" CLAUDE_LOG_FILE=""
+  local TICKET_ID="" TICKET_DIR=""
 
   local arg
   for arg in "$@"; do
@@ -930,6 +961,8 @@ phase_terminal_write() {
     LOG_FILE=*) LOG_FILE="${arg#LOG_FILE=}" ;;
     HB_LOG_FILE=*) HB_LOG_FILE="${arg#HB_LOG_FILE=}" ;;
     CLAUDE_LOG_FILE=*) CLAUDE_LOG_FILE="${arg#CLAUDE_LOG_FILE=}" ;;
+    TICKET_ID=*) TICKET_ID="${arg#TICKET_ID=}" ;;
+    TICKET_DIR=*) TICKET_DIR="${arg#TICKET_DIR=}" ;;
     *)
       echo "phase_terminal_write: unknown parameter '$arg'" >&2
       return 1
@@ -953,7 +986,11 @@ phase_terminal_write() {
 
   case "$RESULT" in
   done)
-    local done_msg="${MSG:-agent done}"
+    local done_msg="${MSG:-agent done}" score_msg=""
+    if [ "$phase_upper" = APPRAISE ] && [ "$phase_lower" = appraise ]; then
+      score_msg=$(_appraise_score_msg "$TICKET_DIR" "$TICKET_ID" "$LOG_FILE") || score_msg=""
+      [ -z "$score_msg" ] || done_msg="$score_msg"
+    fi
     [ -n "$VERDICT" ] && done_msg="${VERDICT} — ${done_msg}"
     if [ -n "${LOG_FILE:-}" ]; then
       # Tail-scoped (not whole-file): a whole-file grep would suppress every
@@ -1302,7 +1339,8 @@ spawn_agent_post() {
     FAIL_ACTION="${FAIL_ACTION:-stop}" \
     LOG_FILE="${LOG_FILE:-}" \
     HB_LOG_FILE="${HB_LOG_FILE:-}" \
-    CLAUDE_LOG_FILE="${CLAUDE_LOG_FILE:-}" || return 1
+    CLAUDE_LOG_FILE="${CLAUDE_LOG_FILE:-}" \
+    TICKET_ID="$TICKET_ID" || return 1
 
   # Meta file persists until next spawn_agent_pre overwrites it.
   # This allows duplicate spawn_agent_post calls to read PHASE/STEP
