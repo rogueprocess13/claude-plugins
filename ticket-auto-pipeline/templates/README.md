@@ -24,6 +24,8 @@ Each field maps to a specific pipeline phase:
 | **Scope table** | `ticket-appraise` — fires multi-service / cross-layer complexity axes |
 | **Steps to Reproduce** | `ticket-verify` — used verbatim during reproduction runs |
 | **Test Data Prerequisites** | `ticket-verify` pre-flight — gates whether the run can start |
+| **Verify Mode** (`**Verify mode:** <shape>`) | `ticket-verify` and the entry gate — an explicit `browser`, `api-only`, `diff-only`, `build-only` or `live-backend` overrides the pipeline's own guess from the ticket text (`lib/verify-mode.sh`) |
+| **Errors and Edge Cases** (feature, improvement) | `ticket-implement` — failure, check order, bad input, late responses and unauthorised viewers are stated instead of guessed; each stated behaviour needs its own criterion |
 
 ## Key Rules
 
@@ -31,3 +33,4 @@ Each field maps to a specific pipeline phase:
 - **No raw URLs in Navigation Path** — always `Menu > Submenu > Page` click paths
 - **Test User must be explicit** — `gerhard.steyn` / `admin`, not just "a logged-in user"
 - **Scope table must list all affected layers** — FE + BE entries trigger cross-layer complexity scoring
+- **Criteria hold on the PR branch** — never "on `develop`" or "once merged"; group the fields of one response or page into one criterion

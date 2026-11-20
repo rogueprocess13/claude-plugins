@@ -13,6 +13,7 @@
 #   ticket-dir.sh plan <TICKET_ID> [--root R] [--ticket-dir D] [--log-file F] [--type T]
 #   ticket-dir.sh change-dir <TICKET_ID> [<root>]
 #   ticket-dir.sh artifact-type <log_file> [<notes_path>]
+#   ticket-dir.sh layout [<root>] [--row]
 
 _TICKET_DIR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$_TICKET_DIR_DIR/error-handler.sh" ]; then
@@ -38,6 +39,54 @@ resolve_ticket_dir() {
     echo "$matches" >&2
     return 2
   fi
+}
+
+# ── Tickets-root layout (issue #763) ────────────────────────────────────────
+#
+# Two layouts are supported for the tickets root (the directory that holds the
+# ticket workspace dirs and openspec/changes/):
+#   git    — its own git repo. Plans are committed there for durability.
+#   plain  — not inside any git work tree. Plans are found and used, never
+#            committed; that is an expected state, not a warning.
+# One is not:
+#   nested — a subdirectory of another repo's work tree. A plan commit would
+#            land in (or be refused by) that outer repo.
+#
+# tickets_root_layout [<root>]
+# Prints git, plain or nested. Exit 0 for git and plain, 1 for nested and for
+# a root that is not a directory (prints "missing").
+tickets_root_layout() {
+  local root="${1:-.}" top here
+  [ -d "$root" ] || {
+    echo "missing"
+    return 1
+  }
+  top=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) || top=""
+  if [ -z "$top" ]; then
+    echo "plain"
+    return 0
+  fi
+  here=$(cd "$root" && pwd -P)
+  top=$(cd "$top" && pwd -P)
+  if [ "$here" = "$top" ]; then
+    echo "git"
+    return 0
+  fi
+  echo "nested"
+  return 1
+}
+
+# tickets_root_layout_row [<root>]
+# The env-check row for the layout: "STATUS|VALUE|NOTE". Always exit 0.
+tickets_root_layout_row() {
+  local root="${1:-.}" layout
+  layout=$(tickets_root_layout "$root") || true
+  case "$layout" in
+  git) echo "ok|git repo|supported: plans under openspec/changes/ are committed here; verify never builds a worktree of it" ;;
+  plain) echo "ok|plain directory|supported: plans under openspec/changes/ are used but not committed (no git history for them)" ;;
+  nested) echo "warn|inside another git repo|UNSUPPORTED: the tickets root must be its own git repo (git init here) or lie outside every git work tree; plans cannot be committed" ;;
+  *) echo "warn|not a directory|UNSUPPORTED: tickets root not found" ;;
+  esac
 }
 
 # ── Plan-artifact resolution (one resolver, whole-ID matching) ──────────────
@@ -307,8 +356,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     resolve_ticket_dir "$@"
     exit $?
     ;;
+  layout)
+    if [ "${2:-}" = "--row" ]; then
+      tickets_root_layout_row "${1:-.}"
+    elif [ "${1:-}" = "--row" ]; then
+      tickets_root_layout_row "${2:-.}"
+    else
+      tickets_root_layout "${1:-.}"
+    fi
+    exit $?
+    ;;
   *)
-    echo "Usage: ticket-dir.sh plan|change-dir|artifact-type|ticket-dir ..." >&2
+    echo "Usage: ticket-dir.sh plan|change-dir|artifact-type|ticket-dir|layout ..." >&2
     exit 64
     ;;
   esac

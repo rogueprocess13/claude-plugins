@@ -105,6 +105,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_ac_coverage" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-coverage.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_codespan" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-codespan.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_body" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-body.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_params" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-params.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_ownership" \
@@ -152,6 +154,9 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # check for the review panel, warn-level. PANEL_STOP_SKIPPED blocks: Consensus
 # settled a security or product-owner blocker that only a person may settle.
 PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED AC_PRECONDITION_PLANNED AC_PRECONDITION_NO_SOURCE GOLDFISH_UNADDRESSED PANEL_UNADDRESSED CODE_SPAN_EDGE_SPACE"
+# Ticket-body family (GitHub #773): the pattern-matched codes never block; its
+# two exact structural codes (VERIFY_MODE_INVALID, EDGE_CASES_MISSING) do.
+PLANNER_CROSSCHECK_WARN_CODES+=" SCOPE_TC_MISMATCH AC_COUNT_HIGH AC_UNTAGGED AC_POST_MERGE_STATE SECURITY_DECISIONS_MISSING"
 
 # Per-instance codes (planner-crosscheck-ownership D10). A listed code is
 # accepted one instance at a time and never code-wide: emit matches each
@@ -553,6 +558,12 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  # Ticket-body family (GitHub #773): silent without the ticket-body-v2 marker.
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_body "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_params "$initiative_id")
   total_blocking=$((total_blocking + b))
   total_warn=$((total_warn + w))
@@ -726,6 +737,27 @@ planner_crosscheck_fix_hint() {
     ;;
   AC_STATUS_UNCOVERED)
     echo "the spec states this status code as a response but no acceptance criterion checks it — add an AC (and its Verification Notes row) for that response; never delete the behaviour sentence to clear this"
+    ;;
+  VERIFY_MODE_INVALID)
+    echo "the spec has no usable ## Verify Mode — write the section with the first line **Verify mode:** <shape>, shape one of browser, api-only, diff-only, build-only, live-backend, chosen from what the criteria need"
+    ;;
+  EDGE_CASES_MISSING)
+    echo "the spec needs a ## Errors and Edge Cases section — answer failure, check order, empty or malformed input, late or concurrent responses and unauthorised viewer, each with the behaviour or Not applicable, and give each stated behaviour a criterion"
+    ;;
+  SCOPE_TC_MISMATCH)
+    echo "## Scope and ## Technical Context name different files (warn only) — list every file Technical Context names in the Scope table's Area cell, mark the ones only read (read-only), and drop or explain a Scope file Technical Context never names"
+    ;;
+  AC_COUNT_HIGH)
+    echo "the spec has more criteria than the soft cap (warn only) — write one criterion per response or behaviour with its fields listed in it, or split the ticket"
+    ;;
+  AC_UNTAGGED)
+    echo "criteria without a [unit] or [live] tag (warn only) — tag each one straight after the checkbox and repeat the tag in its Verification Notes Criterion cell"
+    ;;
+  AC_POST_MERGE_STATE)
+    echo "a criterion can only hold after merge or names a base branch (warn only) — reword it so it holds on the ticket's own branch"
+    ;;
+  SECURITY_DECISIONS_MISSING)
+    echo "proposal.md touches auth or user data without a ## Security & Identity Decisions section (warn only) — add it, each decision a policy row of ## Parameters"
     ;;
   PARAM_TABLE_INVALID)
     echo "proposal.md ## Parameters is missing or malformed — write the table (Name | Key | Kind | Default | Value | Source) right after ## Business Outcomes, or None., and fix the named row"

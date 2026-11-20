@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.128.0 (2026-11-20) — board frames for a recording, and a Recording section in env-check
+## 0.129.0 (2026-11-20) — board frames for a recording, and a Recording section in env-check
 
 Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` can now also keep a picture of the board each time its card moves.
 
@@ -29,6 +29,29 @@ Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` ca
 - **`/ticket-env-check` has a Recording section**, printed only when `RECORD_ALLOWED` is set: `RECORD_ALLOWED`, `RECORD_BOARD_DRIVERS`, `RECORD_BOARD_URL`, `RECORD_FFMPEG`, `RECORD_BROWSER`, `RECORD_SESSION`, `RECORD_SESSION_MODE`, `RECORD_SESSION_IGNORED`. Every row is `ok` or `warn`; none changes the exit code.
 - The board layout is read from the live Linear page; that path has no automated test and is checked on a real board before the feature is documented for operators.
 
+## 0.128.0 (2026-11-20) — planned ticket bodies state verify mode, errors and edge cases, and security decisions (#773)
+
+`ticket-planner` 0.56.0. A review of one epic's planned tickets found the same gaps in every generated body. Specify now writes them, and a new Crosscheck family checks them for initiatives planned from this version on (contract marker `ticket-body-v2`, written on the first Specify dispatch; older and in-flight initiatives are unchanged).
+
+- **Verify mode.** Every spec carries `## Verify Mode` with the line `**Verify mode:** <shape>` (`browser`, `api-only`, `diff-only`, `build-only` or `live-backend`). The composer copies it into the ticket, where `lib/verify-mode.sh` already reads it before any heuristic (#779), so an API, git or scaffold ticket no longer runs in browser mode. Missing or malformed: `VERIFY_MODE_INVALID` (blocking).
+- **Errors and edge cases.** Feature and improvement specs, and every `api-only` or `live-backend` spec, carry `## Errors and Edge Cases` with five prompts: failure, check order of 401/403/404/422, empty or malformed input, late or concurrent responses, unauthorised viewer. Missing: `EDGE_CASES_MISSING` (blocking).
+- **Criteria.** One criterion per response or behaviour instead of one per field, about 20 at most (`AC_COUNT_HIGH`, warn); each tagged `[unit]` or `[live]` (`AC_UNTAGGED`, warn); worded to hold on the PR branch, never "once merged" or "on `develop`" (`AC_POST_MERGE_STATE`, warn).
+- **Scope and Technical Context agree.** The Scope table lists every file Technical Context names, read-only ones marked; `SCOPE_TC_MISMATCH` (warn) names the files that differ.
+- **Security and identity decisions.** A plan that touches sign-in, accounts, tokens, secrets or personal data lists identifier normalisation, secret policy per environment and token handling in proposal.md `## Security & Identity Decisions`, each as a `policy` row of `## Parameters`, so a person is asked before Review instead of the epic carrying an unconfirmed assumption. Epic Gen copies the section into the epic. `SECURITY_DECISIONS_MISSING` (warn).
+- **Smaller prompt rules:** Technical Context states constraints, not exact calls; Signals `Decision` covers only the ticket's own slice; a scaffold pins the major version of what it installs; a ticket that needs a state is blocked by the one that creates it.
+- **Templates.** `templates/*.md` (read by `/ticket-create`) gain `## Verify Mode`; `feature.md` and `improvement.md` gain `## Errors and Edge Cases`. A template left unfilled classifies as before.
+- **Not changed:** the Definition-of-Ready check does not require the new sections, `ticket-verify` does not treat `[unit]` and `[live]` criteria differently, and the five warn codes do not block. Each is a decision left for a later change.
+- New libs `ticket-planner/lib/planner-body-template.sh` and `planner-crosscheck-body.sh`; new test `test-planner-body-template.sh` (135 cases; composed bodies go through `verify_mode_shape` for all five shapes, and the golden bodies keep the same readiness verdict with and without the new sections); three Crosscheck fixtures (`body-v2-*`); the business-framing golden bodies carry the new sections.
+
+## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
+
+Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").
+
+- **Plain (non-git) tickets root: no failed commit, no warning.** `openspec-tracking-check.sh commit` returned 2 there, so every complex ticket logged `OPENSPEC_ARTIFACT_COMMIT — rc=2` as a warning and then `OPENSPEC_ARTIFACT_UNTRACKED`. It now prints `OPENSPEC_COMMIT_STATUS=not-git` and exits 0, and `appraise-exec-coherence.sh` logs one info line, `OPENSPEC_ARTIFACT_NOT_COMMITTED`. `assert` reports `not-git` (exit 0) for a plan that is on disk; a plan that is gone is still `missing`.
+- **Simple-fix tickets never log `OPENSPEC_ARTIFACT_UNTRACKED`.** `assert` ran its git check before it looked for a change dir, so under a plain root a simple-fix ticket got exit 2 and the warning. It now looks first and answers `not-applicable`.
+- **Git tickets root under `REPOS_ROOT`: verify no longer stops.** With no `--services`, `verify-env-up.sh` took every git repo under `REPOS_ROOT`, the tickets repo included. That repo has no ticket branch, so the run gate-stopped `VERIFY_WORKTREE_FAILED`. The tickets root (`--tickets-root`, else the current directory) is now left out.
+- **`/ticket-env-check` reports the layout** as `TICKETS_LAYOUT` (`git repo` or `plain directory`), and warns `UNSUPPORTED` for a tickets root inside another repo's work tree, where plans cannot be committed. `ticket-dir.sh layout [<root>] [--row]` is the one classifier.
+
 ## 0.127.2 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
 
 - **Cause.** `flow.sh` emits exactly one event per invocation, keyed `{tid}:{rev}`, and that is unchanged. The duplicates came from callers that fired a trigger twice for one fact. `appraise-start` was fired by the router before the appraise agent was spawned (complexity `simple`, a placeholder) and again by ticket-appraise Step 4 to pass the real score. `human-approve` was fired again by every repeated `/ticket-approve` on an already approved ticket, and by the entry gate's policy approval (Check 5) on a ticket a person had already approved.
@@ -38,6 +61,7 @@ Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` ca
 - **Existing outboxes.** Duplicate records already written are harmless: the Linear driver writes desired state (column, assignee, labels), so a repeated event is a no-op, and nothing in this repository counts either event. They are not rewritten; a consumer that counts must count from this release on.
 - **Unchanged on purpose:** `flow.sh` has no dedupe, and the router still claims at the start of every STEP_1 run, so an appraisal that is restarted after a crash writes one `appraise-started` per attempt.
 - Tests: `lib/tests/test-outbox-single-fact.sh` (new; real `flow.sh`, `approve.sh`, `reject.sh` and `appraise-claim.sh`) and two Check 5 cases in `test-gate-check.sh`.
+
 ## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
 
 - **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.

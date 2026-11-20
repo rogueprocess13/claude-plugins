@@ -187,15 +187,98 @@ test_commit_errors_on_missing_dir() {
   [ "$rc" -eq 2 ]
 }
 
-test_commit_errors_outside_git_repo() {
+# Issue #763: a tickets root outside every git work tree is a supported
+# layout. commit has nothing to commit into: it says not-git and exits 0.
+test_commit_under_plain_root_is_not_git() {
   local nogit
   nogit="$(mktemp -d)"
-  mkdir -p "$nogit/openspec/changes/wil-5--x"
-  echo x >"$nogit/openspec/changes/wil-5--x/tasks.md"
-  local rc=0
-  (cd "$nogit" && bash "$CHECK" commit "openspec/changes/wil-5--x/" WIL-5) >/dev/null 2>&1 || rc=$?
+  mkdir -p "$nogit/openspec/changes/test-5--x"
+  echo x >"$nogit/openspec/changes/test-5--x/tasks.md"
+  local rc=0 out
+  out=$(cd "$nogit" && bash "$CHECK" commit "openspec/changes/test-5--x/" TEST-5 2>/dev/null) || rc=$?
+  local made=0
+  [ ! -e "$nogit/.git" ] || made=1
   rm -rf "$nogit"
-  [ "$rc" -eq 2 ]
+  [ "$rc" -eq 0 ] && grep -q '^OPENSPEC_COMMIT_STATUS=not-git$' <<<"$out" && [ "$made" -eq 0 ]
+}
+
+# A tickets root inside another repo's work tree is the unsupported layout:
+# commit still refuses (the change dir is not under that repo's own
+# openspec/changes/) and nothing lands in the outer repo.
+test_commit_under_nested_root_still_refuses() {
+  _setup
+  mkdir -p "$_ws/tickets/openspec/changes/test-6--x"
+  echo x >"$_ws/tickets/openspec/changes/test-6--x/tasks.md"
+  local rc=0 n
+  (cd "$_ws/tickets" && bash "$CHECK" commit "openspec/changes/test-6--x/" TEST-6) >/dev/null 2>&1 || rc=$?
+  n=$(git -C "$_ws" ls-files | wc -l | tr -d ' ')
+  _teardown
+  [ "$rc" -eq 2 ] && [ "$n" -eq 0 ]
+}
+
+_plain_ws() { # a non-git tickets root with a pipeline log and one ticket dir
+  _ws="$(mktemp -d)"
+  _ws=$(cd "$_ws" && pwd -P)
+  mkdir -p "$_ws/home/.claude/skills" "$_ws/logs" "$_ws/TEST-40--fix-thing"
+  ln -s "$LIB_DIR" "$_ws/home/.claude/skills/lib"
+  export HOME="$_ws/home" TAP_LOG="$_ws/logs/TEST-40-pipeline.log"
+  unset LOG_FILE HB_LOG_FILE
+  printf '# Notes\n' >"$_ws/TEST-40--fix-thing/notes.md"
+  : >"$TAP_LOG"
+}
+
+test_assert_under_plain_root_is_not_git() {
+  _plain_ws
+  _write_change "test-40"
+  local out rc=0
+  out=$(bash "$CHECK" assert TEST-40 --expect --root "$_ws" 2>/dev/null) || rc=$?
+  _teardown
+  [ "$rc" -eq 0 ] && grep -q '^OPENSPEC_TRACK_STATUS=not-git$' <<<"$out" &&
+    grep -q '^CHANGE_DIR=.*/openspec/changes/test-40--fix-thing/$' <<<"$out"
+}
+
+# A plan that is gone is still reported under a plain root.
+test_assert_under_plain_root_expect_missing() {
+  _plain_ws
+  local out rc=0
+  out=$(bash "$CHECK" assert TEST-40 --expect --root "$_ws" 2>/dev/null) || rc=$?
+  _teardown
+  [ "$rc" -eq 1 ] && grep -q '^OPENSPEC_TRACK_STATUS=missing$' <<<"$out"
+}
+
+# Issue #763 symptom 2: a simple-fix ticket has no openspec change, so
+# OPENSPEC_ARTIFACT_UNTRACKED must never be written for it. Under a plain
+# root the old code returned 2 ("not inside a git repo") before it looked.
+test_assert_warn_simple_fix_under_plain_root_is_silent() {
+  _plain_ws
+  printf '# fix\n' >"$_ws/TEST-40--fix-thing/simple-fix.md"
+  local out rc=0 notes_before ok=0
+  notes_before=$(cat "$_ws/TEST-40--fix-thing/notes.md")
+  out=$(cd /tmp && bash "$CHECK" assert-warn TEST-40 --root "$_ws" --ticket-dir "$_ws/TEST-40--fix-thing" 2>/dev/null) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '^OPENSPEC_TRACK_STATUS=not-applicable$' <<<"$out" &&
+    ! grep -q 'OPENSPEC_ARTIFACT_UNTRACKED' "$TAP_LOG" &&
+    [ "$(cat "$_ws/TEST-40--fix-thing/notes.md")" = "$notes_before" ]; then
+    ok=1
+  fi
+  _teardown
+  [ "$ok" -eq 1 ]
+}
+
+# Issue #763 symptom 1: a complex ticket under a plain root logs no UNTRACKED
+# warning: the plan is present, there is just no repo to track it in.
+test_assert_warn_complex_under_plain_root_is_silent() {
+  _plain_ws
+  _write_change "test-40"
+  local out rc=0 notes_before ok=0
+  notes_before=$(cat "$_ws/TEST-40--fix-thing/notes.md")
+  out=$(cd /tmp && bash "$CHECK" assert-warn TEST-40 --root "$_ws" --ticket-dir "$_ws/TEST-40--fix-thing" 2>/dev/null) || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '^OPENSPEC_TRACK_STATUS=not-git$' <<<"$out" &&
+    ! grep -q 'OPENSPEC_ARTIFACT_UNTRACKED' "$TAP_LOG" &&
+    [ "$(cat "$_ws/TEST-40--fix-thing/notes.md")" = "$notes_before" ]; then
+    ok=1
+  fi
+  _teardown
+  [ "$ok" -eq 1 ]
 }
 
 # ── assert ────────────────────────────────────────────────────────────────
@@ -481,7 +564,11 @@ test_usage_exits_2_with_no_args() {
 
 for t in test_commit_force_adds_gitignored_dir test_commit_is_idempotent_noop_on_rerun \
   test_commit_picks_up_regenerated_content test_commit_errors_on_missing_dir \
-  test_commit_errors_outside_git_repo test_assert_reports_gitignored_before_commit \
+  test_commit_under_plain_root_is_not_git test_commit_under_nested_root_still_refuses \
+  test_assert_under_plain_root_is_not_git test_assert_under_plain_root_expect_missing \
+  test_assert_warn_simple_fix_under_plain_root_is_silent \
+  test_assert_warn_complex_under_plain_root_is_silent \
+  test_assert_reports_gitignored_before_commit \
   test_assert_reports_tracked_after_commit test_assert_no_change_dir_without_expect_is_not_applicable \
   test_assert_no_change_dir_with_expect_is_missing test_assert_untracked_but_not_ignored \
   test_assert_partial_when_some_files_committed_some_not \

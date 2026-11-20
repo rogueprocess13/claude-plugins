@@ -3,6 +3,7 @@
 > Copy everything below this line into the Linear ticket description.
 > Fill in `{placeholders}`. Remove any sections that don't apply.
 > Labels to set: `bug`
+> Verify mode: replace `{shape}` with exactly one of `browser` (a person uses a page), `api-only` (HTTP endpoints, no page), `live-backend` (running services with no page and no single endpoint), `build-only` (the build or test command passing is the check), `diff-only` (only files to read). The pipeline reads this field first and then makes no guess of its own.
 
 ---
 
@@ -54,6 +55,10 @@
 ## Test Data Prerequisites
 
 {What must exist before verification can run — e.g. "At least one handover in status Pending assigned to test user."}
+
+## Verify Mode
+
+**Verify mode:** {shape} — {one-line reason}
 
 ## Related Tickets
 
