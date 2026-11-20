@@ -26,6 +26,12 @@ if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
   _AFP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   [ -f "$_AFP_LIB_DIR/manifest-read.sh" ] && source "$_AFP_LIB_DIR/manifest-read.sh"
 fi
+# linear-api.sh provides get_issue for check_fast_path_eligible. Without it
+# every un-inlined call fails as "api_error" (7 of 10 WIL-183..192 runs).
+if ! declare -f get_issue >/dev/null 2>&1; then
+  _AFP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_AFP_LIB_DIR/linear-api.sh" ] && source "$_AFP_LIB_DIR/linear-api.sh"
+fi
 
 # ── Configuration ───────────────────────────────────────────────────────────
 

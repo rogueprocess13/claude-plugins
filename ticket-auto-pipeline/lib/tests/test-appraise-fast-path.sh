@@ -622,6 +622,17 @@ _run "trigger keywords fire" test_reversibility_trigger_positives
 _run "non-trigger text does not fire" test_reversibility_trigger_negatives
 _run "FAST_PATH_DESCRIPTION cleared by unset" test_fast_path_description_does_not_leak
 
+# Sourcing the lib in a clean shell must define get_issue: without
+# linear-api.sh every check_fast_path_eligible call failed as api_error.
+test_sourcing_loads_get_issue() {
+  env -i HOME="$HOME" PATH="$PATH" bash -c \
+    'source "$1/appraise-fast-path.sh" && declare -F get_issue >/dev/null' _ "$LIB_DIR"
+}
+
+echo ""
+echo "=== Dependency tests ==="
+_run "sourcing defines get_issue" test_sourcing_loads_get_issue
+
 echo ""
 echo "=== Edge case tests ==="
 _run "confidence exactly at threshold" test_confidence_exactly_at_threshold

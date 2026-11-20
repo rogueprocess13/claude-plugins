@@ -75,7 +75,7 @@ DIR_NAME="${TICKET_ID}--${TITLE_SLUG}"
 
 # ── Check existing / create ─────────────────────────────────────────────
 
-source "$(dirname "${BASH_SOURCE[0]}")/../lib/ticket-dir.sh"
+source "$LIB_DIR/ticket-dir.sh"
 # Existence probe: "not found" is the normal answer for a new ticket, so keep it
 # out of the Claude log (error_return would write a META|error|fail line there).
 EXISTING_DIR=$(CLAUDE_LOG_FILE= resolve_ticket_dir "$TICKET_ID" "." 2>/dev/null || true)
