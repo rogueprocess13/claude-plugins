@@ -292,6 +292,67 @@ test_blast_parenthesised_callers_still_count_real_flows() {
   [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "2 execution flows" ]
 }
 
+# ── test code is not production blast radius (issue #762) ─────────────────────
+# Reduced from real appraisals: a test file listed as a second "flow", or as
+# most of a caller list, held simple tickets at the complex gate.
+
+test_blast_test_file_flow_not_counted() {
+  _blast "${_BR_HDR}| \`buildApp\` | LOW | 2 callers | 0 indirect | server start (\`api/src/server.js:5\`), health check test (\`api/test/health.test.js:7\`) | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ]
+}
+
+test_blast_test_named_flows_not_counted() {
+  _blast "${_BR_HDR}| \`buildApp\` | LOW | 1 callers | 0 indirect | server start, every supertest suite | additive |\n| \`save\` | LOW | 1 callers | 0 indirect | Test harness, store wiring tests, smoke test | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ]
+}
+
+test_blast_test_path_shapes_not_counted() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 1 callers | 0 indirect | Login, x (web/login.spec.ts), y (pkg/auth_test.go), z (tests/test_auth.py), w (src/test/java/AuthTest.java), v (src/__tests__/a.js) | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ]
+}
+
+# Guard: production flows that only look like tests keep counting.
+test_blast_production_flows_with_test_like_names_count() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 1 callers | 0 indirect | Fetch latest, A/B test | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "2 execution flows" ] || return 1
+  _blast "${_BR_HDR}| \`a\` | LOW | 1 callers | 0 indirect | Contest entry (src/contest/enter.js), Attestation (src/attest/sign.js) | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "2 execution flows" ]
+}
+
+# Guard: a wide production flow set next to a test flow still escalates.
+test_blast_production_flows_still_count_beside_tests() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 2 callers | 0 indirect | Register, Login (api/src/routes/login.js), smoke test (api/test/smoke.test.js) | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "2 execution flows" ]
+}
+
+test_blast_enumerated_test_callers_not_counted() {
+  _blast "${_BR_HDR}| \`buildApp\` | LOW | 5 callers (src/server.js:5, test/users.test.js, test/items.test.js, test/store.test.js, test/smoke.test.js) | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ] && [ -z "$BLAST_ADDITIVE_SKIP" ]
+}
+
+# Guard: production callers still escalate, whatever tests sit beside them.
+test_blast_enumerated_production_callers_still_override() {
+  _blast "${_BR_HDR}| \`render\` | LOW | 5 callers (src/router.js:76, src/nav.js:10, src/boot.js:3, test/router.test.js, test/nav.test.js) | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "3 d=1 callers (render)" ]
+}
+
+# Guard: a bare count, or a list that does not enumerate every caller, is
+# taken as stated — no test discount without the evidence.
+test_blast_unenumerated_caller_count_stays() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 3 callers | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_REASON" = "3 d=1 callers (a)" ] || return 1
+  _blast "${_BR_HDR}| \`a\` | LOW | 4 callers (src/a.js; plus test/a.test.js) | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_REASON" = "4 d=1 callers (a)" ] || return 1
+  _blast "${_BR_HDR}| \`a\` | LOW | 3 callers (test/a.test.js, test/b.test.js) | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_REASON" = "3 d=1 callers (a)" ]
+}
+
+# Guard: the risk trigger ignores test discounts entirely.
+test_blast_high_risk_overrides_with_only_test_callers() {
+  _blast "${_BR_HDR}| \`a\` | HIGH | 1 callers (test/a.test.js) | 0 indirect | smoke test | additive |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "risk HIGH (a)" ]
+}
+
 test_blast_reason_is_eval_safe() {
   _blast "${_BR_HDR}| \`it's; \$(touch /nonexistent-413)\` | CRITICAL | 0 callers | 0 indirect | none | modifying |\n" || return 1
   [ "$BLAST_OVERRIDE" = "complex" ] &&
@@ -385,6 +446,15 @@ for fn in \
   test_blast_below_thresholds_is_none \
   test_blast_parenthesised_callers_are_one_flow \
   test_blast_parenthesised_callers_still_count_real_flows \
+  test_blast_test_file_flow_not_counted \
+  test_blast_test_named_flows_not_counted \
+  test_blast_test_path_shapes_not_counted \
+  test_blast_production_flows_with_test_like_names_count \
+  test_blast_production_flows_still_count_beside_tests \
+  test_blast_enumerated_test_callers_not_counted \
+  test_blast_enumerated_production_callers_still_override \
+  test_blast_unenumerated_caller_count_stays \
+  test_blast_high_risk_overrides_with_only_test_callers \
   test_blast_reason_is_eval_safe \
   test_blast_takes_last_section \
   test_blast_section_absent_exit_2; do

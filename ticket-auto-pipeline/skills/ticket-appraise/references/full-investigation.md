@@ -59,13 +59,13 @@ Read the persona file at `$PERSONA_BASE`. Inject its content as role context for
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep start "Scoring complexity axes"
 
-Judge which axes of the scoring rubric in SKILL.md Step 2.5 (kept inline there because the fast path uses it) fire, using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. The script does the sum, the threshold and the `## Complexity` block; never write that section by hand:
+Judge which axes of the scoring rubric in SKILL.md Step 2.5 fire, using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. The script does the sum, the threshold and the `## Complexity` block; never write that section by hand:
 
 ```bash
 bash ~/.claude/skills/lib/complexity-score.sh write "{TICKET-DIR}" --axes "{axes}" --reason "{one sentence; name the Reversibility trigger when it fired}"
 ```
 
-`{axes}` is comma-separated from `multi-service`, `cross-layer`, `cross-layer:framework-migration`, `reversibility:{trigger}`, `prior-rejection`, or `none`. Exit 2 means an axis was refused (unknown, repeated, or `cross-layer` qualified with a migration or payment trigger, which is Reversibility only): fix the list and re-run. It prints `COMPLEXITY`, `WEIGHTED` and `AXES`.
+`{axes}` is comma-separated from `multi-service`, `cross-layer`, `cross-layer:framework-migration`, `reversibility:{trigger}` (auth: `auth-modify`, `auth-new` or `auth-reuse`), `prior-rejection`, or `none`. Exit 2 means an axis was refused (unknown, repeated, or `cross-layer` qualified with a migration or payment trigger, which is Reversibility only): fix the list and re-run. It prints `COMPLEXITY`, `WEIGHTED` and `AXES`.
 
 **If `COMPLEXITY=simple` → proceed to Step 2.6, then Step 3 (inline).**
 
