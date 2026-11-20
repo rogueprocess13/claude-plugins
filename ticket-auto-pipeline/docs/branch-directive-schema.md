@@ -53,6 +53,11 @@ Declaring `**UAT Policy:** epic` moves acceptance to the epic issue:
 - A child whose PR review passes transitions `Review → Done` rather than `Review → UAT`, so the
   dependency chain keeps moving. `Done` here means *code-complete, reviewed, merged to the epic
   branch* — which is precisely everything that can be verified about one child of such an epic.
+  When the PR is left for a human merge (`Merge Policy`, or autonomy `manual`), the child is
+  marked `reviewed` and stays in `Review` (`pr-review-pass-merge-pending`); `merge-poll.sh` moves
+  it to `Done` (`merge-observed`) once it sees the merge
+  ([#765](https://github.com/willard-pro/claude-plugins/issues/765)). It never parks in `UAT`.
+  Its dependents are released by the merge itself, not by the board column.
 - `ticket-verify --env uat` **refuses** for such a child: the epic branch is not deployed to that
   environment, so any result would be meaningless. `--env local` is unaffected.
 - The epic itself carries acceptance via `epic-integration-open` (→ `Review`), `epic-uat-start`

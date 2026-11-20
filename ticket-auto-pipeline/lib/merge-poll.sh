@@ -19,6 +19,12 @@ if ! declare -f emit_event >/dev/null 2>&1; then
   [ -f "$_MP_LIB_DIR/events.sh" ] && source "$_MP_LIB_DIR/events.sh"
 fi
 
+# manifest-read.sh backs merge_poll_close_merged below (GitHub #765): the
+# ticket's stage/flags, and ticket_pipeline_merge_state for the merge itself.
+if ! declare -f ticket_pipeline_merge_state >/dev/null 2>&1; then
+  [ -f "$_MP_LIB_DIR/manifest-read.sh" ] && source "$_MP_LIB_DIR/manifest-read.sh"
+fi
+
 MERGE_POLL_MIN_INTERVAL_SECS="${MERGE_POLL_MIN_INTERVAL_SECS:-600}"
 MERGE_POLL_MAX_AGE_DAYS="${MERGE_POLL_MAX_AGE_DAYS:-14}"
 
@@ -103,15 +109,89 @@ merge_poll_one() {
     }' 2>/dev/null
 }
 
+# ── merge_poll_close_merged ───────────────────────────────────────────────────
+# Usage: merge_poll_close_merged RUNS_FILE [TID]
+# GitHub #765. A child of a `UAT Policy: epic` epic whose PR waits for a human
+# merge passes review with pr-review-pass-merge-pending: it is marked
+# `reviewed` and stays in Review. This fires the `merge-observed` trigger
+# (Review → Done) for each such ticket once its merge is on record.
+#
+# A ticket is closed only when all three hold:
+#   1. runs.jsonl has a `merged` merge event for it, observed within the last
+#      MERGE_POLL_MAX_AGE_DAYS (bounds the manifest reads of one pass);
+#   2. its manifest says stage `Review` with the `reviewed` flag — the state
+#      only a passing review leaves behind (pr-review-fail and pr-iterate both
+#      remove the flag), so a PR merged over a failed review is never closed;
+#   3. ticket_pipeline_merge_state says `merged` — the same check that
+#      releases the ticket's blocked-by dependents, so the board never shows
+#      Done for a merge dispatch does not accept (merged-other-base).
+# Condition 2 makes it idempotent: after the trigger the stage is Done, so a
+# repeat sweep fires nothing. A failed flow.sh call (lock busy, emit replay)
+# leaves the stage in Review and the next sweep retries.
+#
+# The trigger goes through flow-run.sh → flow.sh (no tracker I/O here). No
+# log file is passed on purpose: the run has ended and META|outcome stays the
+# pipeline log's last record. The audit trail is the runs.jsonl merge event,
+# the manifest rev and the `merge-observed` outbox event.
+# Needs REPOS_ROOT (the manifest root); without it every read fails and
+# nothing fires. Always returns 0.
+merge_poll_close_merged() {
+  local runs_file="$1" only_tid="${2:-}"
+  [ -n "$runs_file" ] && [ -f "$runs_file" ] || return 0
+  declare -f get_ticket_manifest_field >/dev/null 2>&1 || return 0
+  declare -f ticket_pipeline_merge_state >/dev/null 2>&1 || return 0
+  local flow_run="${MERGE_POLL_FLOW_RUN:-$_MP_LIB_DIR/flow-run.sh}"
+  [ -f "$flow_run" ] || return 0
+
+  local workspace
+  workspace=$(cd "$(dirname "$runs_file")" 2>/dev/null && pwd) || return 0
+
+  local since tids
+  since=$(date -u -d "@$(($(date +%s) - MERGE_POLL_MAX_AGE_DAYS * 86400))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || since=""
+  tids=$(jq -rRs --arg since "$since" --arg only "$only_tid" '
+    [split("\n")[] | fromjson? | objects
+      | select(.kind == "merge" and .state == "merged")
+      | select((.tid // "") | test("^[A-Za-z0-9_-]+$"))
+      | select($only == "" or .tid == $only)
+      | select((.observed_at // "") >= $since)
+      | .tid] | unique | .[]' "$runs_file" 2>/dev/null) || tids=""
+  [ -n "$tids" ] || return 0
+
+  local tid stage flags
+  while IFS= read -r tid; do
+    [ -n "$tid" ] || continue
+    stage=$(get_ticket_manifest_field "$tid" stage 2>/dev/null) || continue
+    [ "$stage" = "Review" ] || continue
+    flags=$(get_ticket_manifest_field "$tid" flags 2>/dev/null) || continue
+    jq -e 'type == "array" and index("reviewed") != null' <<<"$flags" >/dev/null 2>&1 || continue
+    [ "$(ticket_pipeline_merge_state "$tid" "$workspace" 2>/dev/null)" = "merged" ] || continue
+    # FLEET_PIPELINE_LOG_DIR: every outbox writer for a ticket must resolve
+    # the directory RUNS_FILE lives in (same reason as the pr-merged emit).
+    env -u LOG_FILE -u TAP_LOG FLEET_PIPELINE_LOG_DIR="$workspace" \
+      bash "$flow_run" "$tid" merge-observed >/dev/null 2>&1 || true
+  done <<<"$tids"
+  return 0
+}
+
 # ── merge_poll_sweep ──────────────────────────────────────────────────────────
 # Usage: merge_poll_sweep RUNS_FILE [TID]
+# The poll pass (_merge_poll_observe), then merge_poll_close_merged over what
+# is now on record. Always exits 0 — every step is fail-soft.
+merge_poll_sweep() {
+  _merge_poll_observe "$@" || true
+  merge_poll_close_merged "$@" || true
+  return 0
+}
+
+# ── _merge_poll_observe ───────────────────────────────────────────────────────
+# Usage: _merge_poll_observe RUNS_FILE [TID]
 # One pass over merge_poll_candidates: skips recently-polled candidates
 # (< MERGE_POLL_MIN_INTERVAL_SECS since their last merge event), emits
 # state:"stale" for candidates whose run ended more than
 # MERGE_POLL_MAX_AGE_DAYS ago, emits state:"unknown-repo" once for a
 # candidate with no resolvable repo, and otherwise calls merge_poll_one and
 # appends its event. Always exits 0 — every step is fail-soft.
-merge_poll_sweep() {
+_merge_poll_observe() {
   local runs_file="$1" only_tid="${2:-}"
   [ -n "$runs_file" ] && [ -f "$runs_file" ] || return 0
 

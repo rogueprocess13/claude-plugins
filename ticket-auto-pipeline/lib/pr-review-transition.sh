@@ -13,7 +13,9 @@
 #          and merge authorization is checked BEFORE the transition (#412): a
 #          non-empty merge_blocked_reason passes --merge-pending, so a PR left
 #          for a human merge never closes a per-ticket ticket to Done.
-#          Under `epic` the trigger is pr-review-pass-done regardless.
+#          Under `epic` a pending merge selects pr-review-pass-merge-pending
+#          (stay in Review; merge-poll.sh fires merge-observed later, #765),
+#          otherwise pr-review-pass-done.
 # flow-run.sh is called exactly once.
 #
 # Environment: UAT_POLICY / AUTONOMY / MERGE_POLICY as the ticket env file

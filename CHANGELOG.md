@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.125.0 (2026-11-20) — an epic child waiting for a human merge stays in Review (#765)
+
+- **The board no longer shows Done for an unmerged PR.** A child of a `UAT Policy: epic` epic used to close to `Done` on a passing PR review even when its PR was left for a human to merge (`Merge Policy`, or autonomy `manual`). `uat_decide_trigger` now picks the new trigger `pr-review-pass-merge-pending` in that case: the ticket is marked `reviewed` and stays in `Review`. It still never parks in `UAT`. The trigger carries the verdict gate.
+- **`merge-poll.sh` closes the ticket when it sees the merge.** `merge_poll_sweep` now ends with `merge_poll_close_merged`, which fires the new trigger `merge-observed` (`Review → Done`) through `flow-run.sh` for a ticket that is in `Review` with the `reviewed` flag and whose PR `ticket_pipeline_merge_state` reports `merged`. It fires once: after it the stage is `Done`. A failed `flow.sh` call is retried by the next sweep. Both the run-end sweep and fleetd's periodic sweep call it, so no fleet-controller change is needed. With no fleetd running, run `bash ~/.claude/skills/lib/merge-poll.sh <log-dir>/runs.jsonl` after the merge.
+- **Unchanged:** an epic child whose run may merge its own PR still goes straight to `Done`; `per-ticket` policy still parks a pending merge in `UAT`; epic acceptance (`epic-integration-open` / `epic-uat-start` / `epic-uat-pass`) is untouched. Dependents were never released early and still are not: blocked-by resolution reads the merge record, not the board column.
+- Two new vocabulary events, `pr-review-passed-merge-pending` (labels only, no column) and `merge-observed` (column `Done`), both in `board_drivers.linear.events` and drawn in the state diagram.
+- New tests in `test-merge-poll.sh` (six, against the real `flow.sh`), `test-pr-review-transition.sh` and `test-branch-resolve.sh`.
+
 ## 0.124.0 (2026-11-20) — `--record` flag, recordable-environment guard, `record.sh` (fleet-controller 0.55.0)
 
 First slice of the `ticket-auto-record` change: one run of a ticket can be kept as a short demo video. This release adds the switch and the library; VERIFY capture, the stitch command and the board recorder follow.

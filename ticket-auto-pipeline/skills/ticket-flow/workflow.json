@@ -99,6 +99,29 @@
       "verdict_gate": true,
       "emits": { "event": "pr-review-passed", "data": { "uat_required": true } }
     },
+    "pr-review-pass-merge-pending": {
+      "from": "Review",
+      "to": null,
+      "adds": [
+        "reviewed"
+      ],
+      "removes": [
+        "rejected"
+      ],
+      "description": "PR approved on an epic-policy child whose PR waits for a human merge — mark reviewed and stay in Review until merge-observed (GitHub #765)",
+      "precondition": "must_not_be_epic",
+      "verdict_gate": true,
+      "emits": { "event": "pr-review-passed-merge-pending", "data": {} }
+    },
+    "merge-observed": {
+      "from": "Review",
+      "to": "Done",
+      "adds": [],
+      "removes": [],
+      "description": "merge-poll.sh observed the PR of a reviewed ticket merged — close to Done (GitHub #765). No verdict_gate: it is fired only for a ticket that pr-review-pass-merge-pending, which is gated, already marked reviewed.",
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "merge-observed", "data": {} }
+    },
     "pr-review-fail": {
       "from": null,
       "to": null,
@@ -275,6 +298,18 @@
       "payload": { "uat_required": "bool" },
       "description": "A PR review passed. Collapses the destination-encoding pr-review-pass-done/pr-review-pass-uat trigger pair into one fact carrying whether UAT is required next. Emitted by flow.sh itself (via each trigger's own emits declaration), after the verdict gate has allowed the transition — not by the branch-resolve.sh helper that resolves which destination applies, which would emit before the transition is attempted."
     },
+    "pr-review-passed-merge-pending": {
+      "trigger": "pr-review-pass-merge-pending",
+      "data_from": [],
+      "payload": {},
+      "description": "A PR review passed on a ticket that closes without its own UAT step, but its PR is left for a human to merge. The ticket stays in review until merge-observed."
+    },
+    "merge-observed": {
+      "trigger": "merge-observed",
+      "data_from": [],
+      "payload": {},
+      "description": "The merge of a reviewed ticket's PR was observed after its run ended — the ticket closed. Distinct from pr-merged, which records every observed merge and closes nothing."
+    },
     "pr-review-failed": {
       "trigger": "pr-review-fail",
       "data_from": [],
@@ -414,6 +449,8 @@
           "add": ["reviewed"],
           "remove": ["rejected"]
         },
+        "pr-review-passed-merge-pending": { "add": ["reviewed"], "remove": ["rejected"] },
+        "merge-observed": { "column": "Done" },
         "pr-review-failed": { "add": ["rejected"], "remove": ["reviewed"] },
         "pr-iteration-requested": { "column": "Ready", "remove": ["reviewed", "rejected"] },
         "uat-passed": { "column": "Done", "remove": ["reviewed"] },

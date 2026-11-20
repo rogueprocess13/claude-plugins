@@ -239,6 +239,7 @@ stateDiagram-v2
     Ready --> Review : implement-complete
     Review --> Done : pr-review-pass-done
     Review --> UAT : pr-review-pass-uat
+    Review --> Done : merge-observed
     Review --> Ready : pr-iterate
     UAT --> Done : uat-pass
     UAT --> Ready : uat-fail

@@ -188,15 +188,15 @@ log alone.
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|epic" >> "$LOG_FILE"
 ```
 
-`MSG` is the resolved policy: `per-ticket` or `epic`. Under `epic` the child transitions
-`Review → Done` via `pr-review-pass-done`; under `per-ticket` with a UAT target it transitions
-`Review → UAT` via `pr-review-pass-uat`. The decision itself is computed by `uat_decide_trigger`
-in `lib/branch-resolve.sh`, never inferred from ambient environment.
+`MSG` is the resolved policy: `per-ticket` or `epic`. `epic`: `Review → Done` via
+`pr-review-pass-done`. `per-ticket` with a UAT target: `Review → UAT` via `pr-review-pass-uat`.
+`uat_decide_trigger` (`lib/branch-resolve.sh`) decides, never ambient environment.
 
-When the PR is being left for a human merge (`merge_blocked_reason` is non-empty: pipeline
-autonomy `manual`, or any epic `Merge Policy`), Step 6a passes `--merge-pending` and a
-per-ticket ticket goes to `UAT` even with no UAT target, because its code is not on the base
-branch yet (GitHub #412). That case also writes one extra line naming the trigger and reason:
+When the PR is left for a human merge (`merge_blocked_reason` non-empty: autonomy `manual`, or
+any epic `Merge Policy`), Step 6a passes `--merge-pending`. A per-ticket ticket then goes to
+`UAT` even with no UAT target (#412). An epic child stays in `Review`
+(`pr-review-pass-merge-pending`) until `merge-poll.sh` fires `merge-observed` (#765). Both
+cases write one extra line naming the trigger and reason:
 
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=pr-review-pass-uat; merge pending: epic Branch Directive Merge Policy: manual requires human merge" >> "$LOG_FILE"

@@ -6,28 +6,28 @@
 # allow-growth: seam-gate-safety G5 — looser quote re-check and unverified-quote marking in dor-semantic.sh, its schema-doc paragraph, the per-piece minimum and the no-demotion rule for loose-verified findings, code_class and the verified-only demotion and gap rules from review (+5,046 bytes, 0.121.0)
 # allow-growth: rehearsal F85 — scoped-rescan hold of an untouched contradiction (lineage carry copy, held list, request changed_sections) and its schema-doc paragraph (+4,410 bytes, 0.122.2)
 dor-semantic	114884
-guidance-extractor	94875
+guidance-extractor	94828
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
-ticket-appraise	154338
-ticket-appraise-exec	121257
+ticket-appraise	154258
+ticket-appraise-exec	121177
 ticket-appraise-exec:conditional	14320
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35284
-ticket-document	79001
+ticket-document	78954
 ticket-gate-reconcile	6789
-ticket-implement	144868
+ticket-implement	144788
 ticket-implement:conditional	9949
-ticket-pr-iterate	104127
-ticket-pr-review	131085
-ticket-reproduce	106344
+ticket-pr-iterate	104047
+ticket-pr-review	130911
+ticket-reproduce	106297
 ticket-reproduce:conditional	2641
 ticket-retro	18240
 ticket-retro:conditional	4179
 # allow-growth: verify-qa-persona — the verify agent's one QA-persona line (+96 bytes, 0.122.0)
-ticket-verify	174902
+ticket-verify	174822
 # allow-growth: verify-qa-persona — references/qa-persona.md (Step 1g selection, guard, supporting-check rule and caps, Observations section), read only when VERIFY_QA_PERSONA=true (+6,198 bytes, 0.122.0)
 ticket-verify:conditional	22891
-wiki-maintenance	91904
+wiki-maintenance	91857
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 wiki-maintenance:conditional	5060
