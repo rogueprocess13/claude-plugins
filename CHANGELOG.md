@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.124.0 (2026-11-20) — `--record` flag, recordable-environment guard, `record.sh` (fleet-controller 0.55.0)
+
+First slice of the `ticket-auto-record` change: one run of a ticket can be kept as a short demo video. This release adds the switch and the library; VERIFY capture, the stitch command and the board recorder follow.
+
+- **`/ticket-auto {ID} --record`** (or `TICKET_RECORD=true`) turns recording on for a ticket. The preamble writes `META|record|info|on` once; resumes keep it, `RECORD_DISABLE=true` turns it off. The result block gains `RECORD:`. An explicit `RECORD=` key argument is accepted and wins over `TICKET_ARG`.
+- **New CLAUDE.md fields `RECORD_ALLOWED`, `RECORD_UAT_SYNTHETIC`, `RECORD_BOARD_URL`.** `RECORD_ALLOWED` lists the environments that may be recorded (`local`, `uat`); it must only name environments holding synthetic data, and `uat` also needs `RECORD_UAT_SYNTHETIC=true`. `--record` without a valid field exits 1 before anything is written; `TICKET_RECORD=true` without one only warns, so a fleet-wide default never stalls fleetd. All three go into the env file (`spawn_write_env`, which also inherits them from the caller's environment so the router's resume rewrite keeps them) and are checked by validate-mode `/ticket-env-check` when set.
+- **New `lib/record.sh`**: `record_enabled`, `record_allowed_parse`, `record_env_allowed`, `record_field`, `record_url_env`, `record_append_entry`, and `record.sh append --tid --phase --step --src --url`. `append` maps the page URL's origin to `local`/`uat`, refuses (and deletes the file) for any other or a not-allowed environment, and otherwise copies the screenshot to `artifacts/recordings/{phase}-a{attempt}-{NNN}.png` and lists it in `manifest.jsonl` under a `flock`. It never writes the pipeline log and exits non-zero only on bad arguments.
+- The preamble warns when recording is on and `FLEET_BOARD_DRIVERS` does not list `recorder` after `linear`.
+- fleet-controller 0.55.0: `TICKET_RECORD` catalog entry in `features.json`; a fleetd test that a result block with `RECORD:` parses unchanged.
+- New test `lib/tests/test-record.sh` (38 cases, including 20 concurrent appends and a torn manifest line).
+
 ## 0.123.2 (2026-11-20) — a phase verdict never comes from a stale agent-return file (#764)
 
 - **The router no longer routes on an earlier phase's or attempt's return.** The router hands every agent's return over in one shared file, `./logs/<ID>-agent-return.txt`. When a return was not written for the current spawn, `router-step.sh post-spawn` read the file still on disk (another phase's return, or an earlier attempt's), or re-parsed the phase capture, which keeps earlier attempts. A live PR-REVIEW with 71/71 ACs passing was routed BLOCK this way. The same path could also route an old PASS as the current verdict.

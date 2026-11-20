@@ -115,6 +115,11 @@ Optional:
 | `UAT_URL` | UAT environment URL for verification |
 | `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for `/ticket-approve`, `/ticket-reject` and anything else that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
 | `TICKET_AUTONOMY` | Default autonomy mode — `manual` (default), `auto`, or `semi-auto` |
+| `TICKET_RECORD` | `true` records every ticket as if `--record` were passed (only warns when `RECORD_ALLOWED` is unset) |
+| `RECORD_DISABLE` | `true` turns recording off for a ticket whose log already has it on |
+| `RECORD_ALLOWED` | Also a `CLAUDE.md` field. Environments `--record` may capture: `local` and/or `uat`, comma-separated. **Name only environments holding synthetic data.** `--record` is refused without it |
+| `RECORD_UAT_SYNTHETIC` | Also a `CLAUDE.md` field. Must be `true` for `uat` in `RECORD_ALLOWED` to count |
+| `RECORD_BOARD_URL` | Also a `CLAUDE.md` field. The Linear project or view URL the board recorder screenshots |
 
 Fleet controller configuration (all optional, safe defaults):
 
