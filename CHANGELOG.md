@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.123.2 (2026-11-20) — a phase verdict never comes from a stale agent-return file (#764)
+
+- **The router no longer routes on an earlier phase's or attempt's return.** The router hands every agent's return over in one shared file, `./logs/<ID>-agent-return.txt`. When a return was not written for the current spawn, `router-step.sh post-spawn` read the file still on disk (another phase's return, or an earlier attempt's), or re-parsed the phase capture, which keeps earlier attempts. A live PR-REVIEW with 71/71 ACs passing was routed BLOCK this way. The same path could also route an old PASS as the current verdict.
+- `spawn_agent_pre` now removes the previous spawn's return file before each spawn, so any file post-spawn reads was written after the spawn began.
+- `post-spawn` with no return file captures and parses nothing. It logs `META|agent-return|warn|<PHASE> attempt=<n>: no return file …`, and VERIFY / PR-REVIEW fail closed (`no-verdict`), never on an earlier capture.
+- `phase-result-parse.sh` reads only the last attempt of a capture file. Its `--- Attempt N ---` header drops every earlier block, so an attempt with no PHASE_RESULT block is `absent`, never the previous attempt's verdict.
+- Four new tests in `test-router-step.sh`; three of them fail on the old code. fleetd's phase-dispatch path writes a fresh temp file per call, so it was not exposed to the stale file. It shares the parser change.
+
 ## 0.123.1 (2026-11-20) — fix the create-guard test's stdin race (#755)
 
 - **`test-ticket-create-guard.sh` no longer fails at random.** Its harness fed the hook with `printf | bash` under `pipefail`. With `TICKET_CREATE_GUARD=off` the hook exits before it reads stdin, so when the hook won the race `printf` got EPIPE and the test failed (nightly run on 2026-11-18, `test_guard_off_allowed`). The harness now passes the payload as a here-string, as `test_missing_jq_fails_open` already did. New test `test_guard_off_unread_large_payload_allowed` sends a payload larger than a pipe buffer with the guard off; the old harness fails it every time. Test-only change; the hook is unchanged.

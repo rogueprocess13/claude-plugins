@@ -227,10 +227,14 @@ parse_phase_result() {
   # ── extract ────────────────────────────────────────────────────────────────
   # Strip CR so CRLF input is indistinguishable from LF input, then take the LAST
   # block: capture_agent_result appends retried attempts to one file, and the
-  # current attempt is the one at the end.
+  # current attempt is the one at the end. Only the last attempt counts: its
+  # `--- Attempt N ---` header (capture-transcript.sh) forgets every earlier
+  # block, so an attempt that emitted none reads as absent, never as an
+  # earlier attempt's verdict (#764).
   local _extract_rc=0
   body=$(_pr_unwrap "$return_file" | tr -d '\r' | awk -v mopen="$_PR_OPEN_MARKER" -v mclose="$_PR_CLOSE_MARKER" '
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    /^--- Attempt [^ ]+ ---$/ { collecting = 0; closed = 0; last = ""; next }
     trim($0) == mopen  { collecting = 1; buf = ""; next }
     collecting && trim($0) == mclose { collecting = 0; closed = 1; last = buf; next }
     collecting { buf = buf $0 "\n"; next }
