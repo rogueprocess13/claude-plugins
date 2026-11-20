@@ -600,6 +600,47 @@ test_hooks_ok_when_plugin_registers_them() {
   return $rc
 }
 
+# Issue #763: env-check names the tickets-root layout and says when it is
+# the unsupported one (a tickets root inside another repo's work tree).
+_layout_row() { # project-dir -> the TICKETS_LAYOUT row
+  (LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+    bash "$LIB_DIR/env-check.sh" "$1" </dev/null 2>/dev/null || true) | grep '^TICKETS_LAYOUT|' || true
+}
+
+test_full_mode_reports_tickets_layout() {
+  local d ok=1
+  d=$(mktemp -d)
+  mkdir -p "$d/plain" "$d/own" "$d/outer/tickets"
+  _mk_project_dir "$d/plain"
+  _mk_project_dir "$d/own"
+  _mk_project_dir "$d/outer/tickets"
+  git init -q "$d/own"
+  git init -q "$d/outer"
+  [[ "$(_layout_row "$d/plain")" == "TICKETS_LAYOUT|ok|plain directory|"*"|supported"* ]] || ok=0
+  [[ "$(_layout_row "$d/own")" == "TICKETS_LAYOUT|ok|git repo|"*"|supported"* ]] || ok=0
+  [[ "$(_layout_row "$d/outer/tickets")" == "TICKETS_LAYOUT|warn|inside another git repo|"*"|UNSUPPORTED"* ]] || ok=0
+  rm -rf "$d"
+  [ "$ok" -eq 1 ]
+}
+
+test_validate_reports_tickets_layout() {
+  local d out rc=0 ok=1
+  d=$(mktemp -d)
+  mkdir -p "$d/outer/tickets"
+  _mk_project_dir "$d/outer/tickets"
+  git init -q "$d/outer"
+  out=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+    bash "$LIB_DIR/env-check.sh" --mode=validate "$d/outer/tickets" 2>&1) || rc=$?
+  # Reported, never a failure.
+  [ "$rc" -eq 0 ] && grep -q 'tickets root: inside another git repo.*UNSUPPORTED' <<<"$out" || ok=0
+  rm -rf "$d/outer/.git"
+  out=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+    bash "$LIB_DIR/env-check.sh" --mode=validate "$d/outer/tickets" 2>&1) || true
+  grep -q 'tickets root: plain directory' <<<"$out" || ok=0
+  rm -rf "$d"
+  [ "$ok" -eq 1 ]
+}
+
 for fn in \
   test_validate_passes_all_required \
   test_validate_fails_missing_linear_key \
@@ -633,7 +674,9 @@ for fn in \
   test_full_mode_reports_shadowing_skill \
   test_full_mode_shadow_ok_when_clean \
   test_validate_fails_on_shadowing_skill \
-  test_hooks_ok_when_plugin_registers_them; do
+  test_hooks_ok_when_plugin_registers_them \
+  test_full_mode_reports_tickets_layout \
+  test_validate_reports_tickets_layout; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

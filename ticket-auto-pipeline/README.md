@@ -460,6 +460,19 @@ Pipeline state is stored at:
 
 Ticket workspaces are created in the current working directory (expected: a `tickets/` directory under the project workspace).
 
+### Tickets root layout
+
+The tickets root holds the ticket workspace dirs and `openspec/changes/`. Two layouts are supported, and `/ticket-env-check` reports which one it found as `TICKETS_LAYOUT`:
+
+| Layout | What it is | Plans (`openspec/changes/`) |
+|---|---|---|
+| `git repo` | The tickets root is its own git repo (it may sit directly under `REPOS_ROOT`). | Committed to that repo by `ticket-appraise-exec`. |
+| `plain directory` | The tickets root is outside every git work tree. | Used, never committed. No warning is logged. |
+
+A tickets root **inside another repo's work tree** is not supported: plans cannot be committed there, and `/ticket-env-check` says so. Run `git init` in the tickets root, or move it out of that repo.
+
+`/ticket-verify` never builds a worktree of the tickets root, so a git tickets root under `REPOS_ROOT` is safe.
+
 ## Migration from Host Skills
 
 If you have existing `~/.claude/skills/ticket-*` directories from a pre-plugin setup, run:

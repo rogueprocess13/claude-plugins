@@ -29,6 +29,15 @@ There was no way to retire a ticket nobody will finish. `human-reject` sends it 
 - **Not included:** no Linear comment with the reason (the board driver projects a column and labels only), no removal of labels the driver does not own (a leftover `claimed`), no epic cancel, no reopen.
 - The README state diagram and the public pipeline diagram draw the trigger; `gen-mermaid.sh` now draws any-state triggers and tombstone stages.
 
+## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
+
+Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").
+
+- **Plain (non-git) tickets root: no failed commit, no warning.** `openspec-tracking-check.sh commit` returned 2 there, so every complex ticket logged `OPENSPEC_ARTIFACT_COMMIT — rc=2` as a warning and then `OPENSPEC_ARTIFACT_UNTRACKED`. It now prints `OPENSPEC_COMMIT_STATUS=not-git` and exits 0, and `appraise-exec-coherence.sh` logs one info line, `OPENSPEC_ARTIFACT_NOT_COMMITTED`. `assert` reports `not-git` (exit 0) for a plan that is on disk; a plan that is gone is still `missing`.
+- **Simple-fix tickets never log `OPENSPEC_ARTIFACT_UNTRACKED`.** `assert` ran its git check before it looked for a change dir, so under a plain root a simple-fix ticket got exit 2 and the warning. It now looks first and answers `not-applicable`.
+- **Git tickets root under `REPOS_ROOT`: verify no longer stops.** With no `--services`, `verify-env-up.sh` took every git repo under `REPOS_ROOT`, the tickets repo included. That repo has no ticket branch, so the run gate-stopped `VERIFY_WORKTREE_FAILED`. The tickets root (`--tickets-root`, else the current directory) is now left out.
+- **`/ticket-env-check` reports the layout** as `TICKETS_LAYOUT` (`git repo` or `plain directory`), and warns `UNSUPPORTED` for a tickets root inside another repo's work tree, where plans cannot be committed. `ticket-dir.sh layout [<root>] [--row]` is the one classifier.
+
 ## 0.127.2 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
 
 - **Cause.** `flow.sh` emits exactly one event per invocation, keyed `{tid}:{rev}`, and that is unchanged. The duplicates came from callers that fired a trigger twice for one fact. `appraise-start` was fired by the router before the appraise agent was spawned (complexity `simple`, a placeholder) and again by ticket-appraise Step 4 to pass the real score. `human-approve` was fired again by every repeated `/ticket-approve` on an already approved ticket, and by the entry gate's policy approval (Check 5) on a ticket a person had already approved.
