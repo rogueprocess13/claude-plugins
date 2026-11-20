@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.127.2 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
+## 0.127.3 (2026-11-20) — the tickets root may be a git repo or a plain directory (#763)
 
 Both layouts were already in use and each had a defect. Both are now supported and documented (README "Tickets root layout").
 
@@ -25,6 +25,16 @@ Both layouts were already in use and each had a defect. Both are now supported a
 - **Simple-fix tickets never log `OPENSPEC_ARTIFACT_UNTRACKED`.** `assert` ran its git check before it looked for a change dir, so under a plain root a simple-fix ticket got exit 2 and the warning. It now looks first and answers `not-applicable`.
 - **Git tickets root under `REPOS_ROOT`: verify no longer stops.** With no `--services`, `verify-env-up.sh` took every git repo under `REPOS_ROOT`, the tickets repo included. That repo has no ticket branch, so the run gate-stopped `VERIFY_WORKTREE_FAILED`. The tickets root (`--tickets-root`, else the current directory) is now left out.
 - **`/ticket-env-check` reports the layout** as `TICKETS_LAYOUT` (`git repo` or `plain directory`), and warns `UNSUPPORTED` for a tickets root inside another repo's work tree, where plans cannot be committed. `ticket-dir.sh layout [<root>] [--row]` is the one classifier.
+
+## 0.127.2 (2026-11-20) — one fact, one outbox record: `appraise-started` and `human-approved` no longer written twice (#767)
+
+- **Cause.** `flow.sh` emits exactly one event per invocation, keyed `{tid}:{rev}`, and that is unchanged. The duplicates came from callers that fired a trigger twice for one fact. `appraise-start` was fired by the router before the appraise agent was spawned (complexity `simple`, a placeholder) and again by ticket-appraise Step 4 to pass the real score. `human-approve` was fired again by every repeated `/ticket-approve` on an already approved ticket, and by the entry gate's policy approval (Check 5) on a ticket a person had already approved.
+- **`appraise-started` once, `complexity-scored` for the score.** Step 4 now runs `lib/appraise-claim.sh <TID> --complexity simple|complex`. It fires `appraise-start` only when the manifest stage is not `Todo` yet (a standalone `/ticket-appraise`), then emits the new vocabulary event `complexity-scored {complexity}` through `emit_event`. The event has no trigger, changes no manifest state and projects nothing to the board (`board_drivers.linear.events` maps it to `null`). Its idempotency key is `{tid}:complexity-scored:{rev}:{complexity}`: re-running Step 4 is a no-op, a corrected score or a re-appraisal emits again. `appraise-started.complexity` is only what was known at claim time; read the score from `complexity-scored`.
+- **`/ticket-approve` twice is one approval.** `approve.sh` fires `human-approve` only when the manifest does not already record a human approval at `Ready` with no pending event. Otherwise it prints `already_approved=true` and still clears a `needs-info` flag. A re-approval after `/ticket-reject`, after a gate-reconcile re-hold (`re-claim`) or after `implement-complete` still fires, because each of those clears the approval or moves the stage. A person approving over a policy approval still fires and records `human`.
+- **The entry gate does not approve an approved ticket.** Check 5 skips its `human-approve --provenance policy` call when the manifest already records an approval at `Ready`. Before, it wrote a second `human-approved` and replaced `approval_provenance: human` with `policy`.
+- **Existing outboxes.** Duplicate records already written are harmless: the Linear driver writes desired state (column, assignee, labels), so a repeated event is a no-op, and nothing in this repository counts either event. They are not rewritten; a consumer that counts must count from this release on.
+- **Unchanged on purpose:** `flow.sh` has no dedupe, and the router still claims at the start of every STEP_1 run, so an appraisal that is restarted after a crash writes one `appraise-started` per attempt.
+- Tests: `lib/tests/test-outbox-single-fact.sh` (new; real `flow.sh`, `approve.sh`, `reject.sh` and `appraise-claim.sh`) and two Check 5 cases in `test-gate-check.sh`.
 
 ## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
 
