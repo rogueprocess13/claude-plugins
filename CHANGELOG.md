@@ -31,6 +31,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - **Not changed:** the Definition-of-Ready check does not require the new sections, `ticket-verify` does not treat `[unit]` and `[live]` criteria differently, and the five warn codes do not block. Each is a decision left for a later change.
 - New libs `ticket-planner/lib/planner-body-template.sh` and `planner-crosscheck-body.sh`; new test `test-planner-body-template.sh` (135 cases; composed bodies go through `verify_mode_shape` for all five shapes, and the golden bodies keep the same readiness verdict with and without the new sections); three Crosscheck fixtures (`body-v2-*`); the business-framing golden bodies carry the new sections.
 
+## 0.127.1 (2026-11-20) — ticket-critique gives planned bugs the bug checks (#677)
+
+- **Checks 5 and 6 branch on the ticket type, not the `bug` label.** A planned or `/ticket-create` bug has `type: bug` in its local manifest and no tracker label, so ticket-critique ran the feature checks on it: no missing-repro-steps BLOCKER and no -25 deduction. `critique-fetch.sh` now prints `TICKET_TYPE` in every mode (`--from-audit`, which `--no-post` uses, `--from-appraise` and `--workspace`), and the skill branches on it.
+- **One derivation: `lib/ticket-type.sh`.** The manifest `type`, else a whole `bug` label, else `feature`. `persona-select.sh` (`PERSONA_TYPE`, debugger overlay) now calls it instead of its own copy.
+- **Entry gate Check 2.5b (`BUG_NO_REPRO`) reads the manifest type first.** A ticket with a manifest type is no longer classified by label or by wording; a ticket with none keeps `get_ticket_type`.
+
 ## 0.127.0 (2026-11-20) — stitch a recording into a video
 
 Third slice of the `ticket-auto-record` change: the frames a `--record` run saved can now be turned into a video.
@@ -41,6 +47,7 @@ Third slice of the `ticket-auto-record` change: the frames a `--record` run save
 - **New skill `/ticket-record-stitch <id>... [--out FILE]`** (`--clip <id>` for one ticket's clip): a thin wrapper around the script, with no pipeline preamble.
 - CI installs `ffmpeg` (`.github/actions/install-deps`): the render cases of `lib/tests/test-record-stitch.sh` use the real `ffmpeg` and `ffprobe` and fail without them. The planner cases run with a tripwire `ffmpeg` on PATH.
 - `docs/skills/`: new `ticket-record-stitch` page; the `ticket-verify` page now describes Step 1h (recording).
+
 ## 0.126.2 (2026-11-20) — complexity sweep no longer holds simple tickets for reused or greenfield auth, or for test callers (#762)
 
 - **The auth trigger has three kinds.** The Reversibility axis fired at weight 3 for any ticket that touched auth, so a ticket that only put new endpoints behind an existing middleware was held at the complex gate. The appraiser now records `reversibility:auth-modify` (3) when existing auth behaviour changes, `reversibility:auth-new` (2) for new auth logic nothing existing depends on, and `reversibility:auth-reuse` (0) when an unchanged check is only applied to new endpoints. `complexity-score.sh` does the weights. `auth-new` alone stays simple, and any second axis makes it complex. A bare `auth`, or any spelling the script does not know, still weighs 3.
