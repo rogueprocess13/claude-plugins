@@ -262,9 +262,10 @@ test_context_emits_every_field_for_a_bare_project() {
   tmp="$(mktemp -d)"
   out=$(env -u REPOS_ROOT -u ISSUE_PREFIX -u BE_SERVICES -u WIKI_ROOT \
     -u BE_TEST_CMD -u BE_TEST_RUNNER -u FE_TEST_CMD -u LOCAL_URL \
-    -u UAT_URL -u SLACK_CHANNEL \
+    -u UAT_URL -u SLACK_CHANNEL -u RECORD_ALLOWED -u RECORD_UAT_SYNTHETIC \
+    -u RECORD_BOARD_URL \
     bash -c "source '$PREAMBLE_SH'; ticket_preamble_project_context '$tmp'")
-  [ "$(echo "$out" | wc -l)" -eq 10 ] && ! grep -qv '=$' <<<"$out"
+  [ "$(echo "$out" | wc -l)" -eq 13 ] && ! grep -qv '=$' <<<"$out"
   local ok=$?
   rm -rf "$tmp"
   return $ok
@@ -462,7 +463,7 @@ test_dashboard_fields_only_in_new_run_mode() {
   manual=$(_preamble TEST-PRE-23 NEW_RUN=true)
   local log="$_SANDBOX/logs/TEST-PRE-23-pipeline.log"
   ! grep -q 'DASHBOARD_CMD' <<<"$plain" &&
-    [ "$(echo "$plain" | grep -c '^  [A-Z_]*:')" -eq 15 ] &&
+    [ "$(echo "$plain" | grep -c '^  [A-Z_]*:')" -eq 16 ] &&
     [ "$(_field "$manual" DASHBOARD_CMD_LOG)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py $log" ] &&
     [ "$(_field "$manual" DASHBOARD_CMD_FLEET)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet $_SANDBOX/logs" ] &&
     [ "$(echo "$manual" | tail -1 | sed 's/:.*//')" = "  DASHBOARD_CMD_FLEET" ]

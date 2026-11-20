@@ -51,6 +51,10 @@ fi
 # claude_md_field — the one CLAUDE.md field grammar (see _tp_context_field).
 source "$_TP_LIB_DIR/claude-md-field.sh"
 
+# record_enabled / record_allowed_parse — the recording flag's one reader and
+# the RECORD_ALLOWED grammar (ticket-auto-record D1/D2).
+source "$_TP_LIB_DIR/record.sh"
+
 # ── Exit codes ────────────────────────────────────────────────────────────────
 # Distinct per failure so fleetd routes on the code rather than on stderr text.
 #
@@ -69,7 +73,7 @@ TP_ENV_WRITE_FAILED=6         # the env file could not be written — never spaw
 
 # The project-context fields spawn_write_env carries and every phase reads.
 # Order is the order they are emitted in; it has no other meaning.
-_TP_CONTEXT_FIELDS="REPOS_ROOT ISSUE_PREFIX BE_SERVICES WIKI_ROOT BE_TEST_CMD BE_TEST_RUNNER FE_TEST_CMD LOCAL_URL UAT_URL SLACK_CHANNEL"
+_TP_CONTEXT_FIELDS="REPOS_ROOT ISSUE_PREFIX BE_SERVICES WIKI_ROOT BE_TEST_CMD BE_TEST_RUNNER FE_TEST_CMD LOCAL_URL UAT_URL SLACK_CHANNEL RECORD_ALLOWED RECORD_UAT_SYNTHETIC RECORD_BOARD_URL"
 
 # ── Project context ───────────────────────────────────────────────────────────
 
@@ -223,11 +227,12 @@ _tp_branch_field() {
 # ── The preamble itself ───────────────────────────────────────────────────────
 
 # Parse the router's raw argument string (`/ticket-auto CRE-12 --auto
-# --branch epic/x`) into the four values ticket-auto's SKILL.md used to derive
+# --branch epic/x`) into the values ticket-auto's SKILL.md used to derive
 # in prose (skill-glue-collapse moved the parsing here). Prints `KEY=value`
-# lines for TICKET_ID, AUTONOMY, FROM_PLANNED and BRANCH_FLAG; AUTONOMY is
-# empty when no autonomy flag is present, so the caller's env → manual
-# fallback still applies.
+# lines for TICKET_ID, AUTONOMY, FROM_PLANNED, BRANCH_FLAG and RECORD;
+# AUTONOMY is empty when no autonomy flag is present, so the caller's env →
+# manual fallback still applies, and RECORD is `true` only for `--record`
+# (empty otherwise, so TICKET_RECORD can still apply).
 #
 # Autonomy precedence is --semi-auto, then --auto, then --manual, whatever the
 # order they appear in — the order the router's grep cascade checked them.
@@ -237,7 +242,7 @@ _tp_branch_field() {
 #
 # Usage: ticket_preamble_parse_arg "<raw argument string>"
 ticket_preamble_parse_arg() {
-  local raw="$1" tok autonomy="" semi="" auto="" manual="" planned="false"
+  local raw="$1" tok autonomy="" semi="" auto="" manual="" planned="false" record=""
   local branch="" want_branch="" id="" extra=""
   local -a toks=()
   read -r -a toks <<<"$raw" || true
@@ -252,6 +257,7 @@ ticket_preamble_parse_arg() {
     --auto) auto="true" ;;
     --manual) manual="true" ;;
     --from-planned) planned="true" ;;
+    --record) record="true" ;;
     --branch) want_branch="true" ;;
     *)
       if [ -z "$id" ]; then
@@ -277,8 +283,8 @@ ticket_preamble_parse_arg() {
   elif [ -n "$manual" ]; then
     autonomy="manual"
   fi
-  printf 'TICKET_ID=%s\nAUTONOMY=%s\nFROM_PLANNED=%s\nBRANCH_FLAG=%s\n' \
-    "$id" "$autonomy" "$planned" "$branch"
+  printf 'TICKET_ID=%s\nAUTONOMY=%s\nFROM_PLANNED=%s\nBRANCH_FLAG=%s\nRECORD=%s\n' \
+    "$id" "$autonomy" "$planned" "$branch" "$record"
 }
 
 # ── Log-dir anchor (state-root-anchor, design D3/D4) ─────────────────────────
@@ -358,13 +364,13 @@ _tp_log_dir_anchor() {
 
 # Usage:
 #   ticket_preamble_run TICKET_ID=CRE-123 \
-#     [AUTONOMY=auto] [FROM_PLANNED=true] [BRANCH_FLAG=epic/x] \
+#     [AUTONOMY=auto] [FROM_PLANNED=true] [BRANCH_FLAG=epic/x] [RECORD=true] \
 #     [PROJECT_DIR=/path] [LOGS_DIR=/path/logs] [SKIP_PREFLIGHT=true]
 #
 # Manual-router mode (ticket-auto SKILL.md Step 0), all optional:
 #   TICKET_ARG="CRE-123 --auto --branch epic/x"  parse the raw router argument
-#       string; an explicit TICKET_ID=/AUTONOMY=/FROM_PLANNED=/BRANCH_FLAG=
-#       wins over the parsed value.
+#       string; an explicit TICKET_ID=/AUTONOMY=/FROM_PLANNED=/BRANCH_FLAG=/
+#       RECORD= wins over the parsed value.
 #   NEW_RUN=true         open a new run identity (run_identity_stamp --new) and
 #       append DASHBOARD_CMD_LOG / DASHBOARD_CMD_FLEET to the result block. A
 #       /ticket-auto invocation is one process spanning every phase, so each
@@ -377,7 +383,7 @@ _tp_log_dir_anchor() {
 # build_phase_spawn is in it, so the caller parses one block rather than
 # re-deriving paths that this file already decided.
 ticket_preamble_run() {
-  local TICKET_ID="" AUTONOMY="" FROM_PLANNED="" BRANCH_FLAG=""
+  local TICKET_ID="" AUTONOMY="" FROM_PLANNED="" BRANCH_FLAG="" RECORD=""
   local PROJECT_DIR="$PWD" LOGS_DIR="" SKIP_PREFLIGHT=""
   local TICKET_ARG="" NEW_RUN="" ANNOUNCE_START="" _have_arg=""
 
@@ -388,6 +394,7 @@ ticket_preamble_run() {
     AUTONOMY=*) AUTONOMY="${arg#AUTONOMY=}" ;;
     FROM_PLANNED=*) FROM_PLANNED="${arg#FROM_PLANNED=}" ;;
     BRANCH_FLAG=*) BRANCH_FLAG="${arg#BRANCH_FLAG=}" ;;
+    RECORD=*) RECORD="${arg#RECORD=}" ;;
     PROJECT_DIR=*) PROJECT_DIR="${arg#PROJECT_DIR=}" ;;
     LOGS_DIR=*) LOGS_DIR="${arg#LOGS_DIR=}" ;;
     SKIP_PREFLIGHT=*) SKIP_PREFLIGHT="${arg#SKIP_PREFLIGHT=}" ;;
@@ -415,6 +422,7 @@ ticket_preamble_run() {
       AUTONOMY=*) [ -n "$AUTONOMY" ] || AUTONOMY="$_pv" ;;
       FROM_PLANNED=*) [ -n "$FROM_PLANNED" ] || FROM_PLANNED="$_pv" ;;
       BRANCH_FLAG=*) [ -n "$BRANCH_FLAG" ] || BRANCH_FLAG="$_pv" ;;
+      RECORD=*) [ -n "$RECORD" ] || RECORD="$_pv" ;;
       esac
     done <<<"$_parsed"
   fi
@@ -441,6 +449,34 @@ ticket_preamble_run() {
     ;;
   esac
   [ -n "$FROM_PLANNED" ] || FROM_PLANNED="false"
+
+  # Recording (ticket-auto-record D1). Decided before anything is written: an
+  # explicit --record / RECORD=true that RECORD_ALLOWED does not permit is a
+  # usage error with nothing written. TICKET_RECORD=true is a fleet- or
+  # project-wide default, so the same problem there only warns — a usage exit
+  # would put every ticket into fleetd's retry-later loop.
+  local _rec_on="false" _rec_src=""
+  if [ -n "$RECORD" ]; then
+    _rec_src="flag"
+    if [ "$RECORD" = "true" ]; then _rec_on="true"; fi
+  elif [ "${TICKET_RECORD:-false}" = "true" ]; then
+    _rec_src="env"
+    _rec_on="true"
+  fi
+  if [ "$_rec_on" = "true" ]; then
+    local _rec_allowed
+    _rec_allowed="$(record_allowed_parse \
+      "$(_tp_context_field RECORD_ALLOWED "$PROJECT_DIR")" \
+      "$(_tp_context_field RECORD_UAT_SYNTHETIC "$PROJECT_DIR")")"
+    if [ -z "$_rec_allowed" ]; then
+      if [ "$_rec_src" = "flag" ]; then
+        echo "ticket_preamble_run: --record needs RECORD_ALLOWED (local and/or uat, synthetic data only) in CLAUDE.md or the environment" >&2
+        return $TP_USAGE
+      fi
+      echo "ticket_preamble_run: warning: TICKET_RECORD=true but RECORD_ALLOWED is unset or invalid; not recording" >&2
+      _rec_on="false"
+    fi
+  fi
 
   # The logs dir defaults to $PROJECT_DIR/logs, which the anchor check below
   # requires to be the anchored dir, so the router's cwd-relative
@@ -481,6 +517,24 @@ ticket_preamble_run() {
   touch "$LOG_FILE"
   if ! grep -q '^[^|]*|META|schema|info|' "$LOG_FILE" 2>/dev/null; then
     _plog "$LOG_FILE" "META" "schema" "info" "1"
+  fi
+
+  # Recording: the line is the record, written once and never removed; every
+  # later reader asks record_enabled (RECORD_DISABLE=true turns it off).
+  if [ "$_rec_on" = "true" ] && ! grep -q '^[^|]*|META|record|info|on$' "$LOG_FILE" 2>/dev/null; then
+    _plog "$LOG_FILE" "META" "record" "info" "on"
+  fi
+  local RECORD_STATE="false"
+  if record_enabled "$LOG_FILE"; then
+    RECORD_STATE="true"
+    # Board frames come from the recorder driver, which only works listed
+    # after linear (it waits for linear's cursor). Warn, never refuse.
+    local _drivers=",${FLEET_BOARD_DRIVERS:-linear},"
+    _drivers="${_drivers// /}"
+    case "$_drivers" in
+    *,linear,*recorder,*) ;;
+    *) echo "ticket_preamble_run: warning: recording is on but FLEET_BOARD_DRIVERS does not list recorder after linear; no board frames will be captured" >&2 ;;
+    esac
   fi
 
   # 0.55 — run identity. No --new by default: the manual router (NEW_RUN=true,
@@ -577,6 +631,9 @@ ticket_preamble_run() {
     LOCAL_URL="${_ctx[LOCAL_URL]}" \
     UAT_URL="${_ctx[UAT_URL]}" \
     SLACK_CHANNEL="${_ctx[SLACK_CHANNEL]}" \
+    RECORD_ALLOWED="${_ctx[RECORD_ALLOWED]}" \
+    RECORD_UAT_SYNTHETIC="${_ctx[RECORD_UAT_SYNTHETIC]}" \
+    RECORD_BOARD_URL="${_ctx[RECORD_BOARD_URL]}" \
     FROM_PLANNED="$FROM_PLANNED" \
     BASE_BRANCH="$BASE_BRANCH" \
     INTEGRATION_BRANCH="$INTEGRATION_BRANCH" \
@@ -625,6 +682,7 @@ TICKET_PREAMBLE_RESULT:
   UAT_POLICY: $UAT_POLICY
   MERGE_POLICY: $MERGE_POLICY
   REPOS_ROOT: ${_ctx[REPOS_ROOT]}
+  RECORD: $RECORD_STATE
 EOF
   # Appended after the fleetd fields, never interleaved: fleetd's parser
   # ignores fields it does not know, and fleetd never passes NEW_RUN anyway.

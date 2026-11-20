@@ -17,13 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.124.0 (2026-11-20) — an epic child waiting for a human merge stays in Review (#765)
+## 0.125.0 (2026-11-20) — an epic child waiting for a human merge stays in Review (#765)
 
 - **The board no longer shows Done for an unmerged PR.** A child of a `UAT Policy: epic` epic used to close to `Done` on a passing PR review even when its PR was left for a human to merge (`Merge Policy`, or autonomy `manual`). `uat_decide_trigger` now picks the new trigger `pr-review-pass-merge-pending` in that case: the ticket is marked `reviewed` and stays in `Review`. It still never parks in `UAT`. The trigger carries the verdict gate.
 - **`merge-poll.sh` closes the ticket when it sees the merge.** `merge_poll_sweep` now ends with `merge_poll_close_merged`, which fires the new trigger `merge-observed` (`Review → Done`) through `flow-run.sh` for a ticket that is in `Review` with the `reviewed` flag and whose PR `ticket_pipeline_merge_state` reports `merged`. It fires once: after it the stage is `Done`. A failed `flow.sh` call is retried by the next sweep. Both the run-end sweep and fleetd's periodic sweep call it, so no fleet-controller change is needed. With no fleetd running, run `bash ~/.claude/skills/lib/merge-poll.sh <log-dir>/runs.jsonl` after the merge.
 - **Unchanged:** an epic child whose run may merge its own PR still goes straight to `Done`; `per-ticket` policy still parks a pending merge in `UAT`; epic acceptance (`epic-integration-open` / `epic-uat-start` / `epic-uat-pass`) is untouched. Dependents were never released early and still are not: blocked-by resolution reads the merge record, not the board column.
 - Two new vocabulary events, `pr-review-passed-merge-pending` (labels only, no column) and `merge-observed` (column `Done`), both in `board_drivers.linear.events` and drawn in the state diagram.
 - New tests in `test-merge-poll.sh` (six, against the real `flow.sh`), `test-pr-review-transition.sh` and `test-branch-resolve.sh`.
+
+## 0.124.0 (2026-11-20) — `--record` flag, recordable-environment guard, `record.sh` (fleet-controller 0.55.0)
+
+First slice of the `ticket-auto-record` change: one run of a ticket can be kept as a short demo video. This release adds the switch and the library; VERIFY capture, the stitch command and the board recorder follow.
+
+- **`/ticket-auto {ID} --record`** (or `TICKET_RECORD=true`) turns recording on for a ticket. The preamble writes `META|record|info|on` once; resumes keep it, `RECORD_DISABLE=true` turns it off. The result block gains `RECORD:`. An explicit `RECORD=` key argument is accepted and wins over `TICKET_ARG`.
+- **New CLAUDE.md fields `RECORD_ALLOWED`, `RECORD_UAT_SYNTHETIC`, `RECORD_BOARD_URL`.** `RECORD_ALLOWED` lists the environments that may be recorded (`local`, `uat`); it must only name environments holding synthetic data, and `uat` also needs `RECORD_UAT_SYNTHETIC=true`. `--record` without a valid field exits 1 before anything is written; `TICKET_RECORD=true` without one only warns, so a fleet-wide default never stalls fleetd. All three go into the env file (`spawn_write_env`, which also inherits them from the caller's environment so the router's resume rewrite keeps them) and are checked by validate-mode `/ticket-env-check` when set.
+- **New `lib/record.sh`**: `record_enabled`, `record_allowed_parse`, `record_env_allowed`, `record_field`, `record_url_env`, `record_append_entry`, and `record.sh append --tid --phase --step --src --url`. `append` maps the page URL's origin to `local`/`uat`, refuses (and deletes the file) for any other or a not-allowed environment, and otherwise copies the screenshot to `artifacts/recordings/{phase}-a{attempt}-{NNN}.png` and lists it in `manifest.jsonl` under a `flock`. It never writes the pipeline log and exits non-zero only on bad arguments.
+- The preamble warns when recording is on and `FLEET_BOARD_DRIVERS` does not list `recorder` after `linear`.
+- fleet-controller 0.55.0: `TICKET_RECORD` catalog entry in `features.json`; a fleetd test that a result block with `RECORD:` parses unchanged.
+- New test `lib/tests/test-record.sh` (38 cases, including 20 concurrent appends and a torn manifest line).
 
 ## 0.123.2 (2026-11-20) — a phase verdict never comes from a stale agent-return file (#764)
 

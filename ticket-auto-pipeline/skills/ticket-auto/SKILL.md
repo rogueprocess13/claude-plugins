@@ -37,10 +37,11 @@ a new run, since one router process is one run), branch context (`--branch` flag
 epic directive → config default; a decision already in the log as `META|branch-context` is
 rehydrated, never re-resolved), project context from `CLAUDE.md` plus the env file
 every sub-agent sources (`lib/ticket-env.sh`), then the `META|autonomy` /
-`META|mode-change` and `META|from-planned` markers. fleetd's phase dispatch calls the same
-script, so the two paths cannot drift. `TICKET_ARG` is the raw argument string:
+`META|mode-change` and `META|from-planned` markers. fleetd calls the same script.
+`TICKET_ARG` is the raw argument string:
 `--semi-auto` > `--auto` > `--manual`, else `$TICKET_AUTONOMY`, else `manual`;
-`--from-planned`; `--branch <name>`; the one remaining token is the ticket id.
+`--from-planned`; `--branch <name>`; `--record` (else `$TICKET_RECORD`; needs `RECORD_ALLOWED`,
+writes `META|record|info|on`); the one remaining token is the ticket id.
 
 ```bash
 export PATH="$HOME/.claude/skills/lib:$PATH"  # makes bare hb-wrap.sh calls resolve (script is executable)
@@ -77,14 +78,13 @@ From the `TICKET_PREAMBLE_RESULT` block set `{TICKET_ID}` (`{TICKET-ID}` is the 
 `{FROM_PLANNED}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{TICKET_BRANCH}`,
 `{BRANCH_SOURCE}`, `{UAT_POLICY}`, `{MERGE_POLICY}` and `{REPOS_ROOT}` — used throughout the
 pipeline. Every other project-context field (`ISSUE_PREFIX`, `BE_SERVICES`, `WIKI_ROOT`,
-`BE_TEST_CMD`, `BE_TEST_RUNNER`, `FE_TEST_CMD`, `LOCAL_URL`, `UAT_URL`, `SLACK_CHANNEL`) is
+`BE_TEST_CMD`, `BE_TEST_RUNNER`, `FE_TEST_CMD`, `LOCAL_URL`, `UAT_URL`, `SLACK_CHANNEL`, `RECORD_*`) is
 in `{ENV_FILE}`: a later bash block that needs one runs `source {ENV_FILE}` first. `AUTONOMY`
 and `MERGE_POLICY` in that file are what `ticket-pr-review` Step 6b reads to decide whether it
 may merge a passing PR directly — see [Auto-merge logic](#auto-merge-logic) below.
 
-**The router does not spawn a dashboard pane.** It prints the two `dashboard.py` commands
-(`DASHBOARD_CMD_LOG`, and `DASHBOARD_CMD_FLEET`, the `--fleet` view of the whole workspace)
-for the operator to open once; nothing is spawned per run.
+**No dashboard pane is spawned.** The router prints `DASHBOARD_CMD_LOG` and
+`DASHBOARD_CMD_FLEET` (whole workspace) for the operator to open once.
 
 **Exit codes.** On any non-zero `_pre_rc`, report the preamble's stderr and stop — no fallback,
 no dispatch. 2, 3 and 6 happen after the pipeline log exists, so the block finalizes it first
@@ -93,7 +93,7 @@ no dispatch. 2, 3 and 6 happen after the pipeline log exists, so the block final
 | `_pre_rc` | Meaning | Router action |
 |---|---|---|
 | 0 | ok | continue to Step 0.65 / Step 0.7 |
-| 1 | usage — bad or unknown token in the argument string, `--branch` without a name, no ticket id; nothing written | report, stop |
+| 1 | usage — bad or unknown token in the argument string, `--branch` without a name, no ticket id, `--record` refused; nothing written | report, stop |
 | 2 | `BRANCH_DIRECTIVE_INVALID` — the parent epic's Branch Directive is malformed; `META\|gate-stop\|fail\|BRANCH_DIRECTIVE_INVALID` is already in the log | finalize, stop |
 | 3 | branch resolution failed (API error, malformed result) — not a gate-stop | finalize, stop |
 | 4 | Linear config invalid (team states/labels do not match `workflow.json`, validator missing, or several teams visible without `LINEAR_TEAM_ID`) | report, stop |

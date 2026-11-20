@@ -288,6 +288,8 @@ _spawn_unpaired_warn() {
 #          REPOS_ROOT=<path> ISSUE_PREFIX=<prefix> BE_SERVICES=<services> \
 #          [WIKI_ROOT=<path>] [BE_TEST_CMD=<cmd>] [BE_TEST_RUNNER=<cmd>] [FE_TEST_CMD=<cmd>] \
 #          [LOCAL_URL=<url>] [UAT_URL=<url>] [SLACK_CHANNEL=<channel>]
+#          [RECORD_ALLOWED=<local,uat>] [RECORD_UAT_SYNTHETIC=<true>] [RECORD_BOARD_URL=<url>]
+#            (these three default to the caller's environment when not passed)
 #          [BASE_BRANCH=<branch>] [INTEGRATION_BRANCH=<branch>] [TICKET_BRANCH=<branch>]
 #          [UAT_POLICY=<per-ticket|epic>] [AUTONOMY=<manual|semi-auto|auto>]
 #          [MERGE_POLICY=<manual|on-all-children-done>]
@@ -307,6 +309,12 @@ spawn_write_env() {
   local LOCAL_URL=""
   local UAT_URL=""
   local SLACK_CHANNEL=""
+  # Recording settings (ticket-auto-record D2) default to the caller's own
+  # environment rather than empty: the router's resume block sources the env
+  # file and rewrites it without naming them, and must not drop them.
+  local RECORD_ALLOWED="${RECORD_ALLOWED:-}"
+  local RECORD_UAT_SYNTHETIC="${RECORD_UAT_SYNTHETIC:-}"
+  local RECORD_BOARD_URL="${RECORD_BOARD_URL:-}"
   local BASE_BRANCH=""
   local INTEGRATION_BRANCH=""
   local TICKET_BRANCH=""
@@ -331,6 +339,9 @@ spawn_write_env() {
     LOCAL_URL=*) LOCAL_URL="${arg#LOCAL_URL=}" ;;
     UAT_URL=*) UAT_URL="${arg#UAT_URL=}" ;;
     SLACK_CHANNEL=*) SLACK_CHANNEL="${arg#SLACK_CHANNEL=}" ;;
+    RECORD_ALLOWED=*) RECORD_ALLOWED="${arg#RECORD_ALLOWED=}" ;;
+    RECORD_UAT_SYNTHETIC=*) RECORD_UAT_SYNTHETIC="${arg#RECORD_UAT_SYNTHETIC=}" ;;
+    RECORD_BOARD_URL=*) RECORD_BOARD_URL="${arg#RECORD_BOARD_URL=}" ;;
     BASE_BRANCH=*) BASE_BRANCH="${arg#BASE_BRANCH=}" ;;
     INTEGRATION_BRANCH=*) INTEGRATION_BRANCH="${arg#INTEGRATION_BRANCH=}" ;;
     TICKET_BRANCH=*) TICKET_BRANCH="${arg#TICKET_BRANCH=}" ;;
@@ -408,6 +419,9 @@ spawn_write_env() {
     _spawn_env_line LOCAL_URL "$LOCAL_URL"
     _spawn_env_line UAT_URL "$UAT_URL"
     _spawn_env_line SLACK_CHANNEL "$SLACK_CHANNEL"
+    _spawn_env_line RECORD_ALLOWED "$RECORD_ALLOWED"
+    _spawn_env_line RECORD_UAT_SYNTHETIC "$RECORD_UAT_SYNTHETIC"
+    _spawn_env_line RECORD_BOARD_URL "$RECORD_BOARD_URL"
     _spawn_env_line BASE_BRANCH "$BASE_BRANCH"
     printf '%s\n' \
       '# Diffs must resolve the base against the remote, never the local ref. On a' \
