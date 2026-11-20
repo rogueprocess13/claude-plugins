@@ -197,6 +197,7 @@ Approval and rejection are facts in the ticket's local manifest (tracker-approva
 |---------|-------------|
 | `/ticket-approve <id>` | Approve a ticket held at the gate: fires `human-approve` (`Approve → Ready`), records `approved: true` / `approval_provenance: human` in the manifest, clears a `needs-info` flag. Re-run `/ticket-auto <id>` afterwards. |
 | `/ticket-reject <id>` | Reject the plan: fires `human-reject` (`Approve → Todo`) and clears the approval fact, so the ticket is re-appraised. |
+| `/ticket-cancel <id> --reason "<why>"` | Retire a ticket nobody will finish: fires `cancel` (any state except Done → `Canceled`), clears the four projected labels and the approval, and writes `META\|cancel` and `META\|outcome\|info\|cancelled: …` to the pipeline log. Canceled is final. Tickets blocked by it are **not** released; the command lists them. Refused while a worker for the ticket is alive (`--force` overrides). Do not set Canceled by hand in Linear. |
 | Answer Open Questions | Reply in the ticket's Linear comment thread before approving; the gate-reconcile agent folds the answers into the plan on the next run. |
 | `bash ~/.claude/skills/lib/adversarial-override.sh [--log-file F] <id> --reason "<why>"` | Accept a plan the adversarial review BLOCKED without another review round. Writes `META\|adversarial-override\|info\|reason=…`, an `EXEC\|adversarial-review\|done\|WARNINGS — HUMAN OVERRIDE: …` line (so resume continues) and a WARN `adversarial_review` verifier-result (so `flow.sh`'s verdict gate does not refuse `pr-review-pass-*` later). Run it from a plain terminal: it refuses when `CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID` or `FLEET_GENERATION` is set (exit 4), needs a non-empty reason (exit 2), and refuses when no adversarial BLOCK is live (exit 5). The log defaults to `$FLEET_PIPELINE_LOG_DIR` (else `./logs`)`/<id>-pipeline.log`. A hand-written `done\|WARNINGS` line no longer clears the verdict gate ([#610](https://github.com/willard-pro/claude-plugins/issues/610)). Re-run `/ticket-auto <id>` afterwards. |
 
@@ -227,7 +228,7 @@ Fleet monitoring now lives in the separate [`fleet-controller`](../fleet-control
 
 ### Layering
 
-All tickets flow through a state machine with eight states. Skills never mutate Linear state or labels directly — every transition is a trigger executed by `/ticket-flow` which wraps `flow.sh`, a deterministic bash script.
+All tickets flow through a state machine with nine states. Skills never mutate Linear state or labels directly — every transition is a trigger executed by `/ticket-flow` which wraps `flow.sh`, a deterministic bash script.
 
 ```mermaid
 stateDiagram-v2
@@ -247,10 +248,13 @@ stateDiagram-v2
     Backlog --> Review : epic-integration-open
     Review --> UAT : epic-uat-start
     UAT --> Done : epic-uat-pass
+    AnyState --> Canceled : cancel
+    AnyState : any state except Done
     Done --> [*]
+    Canceled --> [*]
 ```
 
-The two rework loops are `pr-iterate` (code review found gaps) and `uat-fail` (acceptance testing failed). Both send the ticket back to Ready for another implementation pass. **Blocked** is orthogonal — tickets enter it when waiting on external dependencies.
+The two rework loops are `pr-iterate` (code review found gaps) and `uat-fail` (acceptance testing failed). Both send the ticket back to Ready for another implementation pass. **Blocked** is orthogonal — tickets enter it when waiting on external dependencies. **Canceled** is final: `/ticket-cancel` retires a ticket from any state except Done, and no later trigger applies to it.
 
 ### Determinism Boundary
 

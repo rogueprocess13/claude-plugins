@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.129.0 (2026-11-20) — board frames for a recording, and a Recording section in env-check
+## 0.130.0 (2026-11-21) — board frames for a recording, and a Recording section in env-check
 
 Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` can now also keep a picture of the board each time its card moves.
 
@@ -28,6 +28,18 @@ Fourth slice of the `ticket-auto-record` change: a ticket run with `--record` ca
 - **The saved Linear session is private.** `recorder.sh login` (headed browser) or `recorder.sh import` (a Playwright storage state on stdin, for a host with no display) writes `$REPOS_ROOT/.ticket-auto/record/linear-session.json` with mode 0600 in a 0700 directory, beside a `.gitignore` holding `*`. It is a full login for its user: use a dedicated read-only Linear user. No code prints it. Playwright is not bundled; the operator installs it under `.ticket-auto/record/`.
 - **`/ticket-env-check` has a Recording section**, printed only when `RECORD_ALLOWED` is set: `RECORD_ALLOWED`, `RECORD_BOARD_DRIVERS`, `RECORD_BOARD_URL`, `RECORD_FFMPEG`, `RECORD_BROWSER`, `RECORD_SESSION`, `RECORD_SESSION_MODE`, `RECORD_SESSION_IGNORED`. Every row is `ok` or `warn`; none changes the exit code.
 - The board layout is read from the live Linear page; that path has no automated test and is checked on a real board before the feature is documented for operators.
+
+## 0.129.0 (2026-11-20) — a cancel transition: retire a ticket through flow.sh (#770)
+
+There was no way to retire a ticket nobody will finish. `human-reject` sends it back to Todo, so an obsolete or duplicate ticket had to be set to Canceled by hand in Linear, which left the manifest on its old stage, wrote nothing to the outbox or the pipeline log, and kept the pipeline's labels on the card. Also `fleet-controller` 0.55.1.
+
+- **New `cancel` trigger** (`workflow.json`): any stage except `Done` → `Canceled`. It removes the four projected flags, clears the approval, and emits one `ticket-cancelled` event with the reason. `flow.sh <ID> cancel --reason "<text>"` (`--reason` is short for `--data reason=…`); a reason is required. Not for epics.
+- **`Canceled` is final.** `flow.sh` now refuses every other trigger on a cancelled ticket with **exit 14** and writes nothing, so a worker still running when its ticket was cancelled cannot move it back to Ready or Review. `flow-run.sh` passes 14 through and writes no log line. A superseded generation cannot cancel (exit 9/10), as for any trigger.
+- **Board projection.** `ticket-cancelled` moves the card to the cancelled column and removes `needs-info`, `needs-adr`, `rejected` and `reviewed`; other labels stay. The column is the state named `Canceled`, else the team's first state of type `canceled` (new `column_type` fallback), so a board that spells it "Cancelled" works. `validate-linear-config.sh` accepts the same fallback.
+- **New `/ticket-cancel <ID> --reason "<why>"`** (`skills/ticket-cancel/cancel.sh`), the one actuator. It fires the trigger, then appends `META|cancel|info|reason=…; from=…; by=…` and `META|outcome|info|cancelled: …` to the pipeline log, outcome last. It refuses while a worker for the ticket is alive (exit 6; `--force` cancels under it, never kills it), refuses `Done` tickets and epics (exit 5), and is a no-op on a repeat.
+- **Dependents are not released.** `ticket_pipeline_merge_state` reports `cancelled` (not Done) for a cancelled blocker, checked before any log evidence. Fleet dispatch prints `blocked by <ID> (cancelled — …)` and `/ticket-cancel` lists the blocked tickets. Dispatch never enqueues a cancelled child and names it on every pass; its epic cannot reach "all children Done" while it lists that child.
+- **Not included:** no Linear comment with the reason (the board driver projects a column and labels only), no removal of labels the driver does not own (a leftover `claimed`), no epic cancel, no reopen.
+- The README state diagram and the public pipeline diagram draw the trigger; `gen-mermaid.sh` now draws any-state triggers and tombstone stages.
 
 ## 0.128.0 (2026-11-20) — planned ticket bodies state verify mode, errors and edge cases, and security decisions (#773)
 
@@ -907,8 +919,6 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
-
-
 
 ## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
 
