@@ -46,20 +46,15 @@ Event catalogue: [pipeline-heartbeat-format.md](../../pipeline-heartbeat-format.
 | `execute-steps` | **falls back to `build-plan`** (browser); Step 4c / 4c-live (build-only / live-backend, after reading `references/build-only.md` / `references/live-backend.md` per Step 1f) | browser state lost on crash |
 | `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | older routers only |
 
-**Checkpoint resume (deterministic).** Which criteria already passed is never inferred
-from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
+**Checkpoint resume (deterministic).** Which criteria already passed is never inferred from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
 
 ```bash
 VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$TAP_LOG" 2>/dev/null) || VERIFY_CHECKPOINT=""
 ```
 
-It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
-**current attempt only**: after the last verdict, re-implement or operator stop/reset. Only
-an unattended crash keeps earlier passes. The router gets the same value from `detect-resume.sh`.
+It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the **current attempt only**: after the last verdict, re-implement or operator stop/reset. Only an unattended crash keeps earlier passes. The router gets the same value from `detect-resume.sh`.
 
-- Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria
-  1..N as PASS (`resumed from checkpoint`) and start at criterion `N+1`. If it is empty,
-  start at criterion 1.
+- Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria 1..N as PASS (`resumed from checkpoint`) and start at criterion `N+1`. If it is empty, start at criterion 1.
 - Browser mode: ignore `VERIFY_CHECKPOINT` and verify every criterion.
 
 ---
@@ -152,12 +147,11 @@ If not found, continue — the Linear description alone is sufficient.
 bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type openspec
 ```
 
-This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
-change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
+If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
-Some tickets are verified with build tooling or file checks (no UI or API surface: a parent-POM, a docs-only change), some against a running backend through health/API calls (an API-only ticket, service registration: no login, no page), and the rest in a browser. Treating one as another gives a silent false-pass or a stall. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; a `Verify mode:` field in the ticket wins. It writes the `load-context` log line itself:
+Some tickets are verified with build tooling or file checks (no UI or API surface: a parent-POM, a docs-only change), some against a running backend through health/API calls (an API-only ticket, service registration: no login, no page), and the rest in a browser. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; a `Verify mode:` field in the ticket wins. It writes the `load-context` log line itself:
 
 ```bash
 bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT"
@@ -184,6 +178,10 @@ Run `echo "VERIFY_QA_PERSONA=${VERIFY_QA_PERSONA:-false}"`. **If it prints `true
 ### 1h — Recording (load condition)
 
 Run `source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}; bash ~/.claude/skills/lib/record.sh enabled "$TAP_LOG"; echo "RECORD_RC=$?"`. **If it prints `RECORD_RC=0` and `VERIFY_MODE=browser`**, before Step 3, also on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/record.md`, then Read the printed path in full. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/record.md"` and stop. Otherwise skip it: nothing is recorded.
+
+### 1i — Criterion tags (load condition)
+
+Run `bash ~/.claude/skills/lib/verify-ac-tags.sh gate "{ticket-dir}" --env {env}`. **If it prints `AC_TAGS=on`**, before Step 2, also on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/ac-tags.md`, then Read the printed path in full. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/ac-tags.md"` and stop. Otherwise skip it: every criterion is proved live.
 
 ---
 
@@ -217,7 +215,7 @@ TRACE
 
 Skip entirely if `--env=uat`, `--no-env-start`, or `VERIFY_MODE=build-only` is set. Do **not** skip for `VERIFY_MODE=live-backend`.
 
-Everything from here through Step 5 touches the shared local app stack (fixed ports, no per-run namespacing). Keep the order: GC (1.6a2), lock (1.6a3), then this run's worktree resync (1.6a4, destructive) only under the lock.
+Everything from here through Step 5 touches the shared local app stack. Keep the order: GC (1.6a2), lock (1.6a3), then this run's worktree resync (1.6a4, destructive) only under the lock.
 
 ### 1.6a — Detect affected backend services
 
@@ -240,8 +238,6 @@ source "$HOME/.claude/skills/lib/verify-worktree.sh"
 verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc
 ```
 
-Worktrees are not torn down at the end of a run; only this sweep reaps them (rules in `lib/verify-worktree.sh`).
-
 ### 1.6a2b — ADR gate check
 
 **This runs before the lock in 1.6a3, never after**, so a parked run never holds the lock. If
@@ -262,7 +258,7 @@ bash ~/.claude/skills/lib/verify-env-up.sh up "{TICKET-ID}" --branch "{branch}" 
 
 On a resume past Step 1.6 (see Step dispatch), take the lock alone: `bash ~/.claude/skills/lib/verify-env-up.sh lock "{TICKET-ID}"` (exit 1: timed out; stop).
 
-Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock on every exit path.** `up` releases it itself on every failure and on SIGTERM/SIGINT/SIGHUP. After it succeeds, release it as the first action of Step 5, and at every earlier exit — Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
+**Release the lock on every exit path.** `up` releases it itself on every failure and on SIGTERM/SIGINT/SIGHUP. After it succeeds, release it as the first action of Step 5, and at every earlier exit — Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -272,7 +268,7 @@ Under the lock, `up` resolves or resyncs this run's own worktree per affected re
 
 `up` then runs `env-start.sh` with `VERIFY_TICKET_ID` and each worktree's `VERIFY_REPO_PATH_<REPO>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`) exported: `--restart {services} gateway-fe` when 1.6a found services, otherwise everything. `env-start.sh` skips anything already running.
 
-**env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it. Optionally, `env-status.sh` can show which checkout each port serves with `bash "$HOME/.claude/skills/lib/verify-worktree.sh" served <port>...`.
+**env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it.
 
 **Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, `up` compares the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees (`verify-env-up.sh served-check`, also in `live-backend` mode). This ticket's code (`served-worktree|done`) continues. An undecided port (no worktree to compare, an unreadable or container-served port) is a visible `VERIFY_SERVED_UNVERIFIED` gate-warn and continues. A port serving a different commit or a dirty checkout of a repo under test is a `VERIFY_SERVED_WRONG_WORKTREE` gate-stop with recovery steps. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades that stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
 
@@ -580,10 +576,7 @@ With the browser now on the correct page, work through each remaining step in th
 3. Take a snapshot with `mcp__playwright__browser_snapshot`
 4. Record the **observed result** — what you see in the snapshot
 
-Capture after each step:
-- The snapshot YAML (accessibility tree)
-- The current URL
-- Any new console errors: `mcp__playwright__browser_console_messages`
+Capture after each step: the snapshot YAML, the current URL, and any new console errors (`mcp__playwright__browser_console_messages`).
 
 **Screenshot evidence.** The accessibility tree hides layout, overlap, styling and contrast, so every criterion also gets a picture. At each criterion's assertion point — PASS or FAIL — and on any unexpected broken state, call `mcp__playwright__browser_take_screenshot` with `filename` set to `verify-{TICKET-ID}-c{N}-{pass|fail}.png` (N = criterion number). Then make sure the file lands in the ticket workspace — Playwright MCP saves into its own output directory, so copy it from the path the tool reports:
 ```bash
