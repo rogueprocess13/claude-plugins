@@ -127,6 +127,54 @@ d="$TMP_ROOT/case-adopt/planner"
 _eq "classify does not touch the baseline" "$(body_baseline_read "$d")" "$(body_baseline_hash "$A")"
 _eq "classify does not touch body.md" "$(cat "$d/body.md")" "$A"
 
+# ── unlink: Linear autolinks undone (F61, F91) ────────────────────────────
+_eq "unlink: F91 bare dotted token" \
+  "$(body_baseline_unlink '| sign up | email is [Mixed.Case](<http://Mixed.Case>)@Conduit.test |')" \
+  '| sign up | email is Mixed.Case@Conduit.test |'
+_eq "unlink: F61 bare URL" \
+  "$(body_baseline_unlink 'Open [http://localhost:5173](<http://localhost:5173>) first.')" 'Open http://localhost:5173 first.'
+_eq "unlink: no angle brackets, https and mailto" \
+  "$(body_baseline_unlink '[a.b](https://a.b) [x@y.z](mailto:x@y.z) [c](c)')" 'a.b x@y.z c'
+_eq "unlink: a link whose target differs from its text is kept" \
+  "$(body_baseline_unlink 'See [the docs](<https://example.test/docs>) and [a.b](http://c.d).')" \
+  'See [the docs](<https://example.test/docs>) and [a.b](http://c.d).'
+_eq "unlink: code spans are never touched" \
+  "$(body_baseline_unlink 'run `[a](<http://a>)` then [a](<http://a>)')" 'run `[a](<http://a>)` then a'
+_eq "unlink: fenced blocks are never touched" \
+  "$(body_baseline_unlink $'```\n[a](<http://a>)\n```\n[a](<http://a>)')" $'```\n[a](<http://a>)\n```\na'
+_eq "unlink: text with no link is unchanged" "$(body_baseline_unlink "$base")" "$base"
+_eq "hash: an autolinked rendering hashes as the composed text" \
+  "$(body_baseline_hash 'email is [Mixed.Case](<http://Mixed.Case>)@Conduit.test')" \
+  "$(body_baseline_hash 'email is Mixed.Case@Conduit.test')"
+if [ "$(body_baseline_hash 'see [a](<http://b>)')" != "$(body_baseline_hash 'see a')" ]; then
+  _pass "hash: a real link target still counts"
+else _fail "hash: a real link target still counts"; fi
+# A baseline stored before unlink existed, over an autolinked Linear text
+# that body.md also holds: both sides now normalise alike → rebaseline,
+# which only rewrites the stored hash.
+d="$TMP_ROOT/case-migrate/planner"
+mkdir -p "$d"
+linked='email is [Mixed.Case](<http://Mixed.Case>)@Conduit.test'
+printf '%s' "$linked" >"$d/body.md"
+printf '%s' "$linked" | awk '{print}' | sha256sum | awk '{print $1}' >"$d/linear-baseline.sha"
+_eq "migration: an old autolinked baseline classifies rebaseline" "$(body_baseline_classify "$d" "$linked")" "rebaseline"
+
+# ── literals: code spans and fenced lines, sorted ─────────────────────────
+_eq "literals: spans and fence lines" \
+  "$(body_baseline_literals $'b `two` a `one`\n```\nx = 1\n```')" $'F:x = 1\nS:one\nS:two'
+_eq "literals: none" "$(body_baseline_literals 'plain [a](<http://a>)')" ""
+if [ "$(body_baseline_literals 'run `auth_user`')" != "$(body_baseline_literals 'run `auth\_user`')" ]; then
+  _pass "literals: an escaped character inside a span is a different literal"
+else _fail "literals: an escaped character inside a span is a different literal"; fi
+
+if command -v gawk >/dev/null 2>&1; then
+  g=$(
+    awk() { gawk "$@"; }
+    body_baseline_unlink '| x | [Mixed.Case](<http://Mixed.Case>)@C.test `[a](<http://a>)` |'
+  )
+  _eq "unlink under gawk matches" "$g" '| x | Mixed.Case@C.test `[a](<http://a>)` |'
+fi
+
 # ── Works under the strictest caller settings ─────────────────────────────
 strict=$(
   set -euo pipefail

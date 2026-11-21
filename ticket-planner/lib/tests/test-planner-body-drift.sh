@@ -566,6 +566,120 @@ else
   fail "skip: an existing baseline is never overwritten" "baseline=$(_baseline "$T_INIT" "PRO-576")"
 fi
 
+echo "--- TicketGen: Linear autolinks (F91, F61) ---"
+
+# _tg_own <TID> <composed body> <Linear text> — a child with its own texts.
+_tg_own() {
+  local pdir
+  pdir=$(_pdir "$T_INIT" "$1")
+  mkdir -p "$pdir"
+  printf '%s' "$2" >"${pdir}/body.md"
+  printf '%s' "$3" >"${REPOS_ROOT}/linear/$1.md"
+}
+F91_BODY=$'## Verification Plan\n| Step | Expected |\n| --- | --- |\n| sign up | email is Mixed.Case@Conduit.test |\n\nOpen http://localhost:5173 first.'
+F91_LINEAR=$'## Verification Plan\n| Step | Expected |\n| --- | --- |\n| sign up | email is [Mixed.Case](<http://Mixed.Case>)@Conduit.test |\n\nOpen [http://localhost:5173](<http://localhost:5173>) first.'
+
+# Only autolinks differ: body.md keeps the composed literal, and the drift
+# check reads the two as the same text.
+_tg_own "PRO-577" "$F91_BODY" "$F91_LINEAR"
+planner_ticketgen_record_baseline "$T_INIT" "PRO-577" create 2>/dev/null
+p577=$(_pdir "$T_INIT" "PRO-577")
+if [ "$(cat "$p577/body.md")" = "$F91_BODY" ] &&
+  [ "$(_baseline "$T_INIT" "PRO-577")" = "$(_linear_hash "PRO-577")" ] &&
+  [ "$(body_baseline_classify "$p577" "$F91_LINEAR")" = "clean" ] &&
+  grep -qF "|META|ticketgen|info|PRO-577 Linear autolinked" "$(planner_state_log "$T_INIT")"; then
+  pass "create: an autolink-only rendering keeps the composed body.md, classifies clean, logs info"
+else
+  fail "create: an autolink-only rendering keeps the composed body.md" "body=$(head -c 200 "$p577/body.md") cls=$(body_baseline_classify "$p577" "$F91_LINEAR")"
+fi
+
+# Autolinks plus another rendering change: body.md takes Linear's text with
+# the autolinks undone.
+_tg_own "PRO-578" "$F91_BODY"$'\n- [ ] done' "$F91_LINEAR"$'\n* [ ] done'
+planner_ticketgen_record_baseline "$T_INIT" "PRO-578" create 2>/dev/null
+p578=$(_pdir "$T_INIT" "PRO-578")
+if grep -qF "email is Mixed.Case@Conduit.test" "$p578/body.md" && grep -qF "* [ ] done" "$p578/body.md" &&
+  ! grep -qF "](<http" "$p578/body.md" &&
+  [ "$(body_baseline_classify "$p578" "$F91_LINEAR"$'\n* [ ] done')" = "clean" ]; then
+  pass "create: a re-rendered body is adopted with its autolinks undone"
+else
+  fail "create: a re-rendered body is adopted with its autolinks undone" "body=$(head -c 300 "$p578/body.md")"
+fi
+
+# Linear changed a code literal: body.md keeps the composed text, a warn
+# line says so, and Refinement sees the drift (local-ahead).
+_tg_own "PRO-579" $'Run `npm test -- --grep auth_user` here.' $'Run `npm test -- --grep auth\\_user` here.'
+planner_ticketgen_record_baseline "$T_INIT" "PRO-579" create 2>/dev/null
+p579=$(_pdir "$T_INIT" "PRO-579")
+if [ "$(cat "$p579/body.md")" = 'Run `npm test -- --grep auth_user` here.' ] &&
+  grep -qF "|META|ticketgen|warn|PRO-579 Linear's rendering changes a code literal" "$(planner_state_log "$T_INIT")" &&
+  [ "$(body_baseline_classify "$p579" "$(cat "${REPOS_ROOT}/linear/PRO-579.md")")" = "local-ahead" ]; then
+  pass "create: a changed code literal is not adopted; the drift stays visible"
+else
+  fail "create: a changed code literal is not adopted" "body=$(cat "$p579/body.md")"
+fi
+
+# A ticket-auto-pipeline without unlink: Linear's text is written as it is,
+# never an empty body.md.
+old=$(
+  unset -f body_baseline_unlink body_baseline_literals
+  _planner_refinement_source_baseline 2>/dev/null
+  _tg_own "PRO-580" "$F91_BODY"$'\n- [ ] done' "$F91_LINEAR"$'\n* [ ] done'
+  # Simulate the older library: the fallbacks, not the real functions.
+  body_baseline_unlink() { printf '%s' "${1-}"; }
+  body_baseline_literals() { :; }
+  planner_ticketgen_record_baseline "$T_INIT" "PRO-580" create 2>/dev/null
+  cat "$(_pdir "$T_INIT" "PRO-580")/body.md"
+)
+if [ "$old" = "$F91_LINEAR"$'\n* [ ] done' ]; then
+  pass "create: with an older body-baseline.sh, body.md takes Linear's text unchanged (never empty)"
+else
+  fail "create: with an older body-baseline.sh" "body=$(head -c 200 <<<"$old")"
+fi
+fallback=$(
+  unset -f body_baseline_unlink body_baseline_literals
+  _planner_refinement_source_baseline 2>/dev/null
+  printf '%s|%s' "$(body_baseline_unlink 'a [b](<http://b>)')" "$(body_baseline_literals 'x `y`')"
+)
+if [ "$fallback" = 'a [b](<http://b>)|' ]; then
+  pass "source_baseline defines pass-through unlink and empty literals when the library lacks them"
+else
+  fail "source_baseline fallbacks" "got '$fallback'"
+fi
+
+echo "--- adopt and refresh write Linear's text with autolinks undone ---"
+
+L_INIT="INIT-1700000200-0009"
+L_EPIC="PRO-590"
+_setup "$L_INIT" "$L_EPIC"
+_child "$L_INIT" "$L_EPIC" "PRO-591"
+_child "$L_INIT" "$L_EPIC" "PRO-592"
+planner_refinement_scan "$L_INIT" >/dev/null
+for _t in PRO-591 PRO-592; do
+  _scan_clean "$L_INIT" "$_t"
+  planner_refinement_apply "$L_INIT" "$_t" >/dev/null 2>&1
+done
+# A person's Linear edit that Linear then autolinked.
+_edit_linear "PRO-591" "$E_FROM" "Validate uploads for [Mixed.Case](<http://Mixed.Case>)@Conduit.test."
+planner_refinement_scan "$L_INIT" >/dev/null
+p591=$(_pdir "$L_INIT" "PRO-591")
+if grep -qF "Validate uploads for Mixed.Case@Conduit.test." "$p591/body.md" && ! grep -qF "](<http" "$p591/body.md" &&
+  [ "$(_baseline "$L_INIT" "PRO-591")" = "$(_linear_hash "PRO-591")" ] &&
+  [ "$(body_baseline_classify "$p591" "$(cat "${REPOS_ROOT}/linear/PRO-591.md")")" = "clean" ]; then
+  pass "adopt: a human Linear edit is taken with its autolinks undone, and classifies clean after"
+else
+  fail "adopt: autolinks undone" "body=$(grep -F 'Validate uploads' "$p591/body.md")"
+fi
+_edit_linear "PRO-592" "$E_FROM" "Open [http://localhost:5173](<http://localhost:5173>) (Linear wins)."
+_edit_body "$L_INIT" "PRO-592" "$E_FROM" "Local text (loses)."
+planner_refinement_refresh_bodies "$L_INIT" >/dev/null
+p592=$(_pdir "$L_INIT" "PRO-592")
+if grep -qF "Open http://localhost:5173 (Linear wins)." "$p592/body.md" && ! grep -qF "](<http" "$p592/body.md"; then
+  pass "refresh: the refreshed body has its autolinks undone"
+else
+  fail "refresh: autolinks undone" "body=$(grep -F 'Linear wins' "$p592/body.md")"
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

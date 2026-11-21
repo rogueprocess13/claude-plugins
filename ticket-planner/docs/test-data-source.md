@@ -444,7 +444,10 @@ Verify command: make verify-seed-<slug>
 Seed channel: <sql|api|factories|files|ui-forms, from the needs' Load via; default factories>
 ```
 
-plus `## Test Data Provided` (one bullet per need: record key, data, consumer criterion), ACs for
+plus `## Test Data Provided` (one bullet per need: record key, data, consumer criterion), a `## Verify Mode`
+section whose first line is `**Verify mode:** live-backend` (every criterion runs a make target against
+records held by the running services, even a `files` import), a `## Errors and Edge Cases` section, ACs
+(each tagged `[live]`, the tag repeated in its Verification Notes cell) for
 an idempotent seed (exit 0 twice), a passing verify, referential integrity, synthetic/masked data,
 `make reset-seed-<slug>` and a README key map, and Verification Notes rows all `none`. Seed and
 Verify commands **must** be `make <target>` (or `make -C <relpath> <target>`) — the only shape

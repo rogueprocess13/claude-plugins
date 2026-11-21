@@ -41,7 +41,7 @@ U{n}. unit — {repo}: {test name | no named test}
 
 ## Step 4b / 4c / 4c-live — one run per repository
 
-Work through the `[live]` items first, as the step says. If every item is `[unit]` in browser mode, skip Steps 3 and 4 and the browser part of 4b: there is no page to look at.
+Work through the `[live]` items first, as the step says. If every item is `[unit]`, Step 1e printed `VERIFY_MODE=build-only`: Step 4c runs only this helper.
 
 Then, before Step 5 releases the lock, run the helper once for each repository that has named tests, with every name for that repository in one call. Give it a long Bash timeout (the run may take up to 15 minutes):
 
@@ -49,7 +49,7 @@ Then, before Step 5 releases the lock, run the helper once for each repository t
 bash ~/.claude/skills/lib/verify-ac-tags.sh run {TICKET-ID} --repo-path "{repo path}" --branch "{branch}" --out "{ticket-dir}/artifacts" --test "{test name 1}" --test "{test name 2}"
 ```
 
-`{repo path}` is the repository under `REPOS_ROOT`, not a worktree: the helper finds or creates the verify worktree itself. `{branch}` is the ticket's branch (Step 1.6a3). The run comes last because a test command may rebuild files the running stack serves from.
+`{repo path}` is the repository under `REPOS_ROOT`, not a worktree: the helper finds or creates the verify worktree itself. `{branch}` is the ticket's branch (as in Step 1.6a3, also in build-only). The run comes last: a test command may rebuild files the running stack serves.
 
 Read the output. `UNIT_RUN` says what ran and where the log is. Each `UNIT_TEST` line carries a name, `pass` or `fail`, and the reason:
 

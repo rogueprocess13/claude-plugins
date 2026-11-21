@@ -226,7 +226,7 @@ assert_contains "marker" "$pack" "$PLANNER_TESTDATA_SYNTH_MARKER"
 assert_contains "seed command" "$pack" "Seed command: make seed-inv-0-test-data-pack"
 assert_contains "verify command" "$pack" "Verify command: make verify-seed-inv-0-test-data-pack"
 assert_contains "seed channel from inventory Load via" "$pack" "Seed channel: sql"
-assert_contains "relational data keeps the foreign-key criterion" "$pack" "- [ ] Every seeded foreign key resolves"
+assert_contains "relational data keeps the foreign-key criterion" "$pack" "- [ ] [live] Every seeded foreign key resolves"
 assert_contains "…and its Verification Notes row" "$pack" "verify target reports no orphan rows"
 # F42: a directory or a worktree has no foreign keys; the criterion would
 # describe a different change and the semantic audit blocks the spec on it.
@@ -241,8 +241,26 @@ _planner_tds_relational files $'3 paid invoices' &&
 f42=$(printf 'f42-td\0371\037inv-0-export\037Start exits non-zero on an empty directory\0371 empty temporary directory\037td-42-9\037\037\n' |
   planner_testdata_synth_render f42-td "$INIT" single)
 case "$f42" in *"foreign key"* | *"orphan rows"*) fail "F42: file-shaped spec has no foreign-key criterion" "present" ;; *) pass "F42: file-shaped spec has no foreign-key criterion" ;; esac
-assert_contains "F42: file-shaped spec keeps the other criteria" "$f42" "- [ ] the verify command passes"
+assert_contains "F42: file-shaped spec keeps the other criteria" "$f42" "- [ ] [live] the verify command passes"
 assert_contains "make-only sentence" "$pack" 'must stay `make <target>`'
+# GitHub #773: a TD spec declares its Verify Mode. Its criteria run the seed
+# and verify targets against the records in the running services, so the
+# shape is live-backend for every channel (even `files` imports through the
+# app); Crosscheck still skips synth-marked specs, so the readers are checked
+# here directly.
+# shellcheck disable=SC1091
+source "${LIB_DIR}/planner-body-template.sh"
+# shellcheck disable=SC1091
+source "${TAP_LIB}/verify-mode.sh"
+for td in inv-0-test-data-pack inv-0-audit-test-data inv-0-report-test-data; do
+  assert_eq "${td}: planner_body_verify_mode reads live-backend" "$(planner_body_verify_mode "${out}/${td}.md")" live-backend
+  assert_eq "${td}: verify-mode.sh takes the declared shape" "$(verify_mode_shape "$(cat "${out}/${td}.md")")" live-backend
+  assert_eq "${td}: Errors and Edge Cases is non-empty" \
+    "$(planner_body_section "${out}/${td}.md" "errors and edge cases" | grep -c '[^[:space:]]')" 5
+  assert_eq "${td}: every criterion is tagged" \
+    "$(planner_body_ac_items "${out}/${td}.md" | grep -cvE '^\[(unit|live)\] ' || true)" 0
+done
+assert_eq "F42: file-shaped spec declares live-backend too" "$(verify_mode_shape "$f42")" live-backend
 assert_contains "record key td-<init>-<n> + consumer criterion" "$pack" \
   '- `td-42-3` — 3 paid invoices — for `inv-0-export`: Export includes paid invoices'
 assert_contains "second record" "$pack" '`td-42-4` — 5 `invoice` records in state paid — for `inv-0-list`'
@@ -364,6 +382,18 @@ for td in inv-0-test-data-pack inv-0-audit-test-data; do
     echo "${rc}|${DOR_STATUS}|${DOR_MISSING}"
   )
   assert_eq "${td}: dor-check ready as a chore with strict test-data + vplan" "$res" "0|ready|[]"
+  # The Verify Mode section makes the body carry ticket-body-v2, so the six
+  # body-v2 codes judge it: none may fire, even with every switch strict.
+  # shellcheck disable=SC1091
+  res=$(
+    source "${TAP_LIB}/dor-check.sh" >/dev/null 2>&1
+    rc=0
+    DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true DOR_STRICT_VERIFY_MODE=true DOR_STRICT_EDGE_CASES=true \
+      DOR_STRICT_AC_SHAPE=true DOR_STRICT_SCOPE_FILES=true \
+      check_ticket_ready TD-1 --body "${TMPDIR}/${td}.body" --type chore --no-fetch >/dev/null 2>&1 || rc=$?
+    echo "${rc}|${DOR_STATUS}|${DOR_MISSING}|${DOR_ADVISORY}"
+  )
+  assert_eq "${td}: dor-check ready with every body-v2 switch strict, no advisory" "$res" "0|ready|[]|[]"
 done
 
 body_f="${TMPDIR}/inv-0-test-data-pack.body"
@@ -376,13 +406,12 @@ assert_not_contains "gate: no Check 2.6 hold" "$gate" "held:"
 # Check 2.6 classifies by scanning the plan artifact when no Verification Plan
 # table parses (notes.md, body.md and the description all lack one) — the
 # path a TD ticket takes when its appraise artifact carries no table. Since
-# ticket-auto-pipeline 0.113.0 the gate uses verify's own classifier, whose
-# build vocabulary has no `make`; a seed chore with no browser, build or
-# runtime signal maps to the api-only profile (expected behaviour + env
-# setup), which the TD body meets.
+# ticket-auto-pipeline 0.113.0 the gate uses verify's own classifier. The TD
+# body declares `**Verify mode:** live-backend` (#773), which maps to the
+# api-only profile (expected behaviour + env setup), which the TD body meets.
 sed '/^## Verification Plan$/,/^## Related Tickets$/{/^## Related Tickets$/!d}' "$body_f" >"${TMPDIR}/td-novplan.body"
 gate=$(_td_gate_run "$body_f" "${TMPDIR}/td-novplan.body" false)
-assert_contains "gate: Check 2.6 artifact scan classifies the TD body api-only (no-signal profile)" "$gate" "mode=api-only"
+assert_contains "gate: Check 2.6 maps the declared live-backend TD body to the api-only profile" "$gate" "mode=api-only"
 assert_contains "gate: …and the api-only prerequisites are met (no hold)" "$gate" "rc=0 "
 assert_contains "gate: …the scan path was taken" "$gate" "source=none"
 gate=$(_td_gate_run "$body_f" "${TMPDIR}/td-novplan.body" false 0)
