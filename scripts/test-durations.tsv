@@ -22,6 +22,7 @@ bash ticket-planner/lib/tests/test-planner-testdata-synth.sh	70.0
 bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh	67.2
 bash ticket-planner/lib/tests/test-planner-semantic-harness-errors.sh	60.0
 bash ticket-auto-pipeline/lib/tests/test-dor-semantic-draft.sh	56.5
+bash ticket-auto-pipeline/lib/tests/test-dor-body-v2.sh	56.0
 bash grill-me/lib/tests/test-grill-telemetry.sh	50.7
 python3 -m pytest fleet-controller/fleetd/tests/test_supervisor.py -v	48.7
 CLAUDE_SKILLS_LIB="{ROOT}/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/lib/tests/test-detect-resume.sh	46.6

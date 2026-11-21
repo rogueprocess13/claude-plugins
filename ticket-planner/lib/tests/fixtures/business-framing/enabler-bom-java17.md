@@ -23,6 +23,14 @@ Move bom onto the shared parent POM at Java 17 and Spring Boot 3.4, replace the 
 3. Spring Security 6: replace `WebSecurityConfigurerAdapter` with a `@Bean SecurityFilterChain`.
 4. Remove `io.github.jhipster:jhipster-framework`; inline the two utilities still used.
 
+## Errors and Edge Cases
+
+- **Failure** — a failed build stops the migration; nothing is deployed from a red build.
+- **Check order** — Not applicable — no status rule changes.
+- **Empty or malformed input** — Not applicable — request handling is unchanged.
+- **Late or concurrent responses** — Not applicable — no behaviour changes.
+- **Unauthorised viewer** — a request with no token to `GET /api/products` still gets HTTP 401, as before the migration.
+
 ## Acceptance Criteria
 
 - [ ] [live] `mvn clean verify -pl microservices/bom` exits 0 on Java 17

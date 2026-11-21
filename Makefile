@@ -191,6 +191,7 @@ test-lib:
 	# dor-readiness-gate-foundation
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-body-v2.sh
 	bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh
 	bash ticket-auto-pipeline/lib/tests/test-seed-run.sh
 	# dor-semantic-evaluator

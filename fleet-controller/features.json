@@ -518,6 +518,54 @@
       "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
     },
     {
+      "name": "DOR_STRICT_VERIFY_MODE",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "On a ticket-body-v2 body, a missing or invalid Verify Mode section (VERIFY_MODE_INVALID) makes the ticket not-ready instead of advisory.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "Planner Crosscheck already blocks this on a spec, so it mainly holds tickets written or edited by hand. Bodies without any ticket-body-v2 section are never judged.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_EDGE_CASES",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "On a ticket-body-v2 body, a feature, improvement, api-only or live-backend ticket with no Errors and Edge Cases section (EDGE_CASES_MISSING) is not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "Same rule as planner Crosscheck, applied to the ticket body. Turn on once hand-written tickets use the current templates.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_AC_SHAPE",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "On a ticket-body-v2 body, untagged criteria, more than 20 criteria, or a criterion about a state after merge (AC_UNTAGGED, AC_COUNT_HIGH, AC_POST_MERGE_STATE) make the ticket not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "These three are pattern matches and warn everywhere by default. Turn on only after a rehearsal shows no false fires.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_SCOPE_FILES",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "On a ticket-body-v2 body, a Scope table and a Technical Context section that name different files (SCOPE_TC_MISMATCH) make the ticket not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "A pattern match over backticked file names. Turn on only after a rehearsal shows no false fires.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
       "name": "DOR_SEMANTIC_DRIFT_DEMOTE",
       "plugin": "ticket-auto-pipeline",
       "default": "false",

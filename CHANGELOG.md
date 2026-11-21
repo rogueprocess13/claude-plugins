@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.135.0 (2026-11-21) — the router can review the plan with an independent agent (#667)
+## 0.136.0 (2026-11-21) — the router can review the plan with an independent agent (#667)
 
 Under the router a phase runs as a subagent and cannot spawn another agent, so the adversarial review in `ticket-appraise-exec` Step 3.6 ran inline, in the context that wrote the plan. The router can now run that review itself. `fleet-controller` 0.56.0.
 
@@ -29,6 +29,32 @@ Under the router a phase runs as a subagent and cannot spawn another agent, so t
 - **fleetd.** A ticket-level worker is the router and runs the step. Phase dispatch does not: its preamble records `META|plan-review|info|inline — …`, so the review stays inline. A router-marked ticket that phase dispatch adopts is sent from EXEC to STEP_2_2 and left there with `META|phase-dispatch-skip|warn|`; it never reaches the gate unreviewed.
 - **Router text.** The STEP_2_2 instructions are in `skills/ticket-auto/references/plan-review.md`, read only when `PLAN_REVIEW` is `review` or `revise`. To keep the router's SKILL.md from growing, STEP_4's pre-warm block was removed: it only echoed a line and read a placeholder (`{ARTIFACT_PATH}`) nothing sets. The pre-warm instruction to the implement agent is unchanged.
 - **Still inline.** The appraise claim verifier (`ticket-appraise` Step 3.5c) and the implement self-review. With the flag on, the appraisal comment is posted before the review and carries no review summary on a first-pass PASS or WARNINGS. See `ticket-auto-pipeline/docs/plan-review.md`.
+
+## 0.135.0 (2026-11-21) — the readiness check warns on the ticket-body-v2 rules, with a strict switch per rule (#773)
+
+0.128.0 made the planner write `## Verify Mode`, `## Errors and Edge Cases`, tagged and grouped criteria and a Scope table that matches Technical Context, and check them at Crosscheck, before a ticket exists. The Definition-of-Ready check did not look at any of it, so a ticket written or edited by hand passed without them. It now reports the same rules on the ticket body. Nothing new blocks by default.
+
+- **Six codes, all advisory by default** (`lib/dor-body-v2.sh`, new, called by `check_ticket_ready`). They are listed in `DOR_ADVISORY`; the ticket stays ready.
+
+  | Code | Fires when | Switch that makes it blocking |
+  |---|---|---|
+  | `VERIFY_MODE_INVALID` | no `## Verify Mode` section, or its first line is not `**Verify mode:** <shape>` with one of the five shapes | `DOR_STRICT_VERIFY_MODE` |
+  | `EDGE_CASES_MISSING` | a feature or improvement, or an `api-only` / `live-backend` ticket, has no non-empty `## Errors and Edge Cases` | `DOR_STRICT_EDGE_CASES` |
+  | `AC_UNTAGGED` | a criterion does not start with `[unit]` or `[live]` | `DOR_STRICT_AC_SHAPE` |
+  | `AC_COUNT_HIGH` | more than 20 criteria (criteria not grouped) | `DOR_STRICT_AC_SHAPE` |
+  | `AC_POST_MERGE_STATE` | a criterion refers to a state after merge or to a base branch | `DOR_STRICT_AC_SHAPE` |
+  | `SCOPE_TC_MISMATCH` | the Scope table and `## Technical Context` name different files (not judged without a Technical Context section) | `DOR_STRICT_SCOPE_FILES` |
+
+- **Only a body that carries the contract is judged.** That is a body with a `## Verify Mode` heading, a `## Errors and Edge Cases` heading, or at least one criterion that starts with `[unit]` or `[live]`. The planner's `ticket-body-v2` marker is a line of the initiative's state log and the readiness check reads the body alone, so the body's own content decides (the test-data Source contract is detected the same way). On every other body the six codes are recorded `inapplicable`, with the switches on or off: an older ticket gets the verdict it had.
+- **How to turn strict on.** Set the switch to `true` in the environment of every process that computes readiness on the host (the planner session, `fleetd`, ticket-auto), for example `DOR_STRICT_VERIFY_MODE=true DOR_STRICT_EDGE_CASES=true`. Unset or `false` is advisory. A blocking code can be waived per ticket with `dor-check.sh --waive <TID> <CODE> "<reason>"`. All four switches are in `/fleet-controller:fleet-features`.
+- **Not promoted.** No code is blocking by default, and the planner's Refinement still forces only `DOR_STRICT_TEST_DATA` and `DOR_STRICT_VPLAN`. Promotion waits for a dispatch rehearsal.
+- **`scripts/e2e-preflight.sh`** treats the new switches as Refinement does: it does not force them and reads them from the caller's environment (`DOR_STRICT_AC_SHAPE=true scripts/e2e-preflight.sh <INIT>` fails the `dor` row on an untagged criterion). **Output change:** each child gets one more row, `dor-advisory`, always rc 0, listing the codes that warned. That row is what a rehearsal records before a code is promoted.
+- **Same rules on both sides.** The readers are a port of the planner's (this plugin does not depend on ticket-planner). `test-planner-body-template.sh` section 3a runs both over the same specs and fails when the codes or the constants differ.
+- **Not covered:** `SECURITY_DECISIONS_MISSING`. The security and identity decisions live in proposal.md and the epic, not in a ticket body, so they stay with Crosscheck. `ticket-verify` still does not read the `[unit]` / `[live]` tags (#773 stays open for that).
+- A copy of `dor-check.sh` without `dor-body-v2.sh` (a partial sync) runs none of the six codes and gives the verdict it gave before.
+- Golden fixture `business-framing/enabler-bom-java17.md` (a `live-backend` chore) gains the `## Errors and Edge Cases` section its own rule requires.
+- Tests: `lib/tests/test-dor-body-v2.sh` (new, 121 cases: each code warns by default, blocks under its own switch only, is silent on a legacy body, and a complete body is clean), `scripts/tests/test-e2e-preflight.sh` (advisory row, strict from the environment), `test-planner-body-template.sh` (parity).
+- Versions: `ticket-auto-pipeline` 0.135.0, `ticket-planner` 0.56.1 (test and fixture only), `fleet-controller` 0.55.3 (four `features.json` entries).
 
 ## 0.134.0 (2026-11-21) — the approval actuator requires an interactive terminal
 
@@ -43,6 +69,7 @@ A human approval is the fact the entry gate reads before a complex ticket is imp
 - **On upgrade.** Approvals already recorded with provenance `human` stay valid. A ticket held at the gate is approved with the command above instead of from inside a session. A complex or manual-mode ticket whose manifest carries a `policy` approval now holds at the entry gate until a person approves it. Scripts that called `flow.sh <ID> human-approve` without `--provenance policy` from an agent or a fleetd worker now get exit 15. The board projection runs from the shell the script runs in: without `LINEAR_API_KEY` there, the approval is recorded and the Linear card moves on the next outbox drain.
 - `fleet-controller` 0.55.2: test only. `test-fleet-detect.sh` drops the agent variables before it records a person's approval in its fixtures. fleetd has no approval endpoint and fires no `human-approve`; its gate-hold reconciliation re-runs the entry gate, so it follows the rule above with no code change.
 - Tests: `lib/tests/test-ticket-approve.sh` (approve and reject refused in an agent or worker session, with no terminal and on a wrong typed id; approval under a pseudo-terminal; `flow.sh` called directly; policy approval unaffected; the manifest writer), `test-gate-check.sh` and `test-detect-resume.sh` (a policy approval does not release a complex, manual-mode or held ticket). Existing tests that approve as a person run under a pseudo-terminal through `lib/tests/human-pty.sh`.
+
 ## 0.133.0 (2026-11-21) — a project can set its own appraise fast-path confidence threshold (#774)
 
 The planner's confidence is a fixed formula that pays for evidence a new one-repo project does not have (several services, existing symbols, prior art). Its tickets top out near 0.85, so the appraise fast path, which needs 0.85, almost never fired there. The formula and the default are unchanged; a project can now lower the bar for itself on purpose.

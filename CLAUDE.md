@@ -126,6 +126,7 @@ Pipe-delimited: `ISO|PHASE|STEP|STATUS|MSG`. Statuses: `start`, `done`, `fail`, 
 
 `scripts/e2e-preflight.sh <INIT> [--out DIR] [--critique-dir DIR] [--skip-critique]` answers "would this planned initiative dispatch with no blockers?" without any tracker write. `<INIT>` is the folder under `.ticket-auto/initiatives/` that holds `epic/manifest.json`: after `--create` that is the epic id, not the `INIT-…` planning folder. It is the check the dispatch-rehearsal loop (next.md Step 16) runs after each planner `--create`. For each child it runs the planned body check, `gate-check.sh --mode planned`, strict DoR (Refinement's `DOR_STRICT_TEST_DATA`/`DOR_STRICT_VPLAN`) and reads a `/ticket-critique {TID} --no-post --result-file <dir>/{TID}.txt` result. For the epic it checks `dispatch=true` (read only), runs fleet dry-run, and checks every `blocked by` line against a sibling `blocked_by` edge. Rules:
 
+- Each child also gets a `dor-advisory` row (always rc 0) listing the DoR codes that warned. The four ticket-body-v2 switches (`DOR_STRICT_VERIFY_MODE`, `DOR_STRICT_EDGE_CASES`, `DOR_STRICT_AC_SHAPE`, `DOR_STRICT_SCOPE_FILES`, GitHub #773) are not forced: they come from the caller's environment, as in Refinement.
 - A planned-gate exit 0 passes only with a `planned-precheck|done` log line. Exit 0 also means "not planned" and "fetch failed".
 - Logs are never named `*-pipeline.log`, which fleet detectors would read as live pipelines.
 - Every check runs this checkout's `ticket-auto-pipeline/lib`, never the synced `~/.claude/skills/lib`.
