@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.137.1 (2026-11-21) — the skill fingerprint covers the ADR gate text a phase follows (#667)
+
+Since 0.136.1 a phase agent follows the ADR gate inline from the shared preamble § 8. The gate's text lived in `skills/adr-gate/SKILL.md`, which no `prompt_manifests` entry listed, so a change to the gate never changed the fingerprint of the phases that run it.
+
+- **The gate moved to `skills/adr-gate/references/gate.md`.** `SKILL.md` keeps its frontmatter, the usage line and one read line, so `/adr-gate` from the planner works as before. § 8 resolves `skill-ref.sh adr-gate references/gate.md`; the missing-file stop now logs `reference-missing fail "adr-gate/gate.md"`.
+- **Listed as conditional.** The 8 manifests that load the preamble list the gate file right after it. A `references/` entry counts under `<manifest>:conditional`, so the always-loaded totals do not change.
+- **Test.** `test-agent-tool-coverage.sh` checks every preamble manifest lists the gate file after the preamble, and that `SKILL.md` reads the same file instead of holding a second copy.
+- Sizes: `adr-gate/SKILL.md` 11,906 → 1,510 bytes, preamble 17,562 → 17,538.
+
 ## 0.137.0 (2026-11-21) — verify proves a `[unit]` criterion with a named test it runs itself (#773)
 
 Planned ticket bodies tag each acceptance criterion `[unit]` or `[live]`. `ticket-verify` ignored the tags and tried to prove every criterion on the running system, including the ones only an automated test can prove. `fleet-controller` 0.56.2 (catalog entry), `ticket-planner` 0.56.2 (docs).

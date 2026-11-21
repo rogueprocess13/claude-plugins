@@ -10,7 +10,7 @@
 #   5. Usage: fewer than two args or an empty arg → exit 2.
 #   6. Path escape: `..` components and absolute paths → exit 2, empty stdout.
 #   7. A skill's own SKILL.md resolves like a reference (the shared preamble
-#      § 8 reads adr-gate's SKILL.md this way, GitHub #667).
+#      § 8 once read adr-gate's SKILL.md this way, GitHub #667).
 #
 # Run: bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
 
