@@ -3,7 +3,7 @@
 **Schema-Version: 1**
 **Defined by:** `openspec/changes/adr-governance-gate/specs/adr-gate/spec.md`
 **Parser:** `lib/adr-gate-parse.sh` (result block only — the request is composed by the caller, not parsed by bash)
-**Emitted by:** any pipeline phase (request), `skills/adr-gate/SKILL.md` (result)
+**Emitted by:** any pipeline phase (request), `skills/adr-gate/SKILL.md` (result; a phase agent follows that file inline, per the shared preamble § 8, because it holds no Skill tool)
 
 ## Overview
 
