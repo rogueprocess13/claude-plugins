@@ -17,14 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.138.0 (2026-11-21) — a person's approval is bound to the plan they approved
+## 0.139.0 (2026-11-21) — a person's approval is bound to the plan they approved
 
 `approve.sh` recorded that a person approved a ticket, but not which plan. An agent could rewrite the plan after the approval and the gate would still pass it. `fleet-controller` 0.57.0.
 
 - **Record.** `approve.sh` now finds the plan the way the gate does (`simple-fix.md`, or every file in the openspec change dir), shows its short id and file list in the confirmation, and after `flow.sh human-approve` writes `approved_plan` to the manifest: type, and per file the relative path, byte size and sha256. Ticked task checkboxes are hashed as unticked, so IMPLEMENT ticking `tasks.md` is not a change. No plan, a plan that cannot be hashed, or a file name that is not plain text is a refusal (exit 7). A plan that changes while on screen records nothing (exit 6). A binding that cannot be written is exit 8.
 - **One check.** `lib/plan-binding.sh` is the one implementation. The entry gate's human checks (2.8b/2.8c/4/5a), `gate-check.sh --mode implement` and `detect-resume.sh`'s release of a held ticket all call it. A `policy` approval and the reapprove gate are not checked.
 - **Append-only, amendments only.** Text appended after the approved content passes only in gate-reconcile's shape: after optional blank lines, an `## Amendment #<N>` section. It is logged once as `META|plan-binding|info|appended … (## Amendment #<N>)`. Any other appended text, an approved file edited, shortened, removed or replaced, or a new file in the change dir holds the ticket: `held: PLAN_CHANGED_SINCE_APPROVAL — <files>`, and a person runs `approve.sh` again. The approval itself is not cleared.
-- **Location.** The record holds the plan's physical location (`simple-fix.md`, or the change dir). The plan is found in the ticket dir or change dir, never from the pipeline log alone; a log artifact record that names another plan (a copy elsewhere) fails the check, and a moved plan fails too.
+- **Location.** The record holds the plan's physical location (`simple-fix.md`, or the change dir). The plan is found in the ticket dir or change dir, never from the pipeline log alone; a log artifact record that names another plan (a copy elsewhere, or a symlink to one) fails the check, as does a log record that cannot be resolved, and a moved plan fails too. A symlinked plan file is refused at approval and fails the check.
 - **Legacy.** A human approval with no `approved_plan` (recorded before this release) holds the same way and needs `approve.sh` again.
 - **Re-approval.** The already-approved shortcut (#767) applies only when the recorded binding matches the plan exactly. Otherwise `approve.sh` approves again and re-binds.
 - **Clearing.** Every approval write (`set_ticket_approval`) drops `approved_plan`: re-claim, reject, implement-complete, cancel and a policy approval leave no binding. `manifest-backfill.sh` never writes one.

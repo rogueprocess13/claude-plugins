@@ -500,6 +500,21 @@ test_approve_refused_without_plan() {
   rm -rf "$t"
 }
 
+test_approve_refused_for_symlinked_plan() {
+  local t rc=0
+  t=$(_mk_ticket)
+  cp "$(_plan_file "$t")" "$t/copy.md"
+  rm "$(_plan_file "$t")"
+  ln -s "$t/copy.md" "$(_plan_file "$t")"
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >"$t/out" 2>&1 || rc=$?
+  if [ "$rc" -eq 7 ] && _untouched "$t" && grep -q 'not a regular file' "$t/out"; then
+    _pass "approve.sh: a symlinked plan file is refused (exit 7), nothing recorded"
+  else
+    _fail "approve.sh: a symlinked plan must be refused (rc=$rc out=$(cat "$t/out"))"
+  fi
+  rm -rf "$t"
+}
+
 test_approve_refused_for_non_plain_plan_file_name() {
   local t rc=0
   t=$(_mk_ticket)
@@ -665,6 +680,7 @@ test_writer_refuses_human_provenance_for_agents
 test_approve_records_plan_binding
 test_approve_refused_without_plan
 test_approve_refused_for_non_plain_plan_file_name
+test_approve_refused_for_symlinked_plan
 test_approve_reapprove_rebinds_changed_plan
 test_reject_clears_plan_binding
 test_binding_writer_refuses_agents_and_unapproved

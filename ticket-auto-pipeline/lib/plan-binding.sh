@@ -136,12 +136,15 @@ _pb_resolve_one() {
   eval "$out"
   case "$PLAN_MODE" in
   simple-fix)
-    [ -f "$PLAN_PATH" ] && [ ! -L "$PLAN_PATH" ] || return 3
     PB_TYPE="simple-fix"
     PB_DIR=$(dirname "$PLAN_PATH")
     PB_FILES=("$(basename "$PLAN_PATH")")
+    # The location is the path as named (its directory resolved, the file
+    # itself not followed), set before the regular-file test so a symlinked
+    # plan still has a location to compare.
     phys=$(cd "$PB_DIR" 2>/dev/null && pwd -P) || return 2
     PB_LOCATION="$phys/${PB_FILES[0]}"
+    [ -f "$PLAN_PATH" ] && [ ! -L "$PLAN_PATH" ] || return 3
     ;;
   openspec)
     [ -n "$CHANGE_DIR" ] && [ -d "$CHANGE_DIR" ] || return 12
@@ -185,17 +188,20 @@ plan_binding_resolve() {
   done
   PB_LOG_LOCATION=""
   [ -n "$tid" ] || return 64
-  local rc=0
-  if [ -n "$log" ] && [ -f "$log" ]; then
-    _pb_resolve_one "$tid" "$log" || rc=$?
-    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
-      PB_LOG_LOCATION="$PB_LOCATION"
-    fi
+  # Fail closed: when the log names a plan at all, the plan it resolves to
+  # must have a location and it must be the ticket's own; a log resolve that
+  # fails, or gives no location, is a mismatch, never "no record".
+  local rc=0 lrc=0 log_named=false log_bad=false
+  if [ -n "$log" ] && [ -f "$log" ] && grep -q '^[^|]*|META|artifact|info|plan:' "$log" 2>/dev/null; then
+    log_named=true
+    _pb_resolve_one "$tid" "$log" || lrc=$?
+    PB_LOG_LOCATION="$PB_LOCATION"
+    { [ "$lrc" -eq 0 ] || [ "$lrc" -eq 3 ]; } && [ -n "$PB_LOG_LOCATION" ] || log_bad=true
   fi
-  rc=0
   _pb_resolve_one "$tid" || rc=$?
   [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || return "$rc"
-  if [ -n "$PB_LOG_LOCATION" ] && [ "$PB_LOG_LOCATION" != "$PB_LOCATION" ]; then
+  if $log_named && { $log_bad || [ "$PB_LOG_LOCATION" != "$PB_LOCATION" ]; }; then
+    [ -n "$PB_LOG_LOCATION" ] || PB_LOG_LOCATION="(a plan that could not be resolved)"
     return 4
   fi
   return "$rc"

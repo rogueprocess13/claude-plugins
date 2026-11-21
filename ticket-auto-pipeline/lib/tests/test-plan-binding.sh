@@ -181,6 +181,38 @@ test_forged_log_record_pointing_at_a_copy_fails() {
     _is changed && [[ "$PB_DETAIL" == *"the pipeline log names another plan"* ]]
 }
 
+# A forged record naming a symlinked simple-fix.md (pointing at an unchanged
+# copy) is a mismatch too, never "no record".
+test_forged_log_record_to_symlinked_plan_fails() {
+  _fresh simple-fix
+  mkdir -p "$ROOT/forged"
+  cp "$SIMPLE" "$ROOT/copy.md"
+  ln -s "$ROOT/copy.md" "$ROOT/forged/simple-fix.md"
+  printf 'rewritten\n' >"$SIMPLE"
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$ROOT/forged/simple-fix.md" >>"$ROOT/log"
+  _is changed && [[ "$PB_DETAIL" == *"the pipeline log names another plan"*"forged/simple-fix.md"* ]] || return 1
+  # The ticket's own plan replaced by a symlink to the copy: not a regular file.
+  _fresh simple-fix
+  cp "$SIMPLE" "$ROOT/copy.md"
+  rm "$SIMPLE"
+  ln -s "$ROOT/copy.md" "$SIMPLE"
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$SIMPLE" >>"$ROOT/log"
+  _is changed && [[ "$PB_DETAIL" == *"simple-fix.md (replaced: not a regular file)"* ]]
+}
+
+# A symlinked plan is refused at approval (rc 3), with or without a log.
+test_symlinked_plan_refused_at_approval() {
+  _fresh simple-fix
+  cp "$SIMPLE" "$ROOT/copy.md"
+  rm "$SIMPLE"
+  ln -s "$ROOT/copy.md" "$SIMPLE"
+  local rc=0 rc2=0
+  plan_binding_compute "$TID" >/dev/null || rc=$?
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$SIMPLE" >"$ROOT/log"
+  plan_binding_compute "$TID" --log-file "$ROOT/log" >/dev/null || rc2=$?
+  [ "$rc" -eq 3 ] && [ "$rc2" -eq 3 ]
+}
+
 # A log record naming the ticket's own plan is fine.
 test_log_record_naming_the_own_plan_passes() {
   _fresh openspec
@@ -347,6 +379,8 @@ for fn in \
   test_amendment_must_start_a_line \
   test_amendment_with_control_character_fails \
   test_forged_log_record_pointing_at_a_copy_fails \
+  test_forged_log_record_to_symlinked_plan_fails \
+  test_symlinked_plan_refused_at_approval \
   test_log_record_naming_the_own_plan_passes \
   test_moved_plan_fails \
   test_compute_refuses_a_disagreeing_log_record \
