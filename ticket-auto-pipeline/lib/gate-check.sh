@@ -52,6 +52,14 @@ elif [ -f "$SCRIPT_DIR/vplan-parse.sh" ]; then
   source "$SCRIPT_DIR/vplan-parse.sh"
 fi
 
+# plan-binding.sh: a person's approval is checked against the plan it was
+# given for (_gate_manifest_approved). Sibling first, like verify-readiness.sh.
+if [ -f "$SCRIPT_DIR/plan-binding.sh" ]; then
+  source "$SCRIPT_DIR/plan-binding.sh"
+elif [ -f "$LIB_DIR/plan-binding.sh" ]; then
+  source "$LIB_DIR/plan-binding.sh"
+fi
+
 # verify-readiness.sh is Check 2.6's scorer, and it sources verify-mode.sh,
 # the one ticket-mode classifier verify Step 1e also runs (skill-
 # deterministic-extraction, decisions 1 and 3). Sibling first: a stale synced
@@ -112,6 +120,9 @@ _gate_emit_released() {
 # Echoes exactly one of:
 #   pass                 — approved=true and stage matches
 #   hold                 — manifest read cleanly; not approved, or wrong stage
+#   hold-plan            — `human` only: approved and staged, but the plan on
+#                          disk is not the one the person approved
+#                          (lib/plan-binding.sh)
 #   hold-missing-manifest — no manifest (or the lib itself/REPOS_ROOT is
 #                           unavailable) — a migration/provisioning gap
 #                           distinct from an ordinary hold (D3); the caller
@@ -146,11 +157,41 @@ _gate_manifest_approved() {
   fi
   local stage stage_rc=0
   stage=$(get_ticket_manifest_field "$tid" stage 2>/dev/null) || stage_rc=$?
-  if [ "$stage_rc" -eq 0 ] && [ "$stage" = "$expected_stage" ]; then
-    echo "pass"
-  else
+  if [ "$stage_rc" -ne 0 ] || [ "$stage" != "$expected_stage" ]; then
     echo "hold"
+    return 0
   fi
+  # A person's approval is of a specific plan (lib/plan-binding.sh): the
+  # plan on disk must still be the one approve.sh recorded, appends allowed.
+  # Anything else, a missing record or a check that cannot run included, is
+  # `hold-plan`; the caller logs PLAN_CHANGED_SINCE_APPROVAL. A policy
+  # approval is never checked.
+  if [ "$need" = "human" ]; then
+    if ! declare -f plan_binding_check >/dev/null 2>&1 ||
+      ! plan_binding_check "$tid" --log-file "$LOG_FILE" >/dev/null 2>&1; then
+      echo "hold-plan"
+      return 0
+    fi
+  fi
+  echo "pass"
+}
+
+# _gate_plan_hold — the hold for a person's approval whose plan changed
+# (`hold-plan` above): GATE|gate|fail|held: PLAN_CHANGED_SINCE_APPROVAL — …,
+# the heartbeat and one gate-held event. The approval is left as it is: the
+# person re-runs approve.sh, which records the plan as it stands now.
+_gate_plan_hold() {
+  local msg
+  if declare -f plan_binding_check >/dev/null 2>&1; then
+    plan_binding_check "$TICKET_ID" --log-file "$LOG_FILE" >/dev/null 2>&1 || true
+    msg=$(plan_binding_hold_message "$TICKET_ID")
+  else
+    msg="PLAN_CHANGED_SINCE_APPROVAL — lib/plan-binding.sh not found, so the approved plan cannot be checked. Reinstall the plugin, then a person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
+  fi
+  _plog "$LOG_FILE" "GATE" "gate" "fail" "held: $msg"
+  hb_gate "entry-gate" "fail" "held: PLAN_CHANGED_SINCE_APPROVAL" "{}"
+  _gate_emit_held "plan-changed-since-approval"
+  return 0
 }
 
 # _gate_approval_need <complexity> <autonomy> [open-needs-human-count]
@@ -981,6 +1022,10 @@ _gate_entry() {
     if [ "$_c28b_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8b"
     fi
+    if [ "$_c28b_verdict" = "hold-plan" ]; then
+      _gate_plan_hold
+      return 1
+    fi
     if [ "$_c28b_verdict" = "pass" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved (complex + $autonomy + approved)"
       hb_gate "entry-gate" "ok" "complex auto-approved" "{\"complexity\":\"$complexity\",\"autonomy\":\"$autonomy\",\"approved\":true}"
@@ -1001,6 +1046,10 @@ _gate_entry() {
     _c28c_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$(_gate_approval_need "$complexity" "$autonomy")")
     if [ "$_c28c_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8c"
+    fi
+    if [ "$_c28c_verdict" = "hold-plan" ]; then
+      _gate_plan_hold
+      return 1
     fi
     if [ "$_c28c_verdict" = "pass" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "manual mode overridden: approved + staged confirmed in local manifest (complex ticket)"
@@ -1029,6 +1078,10 @@ _gate_entry() {
     if [ "$_c4_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 4"
     fi
+    if [ "$_c4_verdict" = "hold-plan" ]; then
+      _gate_plan_hold
+      return 1
+    fi
     if [ "$_c4_verdict" = "pass" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "manual mode overridden: approved + staged confirmed in local manifest"
       hb_gate "entry-gate" "ok" "manual mode overridden by manifest approval" "{\"autonomy\":\"manual\"}"
@@ -1055,7 +1108,13 @@ _gate_entry() {
     fi
     local _c5a_need
     _c5a_need=$(_gate_approval_need "$complexity" "$autonomy" "$open_human")
-    if [ "$_c5a_need" = "human" ] && [ "$(_gate_manifest_approved "$TICKET_ID" "Ready" "$_c5a_need")" != "pass" ]; then
+    local _c5a_verdict=""
+    [ "$_c5a_need" != "human" ] || _c5a_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$_c5a_need")
+    if [ "$_c5a_verdict" = "hold-plan" ]; then
+      _gate_plan_hold
+      return 1
+    fi
+    if [ "$_c5a_need" = "human" ] && [ "$_c5a_verdict" != "pass" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "fail" "held: open [needs-human] question(s) ($open_human) in notes.md ## Open Questions — answer them, then run in your own terminal, from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
       hb_gate "entry-gate" "fail" "held: open needs-human questions" "{\"open\":\"$open_human\"}"
       _gate_emit_held "open-human-questions"
@@ -1136,7 +1195,11 @@ _gate_reapprove() {
 # (_gate_approval_need + _gate_manifest_approved), read again where the
 # work starts, so an approval the entry gate would hold is refused here
 # too when /ticket-implement is invoked without the router. Read-only: no
-# log line, no heartbeat, no event, no flow.sh call.
+# log line, no heartbeat, no event, no flow.sh call. One exception:
+# plan_binding_check notes bytes appended to an approved plan as one
+# META|plan-binding|info line (once per distinct message). A person's
+# approval whose plan changed is refused with REASON=PLAN_CHANGED_SINCE_APPROVAL
+# — …, and the policy fallback below never covers it.
 #
 # One addition: a ticket that needs a person's approval is also let
 # through on a `policy` approval when the log already carries a completed
@@ -1161,7 +1224,8 @@ _gate_implement() {
   fi
   need=$(_gate_approval_need "$complexity" "$autonomy" "$open_human")
   verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$need")
-  if [ "$verdict" != "pass" ] && [ "$need" = "human" ] &&
+  # The policy fallback never covers a person's approval whose plan changed.
+  if [ "$verdict" != "pass" ] && [ "$verdict" != "hold-plan" ] && [ "$need" = "human" ] &&
     grep -q '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null; then
     verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
   fi
@@ -1170,7 +1234,14 @@ _gate_implement() {
     return 0
   fi
   echo "IMPLEMENT_AUTH=none"
-  if [ "$verdict" = "hold-missing-manifest" ]; then
+  if [ "$verdict" = "hold-plan" ]; then
+    if declare -f plan_binding_check >/dev/null 2>&1; then
+      plan_binding_check "$TICKET_ID" --log-file "$LOG_FILE" >/dev/null 2>&1 || true
+      echo "REASON=$(plan_binding_hold_message "$TICKET_ID")"
+    else
+      echo "REASON=PLAN_CHANGED_SINCE_APPROVAL — lib/plan-binding.sh not found; reinstall the plugin, then a person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
+    fi
+  elif [ "$verdict" = "hold-missing-manifest" ]; then
     echo "REASON=no local manifest for $TICKET_ID"
   elif [ "$need" = "human" ]; then
     echo "REASON=needs a person's approval at stage Ready (complexity=${complexity:-unreadable}, autonomy=$autonomy, open needs-human questions=$open_human); a policy approval does not count. A person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"

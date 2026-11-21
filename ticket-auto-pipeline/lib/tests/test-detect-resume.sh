@@ -705,17 +705,29 @@ test_gate_held_no_manifest_logs_distinct_reason() {
 }
 
 # ── a hold is lifted by a person's approval only ────────────────────────────
-# _gate_held_resume <provenance|none> — a held ticket whose manifest records
-# an approval of the given provenance at Ready; prints RESUME_STEP.
+# _gate_held_resume <provenance|none> [plan: bound|unbound|edited|appended]
+# — a held ticket whose manifest records an approval of the given provenance
+# at Ready. A human approval is bound to the ticket's simple-fix.md
+# (lib/plan-binding.sh) unless `unbound`; the plan is then changed as named.
+# Prints RESUME_STEP; with DR_KEEP_LOG set, the log after the run too.
 _gate_held_resume() {
-  local prov="$1" tmpdir tid="GHA-1" extra='{}'
+  local prov="$1" plan="${2:-bound}" tmpdir tid="GHA-1" extra='{}' rec
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs" "$tmpdir/repos/.ticket-auto/initiatives/_index" \
-    "$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner"
+    "$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner" "$tmpdir/$tid--test"
   echo "INIT-1" >"$tmpdir/repos/.ticket-auto/initiatives/_index/${tid}.initiative"
+  printf '# Fix\n- [ ] change it\n' >"$tmpdir/$tid--test/simple-fix.md"
   [ "$prov" = "none" ] || extra="{\"approved\":true,\"approval_provenance\":\"$prov\"}"
+  if [ "$prov" = "human" ] && [ "$plan" != "unbound" ]; then
+    rec=$(cd "$tmpdir" && REPOS_ROOT="$tmpdir/repos" bash "$LIB_DIR/plan-binding.sh" compute "$tid")
+    extra=$(jq -c --argjson r "$rec" '. + {approved_plan: ($r + {recorded_at: "2026-07-05T10:00:03Z"})}' <<<"$extra")
+  fi
   jq -nc --argjson e "$extra" '{type:"bug",initiative:"INIT-1",blocked_by:[],dispatch:false,stage:"Ready"} + $e' \
     >"$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner/manifest.json"
+  case "$plan" in
+  edited) printf '# Fix\n- [ ] change something else\n' >"$tmpdir/$tid--test/simple-fix.md" ;;
+  appended) printf '\n## Amendment #1\nanswer\n' >>"$tmpdir/$tid--test/simple-fix.md" ;;
+  esac
   {
     echo "2026-07-05T10:00:00Z|META|schema|info|1"
     echo "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex"
@@ -723,8 +735,9 @@ _gate_held_resume() {
   } >"$tmpdir/logs/${tid}-pipeline.log"
   local out
   out=$(cd "$tmpdir" && REPOS_ROOT="$tmpdir/repos" bash "$DETECT_SH" "$tid" 2>/dev/null)
-  rm -rf "$tmpdir"
   _field "$out" RESUME_STEP
+  [ -z "${DR_KEEP_LOG:-}" ] || cat "$tmpdir/logs/${tid}-pipeline.log"
+  rm -rf "$tmpdir"
 }
 
 test_gate_held_human_approval_resumes_at_reconcile() {
@@ -732,6 +745,28 @@ test_gate_held_human_approval_resumes_at_reconcile() {
   step=$(_gate_held_resume human)
   [ "$step" = "STEP_3_5" ] || {
     echo "expected STEP_3_5 for a human approval, got $step"
+    return 1
+  }
+}
+
+# A person's approval releases the hold only for the plan they approved:
+# appends pass (and are logged), an edit or a pre-binding approval does not.
+test_gate_held_plan_binding() {
+  local out
+  out=$(DR_KEEP_LOG=1 _gate_held_resume human appended)
+  [ "$(head -1 <<<"$out")" = "STEP_3_5" ] && grep -q '|META|plan-binding|info|appended to approved plan' <<<"$out" || {
+    echo "appended: expected STEP_3_5 and an info line, got: $out"
+    return 1
+  }
+  out=$(DR_KEEP_LOG=1 _gate_held_resume human edited)
+  [ "$(head -1 <<<"$out")" = "GATE_STILL_HELD" ] &&
+    grep -q '|META|plan-binding|warn|PLAN_CHANGED_SINCE_APPROVAL — the plan changed after a person approved it: simple-fix.md (edited)' <<<"$out" || {
+    echo "edited: expected GATE_STILL_HELD naming the file, got: $out"
+    return 1
+  }
+  out=$(DR_KEEP_LOG=1 _gate_held_resume human unbound)
+  [ "$(head -1 <<<"$out")" = "GATE_STILL_HELD" ] && grep -q 'predates plan binding' <<<"$out" || {
+    echo "unbound: expected GATE_STILL_HELD naming plan binding, got: $out"
     return 1
   }
 }
@@ -1494,6 +1529,7 @@ test_verify_checkpoint_empty_without_checkpoints() {
 
 for fn in \
   test_gate_held_human_approval_resumes_at_reconcile \
+  test_gate_held_plan_binding \
   test_gate_held_policy_approval_stays_held \
   test_operator_stop_is_not_a_verify_attempt \
   test_operator_stop_after_real_failures_keeps_count \

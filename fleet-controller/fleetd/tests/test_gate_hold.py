@@ -1043,5 +1043,17 @@ class TestCadence(unittest.TestCase):
         self.assertTrue(gate_hold.is_due(1000.0, now=1400.0, interval=300))
 
 
+class ApprovalHoldReasonsTest(unittest.TestCase):
+    def test_plan_changed_hold_is_an_approval_hold(self):
+        """gate-check.sh's PLAN_CHANGED_SINCE_APPROVAL hold is released only
+        by a person running approve.sh again, so the intake pass must turn
+        it into a gate row like a complex-ticket hold."""
+        from fleetd import supervisor
+        self.assertIn('plan-changed-since-approval',
+                      supervisor._GATE_HOLD_APPROVAL_REASONS)
+        self.assertNotIn('linear-fetch-failed',
+                         supervisor._GATE_HOLD_APPROVAL_REASONS)
+
+
 if __name__ == '__main__':
     unittest.main()

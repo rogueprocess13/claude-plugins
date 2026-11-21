@@ -15,6 +15,15 @@
 # Applying the (now unread) `approved` label in the tracker's own UI does not
 # approve a ticket: only this script does.
 #
+# The approval is of a specific plan (lib/plan-binding.sh). The prompt shows
+# the plan's short id (12 hex) and its files; right after flow.sh it records
+# `approved_plan` (type, and per file the relative path, byte size and
+# sha256 of the content with task checkboxes unticked). Every reader of a
+# person's approval checks the plan on disk against it: appends pass, any
+# other change holds the ticket (PLAN_CHANGED_SINCE_APPROVAL) until a person
+# runs this again. No plan, or one that cannot be hashed or shown as plain
+# text, is a refusal (exit 7).
+#
 # Who may run it (lib/human-terminal.sh), both refused with exit 4:
 #   1. CLAUDE_CODE_SESSION_ID, FLEET_WORKER_PID or FLEET_GENERATION is set
 #      (an agent session or a fleetd worker).
@@ -29,12 +38,18 @@
 # unsets the variables, cannot record a human approval. What it does not: a
 # process that allocates its own pseudo-terminal and types the id can, and so
 # can anything that writes the manifest file directly. Closing that needs a
-# store the agent cannot write.
+# store the agent cannot write. The plan binding does not change that: the
+# manifest, the record in it included, is still a file an agent can write.
+# It binds the approval to one plan version and makes a later rewrite of
+# that plan visible and blocking.
 #
-# Exit: 0 approved (or already approved), 1 usage, 2 flow.sh or a library
-#       not found, 3 manifest not addressable, 4 agent context or no
-#       terminal, 5 the manifest does not show the approval after the write,
-#       6 the typed id did not match (nothing recorded), else flow.sh's code.
+# Exit: 0 approved (or already approved for this exact plan), 1 usage,
+#       2 flow.sh or a library not found, 3 manifest not addressable,
+#       4 agent context or no terminal, 5 the manifest does not show the
+#       approval after the write, 6 the typed id did not match or the plan
+#       changed while on screen (nothing recorded), 7 no plan, or one that
+#       cannot be hashed or shown (nothing recorded), 8 the plan binding
+#       could not be recorded (the ticket stays held), else flow.sh's code.
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
@@ -115,12 +130,63 @@ ensure_ticket_manifest "$TICKET_ID" || {
 # policy approval still records the new provenance. A manifest still holding
 # a pending_event (an earlier emit failed) goes through flow.sh, which
 # replays it.
+# ── The plan being approved (lib/plan-binding.sh) ───────────────────────────
+# A person approves a specific plan. It is found the way the gate finds it
+# (the log's artifact record, then simple-fix.md, then the change dir, from
+# the current directory), hashed, and shown by its short id and file list.
+# No plan, a plan that cannot be hashed, or a file name that is not plain
+# text is a refusal: nothing is recorded.
+source "$LIB_DIR/plan-binding.sh" 2>/dev/null ||
+  source "$SCRIPT_DIR/../../lib/plan-binding.sh" 2>/dev/null || {
+  echo "ticket-approve: lib/plan-binding.sh not found — reinstall the plugin" >&2
+  exit 2
+}
+source "$LIB_DIR/log-dir.sh" 2>/dev/null ||
+  source "$SCRIPT_DIR/../../lib/log-dir.sh" 2>/dev/null || true
+_plan_args=()
+if declare -f ticket_log_dir_or >/dev/null 2>&1; then
+  _plan_log="$(ticket_log_dir_or "$PWD/logs")/${TICKET_ID}-pipeline.log"
+else
+  _plan_log="$PWD/logs/${TICKET_ID}-pipeline.log"
+fi
+[ ! -f "$_plan_log" ] || _plan_args=(--log-file "$_plan_log")
+_p_rc=0
+PLAN_RECORD=$(plan_binding_compute "$TICKET_ID" "${_plan_args[@]}") || _p_rc=$?
+case "$_p_rc" in
+0) ;;
+12)
+  echo "ticket-approve: no plan artifact found for $TICKET_ID (simple-fix.md in its ticket dir, or its openspec change dir). Run this from the tickets root. Nothing was recorded." >&2
+  exit 7
+  ;;
+2)
+  echo "ticket-approve: the plan for $TICKET_ID could not be resolved or hashed (more than one match, or no sha256 tool). Nothing was recorded." >&2
+  exit 7
+  ;;
+3)
+  echo "ticket-approve: the plan for $TICKET_ID holds an entry that is not a regular file (a symlink or a device). Nothing was recorded." >&2
+  exit 7
+  ;;
+*)
+  echo "ticket-approve: the plan for $TICKET_ID could not be found (rc $_p_rc). Nothing was recorded." >&2
+  exit 7
+  ;;
+esac
+plan_binding_names_plain "$PLAN_RECORD" || {
+  echo "ticket-approve: a file or directory name in the plan for $TICKET_ID is not plain text: it holds control or invisible characters, a pipe or a tab, or is not valid UTF-8. Such a name can hide what a terminal shows, so nothing is displayed and nothing is recorded. Have it renamed, then run this again." >&2
+  exit 7
+}
+PLAN_ID=$(plan_binding_short_id "$PLAN_RECORD")
+
 ALREADY_APPROVED="false"
 _pending=$(get_ticket_manifest_field "$TICKET_ID" pending_event 2>/dev/null || true)
+# ...and only while the plan recorded with that approval is the plan as it
+# stands, byte for byte: a plan that changed since, even only by appended
+# bytes, or an approval from before plan binding, is approved again.
 if { [ -z "$_pending" ] || [ "$_pending" = "null" ]; } &&
   [ "$(get_ticket_manifest_field "$TICKET_ID" approved 2>/dev/null || true)" = "true" ] &&
   [ "$(get_ticket_manifest_field "$TICKET_ID" approval_provenance 2>/dev/null || true)" = "human" ] &&
-  [ "$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)" = "Ready" ]; then
+  [ "$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)" = "Ready" ] &&
+  plan_binding_matches_exactly "$TICKET_ID" "${_plan_args[@]}"; then
   ALREADY_APPROVED="true"
 fi
 
@@ -144,6 +210,11 @@ if [ "$ALREADY_APPROVED" != "true" ] || [ "$NEEDS_INFO_SET" = "true" ]; then
     [ "$_stage" = "Approve" ] || _lines+=("Note: it is not at the Approve stage. Check that this is the ticket you mean.")
     [ "$NEEDS_INFO_SET" != "true" ] || _lines+=("It also clears the needs-info flag.")
   fi
+  _lines+=("Plan: $(jq -r '.type' <<<"$PLAN_RECORD") $PLAN_ID in $(jq -r '.dir' <<<"$PLAN_RECORD"), $(jq -r '.files | length' <<<"$PLAN_RECORD") file(s):")
+  while IFS= read -r _pl; do
+    _lines+=("  $_pl")
+  done < <(jq -r '.files[] | "\(.path) (\(.size) bytes)"' <<<"$PLAN_RECORD")
+  [ "$ALREADY_APPROVED" = "true" ] || _lines+=("Your approval is bound to this plan: a later edit to it holds the ticket until you approve again.")
   _lines+=("Read the plan and the appraisal comment first; answer open questions before you approve.")
   _c_rc=0
   human_terminal_confirm "$TICKET_ID" "${_lines[@]}" || _c_rc=$?
@@ -157,11 +228,27 @@ if [ "$ALREADY_APPROVED" != "true" ] || [ "$NEEDS_INFO_SET" = "true" ]; then
 fi
 
 if [ "$ALREADY_APPROVED" != "true" ]; then
+  # The plan must still be what was shown: one changed while the person was
+  # reading is not what they approved.
+  _now=$(plan_binding_compute "$TICKET_ID" "${_plan_args[@]}" 2>/dev/null) || _now=""
+  if [ "$_now" != "$PLAN_RECORD" ]; then
+    echo "ticket-approve: the plan for $TICKET_ID changed while it was on screen. Nothing was recorded; run this again." >&2
+    exit 6
+  fi
   _rc=0
   bash "$FLOW_SH" "$TICKET_ID" human-approve --provenance human || _rc=$?
   if [ "$_rc" -ne 0 ]; then
     echo "ticket-approve: flow.sh human-approve failed (exit $_rc)" >&2
     exit "$_rc"
+  fi
+  # flow.sh owns the approval write; the binding is recorded right after it.
+  # A failed record is a failed approval: an approval with no binding never
+  # passes a gate, so the ticket stays held until this succeeds.
+  _b_rc=0
+  set_ticket_approved_plan "$TICKET_ID" "$PLAN_RECORD" || _b_rc=$?
+  if [ "$_b_rc" -ne 0 ]; then
+    echo "ticket-approve: the approval was recorded but the plan it is for could not be (exit $_b_rc). The ticket stays held: run this again." >&2
+    exit 8
   fi
 fi
 
@@ -173,10 +260,15 @@ echo "approved=${APPROVED:-false}"
 echo "approval_provenance=${PROVENANCE:-}"
 echo "stage=${STAGE:-}"
 echo "already_approved=${ALREADY_APPROVED}"
+echo "plan_id=${PLAN_ID}"
 
 if [ "$APPROVED" != "true" ]; then
   echo "ticket-approve: manifest does not reflect the approval after flow.sh succeeded" >&2
   exit 5
+fi
+if ! plan_binding_matches_exactly "$TICKET_ID" "${_plan_args[@]}"; then
+  echo "ticket-approve: the manifest does not show the approval bound to plan $PLAN_ID after the write" >&2
+  exit 8
 fi
 
 # needs-info clear (dor-readiness-gate-foundation task 6.3) — the first call
