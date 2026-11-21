@@ -56,7 +56,7 @@ ticket-verify	175474
 # allow-growth: #761 — one paragraph each in references/build-only.md (diff-only tickets: file and diff checks, no build tool) and references/live-backend.md (api-only tickets: curl and the test command, never a browser), read only in those modes (+917 bytes, 0.126.1)
 # allow-growth: #773 — references/ac-tags.md (guard, tag kept per item, the named test, one verify-ac-tags.sh run per repository, counting and reports), read only when VERIFY_AC_TAGS=true and the ticket has a [unit] criterion (+5,863 bytes, 0.137.0)
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
-ticket-verify:conditional	45221
+ticket-verify:conditional	45216
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 wiki-maintenance	92596

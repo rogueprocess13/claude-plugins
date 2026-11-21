@@ -58,14 +58,29 @@
 #
 # Change a regex here, never in a caller.
 #
+#   verify_mode_unit_override <ticket-dir> <env> <mode>
+#     GitHub #773. Prints the number of criteria when a ticket whose
+#     criteria are ALL `[unit]` would otherwise start the stack:
+#     VERIFY_AC_TAGS=true, <env> is exactly `local`, <mode> is browser or
+#     live-backend, and <ticket-dir>/context.md has at least one criterion,
+#     every one `[unit]`. rc 1 (nothing printed) otherwise. The criteria are
+#     read by verify-ac-tags.sh's vat_list (_dor_v2_ac_items): the same
+#     reader and body ticket-verify Step 1i uses, so whenever this fires the
+#     `[unit]` proof (references/ac-tags.md) is loaded too.
+#
 # CLI (ticket-verify Step 1e):
-#   verify-mode.sh <TICKET-ID> --ticket-dir D [--root R] [--description-file F] [--no-log]
+#   verify-mode.sh <TICKET-ID> --ticket-dir D [--root R] [--description-file F]
+#                  [--env local|uat] [--no-log]
 # Plan text: the ticket's simple-fix plan (ticket-dir.sh plan --type
 # simple-fix), else D/notes.md; then D/context.md; then the description file.
 # Prints VERIFY_MODE=<mode>, then VERIFY_SHAPE=<shape> when the shape is
 # api-only or diff-only, and, unless --no-log, writes
 # VERIFY|load-context|done|Context loaded, [shape=<shape>, ]mode=<mode>
-# through plog.sh.
+# through plog.sh. When verify_mode_unit_override fires (only with
+# `--env local`) it prints VERIFY_MODE=build-only and
+# VERIFY_MODE_OVERRIDE=all-unit (no VERIFY_SHAPE), and logs one
+# META|verify-mode-override|info line naming the declared or classified
+# shape, then the load-context line with mode=build-only.
 # Exit 0, 2 usage.
 #
 # -u (nounset) intentionally omitted (repo convention, see verifier-result.sh).
@@ -243,12 +258,29 @@ verify_mode_gate_profile() {
   esac
 }
 
+verify_mode_unit_override() {
+  local td="${1:-}" env="${2:-}" mode="${3:-}" list total unit
+  [ "${VERIFY_AC_TAGS:-false}" = "true" ] || return 1
+  [ "$env" = "local" ] || return 1
+  case "$mode" in browser | live-backend) ;; *) return 1 ;; esac
+  [ -f "$td/context.md" ] && [ -r "$td/context.md" ] || return 1
+  if ! declare -f vat_list >/dev/null 2>&1; then
+    # shellcheck source=verify-ac-tags.sh
+    source "$_VERIFY_MODE_DIR/verify-ac-tags.sh" || return 1
+  fi
+  list=$(vat_list "$(cat "$td/context.md")")
+  total=$(grep -c . <<<"$list" || true)
+  unit=$(awk -F'\t' '$2 == "unit"' <<<"$list" | grep -c . || true)
+  [ "${total:-0}" -gt 0 ] && [ "${unit:-0}" = "$total" ] || return 1
+  echo "$total"
+}
+
 _verify_mode_usage() {
-  echo "usage: verify-mode.sh <TICKET-ID> --ticket-dir D [--root R] [--description-file F] [--no-log]" >&2
+  echo "usage: verify-mode.sh <TICKET-ID> --ticket-dir D [--root R] [--description-file F] [--env local|uat] [--no-log]" >&2
 }
 
 _verify_mode_main() {
-  local tid="" td="" root="" desc_file="" log=1
+  local tid="" td="" root="" desc_file="" env="" log=1
   while [ $# -gt 0 ]; do
     case "$1" in
     --ticket-dir)
@@ -275,6 +307,14 @@ _verify_mode_main() {
       desc_file="$2"
       shift 2
       ;;
+    --env)
+      [ $# -ge 2 ] || {
+        _verify_mode_usage
+        return 2
+      }
+      env="$2"
+      shift 2
+      ;;
     --no-log)
       log=0
       shift
@@ -298,11 +338,26 @@ _verify_mode_main() {
     return 2
   }
 
-  local _plan_file mode shape
+  local _plan_file _text mode shape n_unit how
   _plan_file=$(bash "$_VERIFY_MODE_DIR/ticket-dir.sh" plan "$tid" --root "$root" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
   [ -z "$_plan_file" ] && _plan_file="$td/notes.md"
-  shape=$(verify_mode_shape "$(verify_mode_text "$_plan_file" "$td" "$desc_file")")
+  _text=$(verify_mode_text "$_plan_file" "$td" "$desc_file")
+  shape=$(verify_mode_shape "$_text")
   mode=$(_verify_mode_of_shape "$shape")
+  # GitHub #773: every criterion is proved by a test run verify starts
+  # itself, so there is no stack to start and nobody to log in.
+  if n_unit=$(verify_mode_unit_override "$td" "$env" "$mode"); then
+    how=classified
+    [ -n "$(_verify_mode_explicit "$(_verify_mode_norm "$_text")")" ] && how=declared
+    echo "VERIFY_MODE=build-only"
+    echo "VERIFY_MODE_OVERRIDE=all-unit"
+    if [ "$log" = 1 ]; then
+      bash "$_VERIFY_MODE_DIR/plog.sh" META verify-mode-override info \
+        "${how} shape=${shape} (mode=${mode}) overridden to mode=build-only: all ${n_unit} criteria are [unit], VERIFY_AC_TAGS=true, env=local"
+      bash "$_VERIFY_MODE_DIR/plog.sh" VERIFY load-context done "Context loaded, mode=build-only"
+    fi
+    return 0
+  fi
   echo "VERIFY_MODE=$mode"
   # The shape is printed and logged only when it says more than the mode
   # (api-only, diff-only). It goes before mode= in the log line: a

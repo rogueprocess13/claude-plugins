@@ -424,7 +424,7 @@
       "default": "false",
       "on_value": "true",
       "category": "feature",
-      "summary": "ticket-verify proves a criterion tagged [unit] by running the project's test command itself in the verify worktree and seeing a named test pass; [live] and untagged criteria are proved on the running system as before.",
+      "summary": "ticket-verify proves a criterion tagged [unit] by running the project's test command itself in the verify worktree and seeing a named test pass; [live] and untagged criteria are proved on the running system as before. A local run whose criteria are all [unit] verifies in build-only mode and starts no stack.",
       "requires": [],
       "recommend": "situational",
       "why": "Opt-in until one ticket with both tags has run live. A [unit] criterion with no test verify can name, or a project with no BE_TEST_CMD / BE_TEST_RUNNER / FE_TEST_CMD, fails; it is never proved live instead.",

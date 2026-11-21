@@ -247,6 +247,81 @@ bash "$VM" "$TID" --ticket-dir >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] && _ok "--ticket-dir without value -> exit 2" || _ko "--ticket-dir no value rc=$rc"
 _ws_rm
 
+echo "=== all-[unit] criteria route to build-only (GitHub #773, VERIFY_AC_TAGS) ==="
+# _unit_body <verify-mode-line-or-empty> <criterion>... — context.md with the
+# given criteria under ## Acceptance Criteria.
+_unit_body() {
+  local vm="$1" c
+  shift
+  {
+    printf '# Fix thing\n\nClick the Save button on the invoice page.\n\n'
+    [ -n "$vm" ] && printf '## Verify Mode\n\n**Verify mode:** %s — reason\n\n' "$vm"
+    printf '## Acceptance Criteria\n\n'
+    for c in "$@"; do printf -- '- [ ] %s\n' "$c"; done
+  } >"$TD/context.md"
+}
+_ws_new
+_unit_body "" "[unit] totals reject an empty invoice" "[unit] totals round half up"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --root "$TICKETS_ROOT" --env local)
+[ "$out" = "$(printf 'VERIFY_MODE=build-only\nVERIFY_MODE_OVERRIDE=all-unit')" ] &&
+  _ok "classified browser, all [unit], flag on, local -> build-only" || _ko "override stdout: $out"
+line=$(grep '|META|verify-mode-override|' "$TAP_LOG" | tail -1)
+[[ "$line" == *"|META|verify-mode-override|info|classified shape=browser (mode=browser) overridden to mode=build-only: all 2 criteria are [unit], VERIFY_AC_TAGS=true, env=local" ]] &&
+  _ok "one META line names the classified shape and the override" || _ko "override META line: $line"
+[ "$(grep -c '|META|verify-mode-override|' "$TAP_LOG")" = 1 ] && _ok "exactly one override line" || _ko "override line count"
+got=$(grep '|VERIFY|load-context|done|' "$TAP_LOG" 2>/dev/null | tail -1 | sed -n 's/.*mode=//p')
+[ "$got" = "build-only" ] && _ok "a --from-step resume reads mode=build-only" || _ko "override resume mode: $got"
+[ "$(tail -1 "$TAP_LOG" | cut -d'|' -f2-3)" = "VERIFY|load-context" ] && _ok "load-context stays the last line" || _ko "last line: $(tail -1 "$TAP_LOG")"
+
+: >"$TAP_LOG"
+_unit_body "live-backend" "[unit] the retry policy is three attempts"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --root "$TICKETS_ROOT" --env local)
+line=$(grep '|META|verify-mode-override|' "$TAP_LOG" | tail -1)
+[ "$out" = "$(printf 'VERIFY_MODE=build-only\nVERIFY_MODE_OVERRIDE=all-unit')" ] &&
+  [[ "$line" == *"|declared shape=live-backend (mode=live-backend) overridden to mode=build-only: all 1 criteria"* ]] &&
+  _ok "declared live-backend, all [unit] -> build-only, logged as declared" || _ko "declared override: $out / $line"
+
+_unit_body "api-only" "[unit] the handler returns 422 on a bad body"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --root "$TICKETS_ROOT" --env local --no-log)
+[ "$out" = "$(printf 'VERIFY_MODE=build-only\nVERIFY_MODE_OVERRIDE=all-unit')" ] &&
+  _ok "declared api-only (live-backend path) is overridden too, no VERIFY_SHAPE" || _ko "api-only override: $out"
+
+# Unchanged cases: byte-for-byte the output without the flag.
+_unit_body "" "[unit] totals reject an empty invoice" "[unit] totals round half up"
+want=$(bash "$VM" "$TID" --ticket-dir "$TD" --no-log)
+[ "$want" = "VERIFY_MODE=browser" ] && _ok "flag unset: browser as before" || _ko "flag unset: $want"
+out=$(VERIFY_AC_TAGS=false bash "$VM" "$TID" --ticket-dir "$TD" --env local --no-log)
+[ "$out" = "$want" ] && _ok "flag false -> unchanged" || _ko "flag false: $out"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --env uat --no-log)
+[ "$out" = "$want" ] && _ok "--env uat -> unchanged" || _ko "env uat: $out"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --no-log)
+[ "$out" = "$want" ] && _ok "no --env -> unchanged (local must be stated)" || _ko "no env: $out"
+_unit_body "" "[unit] totals reject an empty invoice" "[live] the invoice page shows the total"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --env local --no-log)
+[ "$out" = "$want" ] && _ok "one [live] criterion -> unchanged" || _ko "mixed live: $out"
+_unit_body "" "[unit] totals reject an empty invoice" "the invoice page shows the total"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --env local --no-log)
+[ "$out" = "$want" ] && _ok "one untagged criterion -> unchanged" || _ko "mixed untagged: $out"
+_unit_body ""
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --env local --no-log)
+[ "$out" = "$want" ] && _ok "no criteria -> unchanged" || _ko "no criteria: $out"
+_unit_body "diff-only" "[unit] the README names the flag"
+out=$(VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --env local --no-log)
+[ "$out" = "$(printf 'VERIFY_MODE=build-only\nVERIFY_SHAPE=diff-only')" ] && _ok "already build-only (diff-only) -> unchanged" || _ko "diff-only: $out"
+: >"$TAP_LOG"
+_unit_body "" "[unit] totals reject an empty invoice" "[live] the invoice page shows the total"
+VERIFY_AC_TAGS=true bash "$VM" "$TID" --ticket-dir "$TD" --root "$TICKETS_ROOT" --env local >/dev/null
+! grep -q 'verify-mode-override' "$TAP_LOG" && _ok "no override line when nothing is overridden" || _ko "stray override line"
+rc=0
+bash "$VM" "$TID" --ticket-dir "$TD" --env >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] && _ok "--env without value -> exit 2" || _ko "--env no value rc=$rc"
+# The override reads the body the [unit] proof reads (Step 1i), so it never
+# fires when that gate would stay off.
+_unit_body "" "[unit] totals reject an empty invoice"
+got=$(VERIFY_AC_TAGS=true bash "$VM_LIB_DIR/verify-ac-tags.sh" gate "$TD" --env local | head -1)
+[ "$got" = "AC_TAGS=on" ] && _ok "whenever it fires, verify-ac-tags.sh gate is on too" || _ko "ac-tags gate: $got"
+_ws_rm
+
 echo "=== gate-check.sh scores through verify-readiness.sh (no second classifier) ==="
 gc="$VM_LIB_DIR/gate-check.sh"
 if grep -q 'verify_readiness_score' "$gc" && ! grep -q '_build_signals=' "$gc" && ! grep -q 'grep -ciP' "$gc" && ! grep -q 'verify_mode_gate_class' "$gc"; then

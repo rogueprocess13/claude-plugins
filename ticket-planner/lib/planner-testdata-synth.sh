@@ -664,9 +664,16 @@ _planner_tds_signals() {
 #   - `Seed command: make seed-<slug>` / `Verify command: make
 #     verify-seed-<slug>` — the only shape seed-apply runs;
 #   - `Seed channel:` — persona-select's explicit channel line;
-#   - AC phrases "the seed command exits 0 on two consecutive runs" and "the
-#     verify command passes" + `make ` — gate-check's build-only mode; no
-#     browser words (navigate/click/page/…) anywhere in the text;
+#   - `## Verify Mode` with `**Verify mode:** live-backend` (GitHub #773):
+#     every criterion runs a make target against records held by the
+#     running services (even the `files` channel imports through the app),
+#     so verify-mode.sh reads it before any heuristic, verify runs its
+#     live-backend path and gate-check maps it to the api-only profile. It
+#     makes the body carry ticket-body-v2, so the body also carries a
+#     non-empty `## Errors and Edge Cases` and tags every criterion `[live]`
+#     (repeated in its Verification Notes cell): the readiness codes stay
+#     silent with every DOR_STRICT_* switch on. No browser words
+#     (navigate/click/page/…) anywhere in the text;
 #   - Verification Notes rows all `none` — self-verifying;
 #   - Signals: Kind enabler, Serves [], Enables = consumers' outcome ids,
 #     Strategy Conservative (appraise fast-path → simple), Priority High
@@ -743,8 +750,8 @@ planner_testdata_synth_render() {
 
   local fk_ac="" fk_row=""
   if _planner_tds_relational "$channel" "$(cut -d$'\037' -f5 <<<"$recs")"; then
-    fk_ac="- [ ] Every seeded foreign key resolves to a seeded or existing parent record"$'\n'
-    fk_row="| Every seeded foreign key resolves to a seeded or existing parent record | implementer | none | — | — | verify target reports no orphan rows | yes |"$'\n'
+    fk_ac="- [ ] [live] Every seeded foreign key resolves to a seeded or existing parent record"$'\n'
+    fk_row="| [live] Every seeded foreign key resolves to a seeded or existing parent record | implementer | none | — | — | verify target reports no orphan rows | yes |"$'\n'
   fi
 
   local keys_line
@@ -792,13 +799,25 @@ Both commands must stay \`make <target>\` (or \`make -C <relpath> <target>\`); V
 ## Test Data Provided
 
 ${provided}
+## Verify Mode
+
+**Verify mode:** live-backend — the seed and verify targets load records into, and read them back from, the running services. There is no page and no single endpoint to call.
+
+## Errors and Edge Cases
+
+- **Failure** — the seed or verify target exits non-zero. A second seed run completes a partial one without duplicating records.
+- **Check order** — Not applicable — the targets answer no request.
+- **Empty or malformed input** — Not applicable — the targets take no input; the records are fixed under Test Data Provided.
+- **Late or concurrent responses** — Not applicable — ticket-auto runs seed targets under its single-flight verify lock, one at a time.
+- **Unauthorised viewer** — Not applicable — nothing is added that a person can view; the targets run without signing in.
+
 ## Acceptance Criteria
 
-- [ ] the seed command exits 0 on two consecutive runs
-- [ ] the verify command passes
-${fk_ac}- [ ] All seeded data is synthetic or masked, with no production personal data
-- [ ] make reset-seed-${slug} removes only the records this ticket seeds and exits 0
-- [ ] A README maps every record key under Test Data Provided to its record and consumer criterion
+- [ ] [live] the seed command exits 0 on two consecutive runs
+- [ ] [live] the verify command passes
+${fk_ac}- [ ] [live] All seeded data is synthetic or masked, with no production personal data
+- [ ] [live] make reset-seed-${slug} removes only the records this ticket seeds and exits 0
+- [ ] [live] A README maps every record key under Test Data Provided to its record and consumer criterion
 
 ## Out of Scope
 
@@ -829,11 +848,11 @@ ${signals}
 
 | Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
 |-----------|------|-----------|--------|-----------------|----------|------------|
-| the seed command exits 0 on two consecutive runs | implementer | none | — | — | exit code 0 on both runs | yes |
-| the verify command passes | implementer | none | — | — | exit code 0 | yes |
-${fk_row}| All seeded data is synthetic or masked, with no production personal data | reviewer | none | — | — | needs human judgement of the seed scripts, no checkable value | no |
-| make reset-seed-${slug} removes only the records this ticket seeds and exits 0 | implementer | none | — | — | exit code 0 and the verify target then fails | yes |
-| A README maps every record key under Test Data Provided to its record and consumer criterion | reviewer | none | — | — | every td-${tok}-n key appears in the README | yes |
+| [live] the seed command exits 0 on two consecutive runs | implementer | none | — | — | exit code 0 on both runs | yes |
+| [live] the verify command passes | implementer | none | — | — | exit code 0 | yes |
+${fk_row}| [live] All seeded data is synthetic or masked, with no production personal data | reviewer | none | — | — | needs human judgement of the seed scripts, no checkable value | no |
+| [live] make reset-seed-${slug} removes only the records this ticket seeds and exits 0 | implementer | none | — | — | exit code 0 and the verify target then fails | yes |
+| [live] A README maps every record key under Test Data Provided to its record and consumer criterion | reviewer | none | — | — | every td-${tok}-n key appears in the README | yes |
 EOF
 }
 

@@ -151,10 +151,10 @@ If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
-Some tickets are verified with build tooling or file checks (no UI or API surface: a parent-POM, a docs-only change), some against a running backend through health/API calls (an API-only ticket, service registration: no login, no page), and the rest in a browser. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; a `Verify mode:` field in the ticket wins. It writes the `load-context` log line itself:
+Some tickets are verified with build tooling or file checks (a parent-POM, a docs-only change), some against a running backend through health/API calls (an API-only ticket, service registration: no login, no page), the rest in a browser. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; a `Verify mode:` field in the ticket wins. It writes the `load-context` log line itself:
 
 ```bash
-bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT"
+bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT" --env {env}
 ```
 
 Record the printed `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Step 1g runs in every mode. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).

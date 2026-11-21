@@ -4,7 +4,7 @@
   "accepted": 0,
   "files_present": ["specs/audit-log-test-data.md", "testdata-synth.json", "specs/INDEX.md"],
   "file_contains": {
-    "specs/audit-log-test-data.md": ["<!-- planner:testdata-synth v1 -->", "Seed command: make seed-audit-log-test-data", "for `audit-log`: The audit log lists the recorded event."],
+    "specs/audit-log-test-data.md": ["<!-- planner:testdata-synth v1 -->", "Seed command: make seed-audit-log-test-data", "for `audit-log`: The audit log lists the recorded event.", "**Verify mode:** live-backend", "- [ ] [live] the verify command passes"],
     "specs/INDEX.md": ["- `audit-log-test-data` — synthesized test data (single) for `audit-log`"]
   },
   "sidecar_jq": [
