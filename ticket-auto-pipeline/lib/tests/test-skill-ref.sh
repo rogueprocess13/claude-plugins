@@ -9,6 +9,8 @@
 #   4. Missing file: exit 1, empty stdout, stderr names skill and file.
 #   5. Usage: fewer than two args or an empty arg → exit 2.
 #   6. Path escape: `..` components and absolute paths → exit 2, empty stdout.
+#   7. A skill's own SKILL.md resolves like a reference (the shared preamble
+#      § 8 reads adr-gate's SKILL.md this way, GitHub #667).
 #
 # Run: bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
 
@@ -121,6 +123,16 @@ expect "6f: absolute skill refused" "2:" "${RC}:${OUT}"
 run ticket-verify references/..x.md
 expect "6g: a name merely starting with .. is not a component (not found, exit 1)" "1:" "${RC}:${OUT}"
 
+# ── 7. A skill's SKILL.md ────────────────────────────────────────────────────
+mkdir -p "${CACHE}/ticket-auto-pipeline/0.62.7/skills/adr-gate"
+echo gate >"${CACHE}/ticket-auto-pipeline/0.62.7/skills/adr-gate/SKILL.md"
+run adr-gate SKILL.md
+expect "7a: a skill's SKILL.md resolves from the installed version" \
+  "0:${CACHE}/ticket-auto-pipeline/0.62.7/skills/adr-gate/SKILL.md" "${RC}:${OUT}"
+rm -f "${CACHE}/ticket-auto-pipeline/0.62.7/skills/adr-gate/SKILL.md"
+run adr-gate SKILL.md
+expect "7b: a missing SKILL.md exits 1 with empty stdout" "1:" "${RC}:${OUT}"
+
 echo ""
-echo "skill-ref: ${PASS} passed, ${FAIL} failed"
+echo "skill-ref:${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

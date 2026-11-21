@@ -13,7 +13,7 @@ Given a reported decision candidate, determine whether it is architectural and, 
 
 ## Input
 
-Invoked as:
+Invoked as a skill, or read and followed inline by a caller with no Skill tool (shared preamble § 8), with:
 
 ```
 /adr-gate --request-file <path> [--wiki-root <path>] [--log-file <path>]
@@ -38,7 +38,7 @@ When `AFFECTED_COMPONENTS` is absent from the request, do not refuse it. Proceed
 Before reading anything, guarantee the store exists:
 
 ```bash
-source "${CLAUDE_PLUGIN_ROOT:-.}/lib/wiki-bootstrap.sh" 2>/dev/null || source lib/wiki-bootstrap.sh
+source ~/.claude/skills/lib/wiki-bootstrap.sh
 wiki_bootstrap "$WIKI_ROOT"
 ```
 
@@ -75,7 +75,7 @@ Only for a candidate that passed step 3.
 
 - If `AFFECTED_COMPONENTS` is present:
   ```bash
-  bash lib/adr-store.sh query --wiki-root "$WIKI_ROOT" --components "<affected-components>"
+  bash ~/.claude/skills/lib/adr-store.sh query --wiki-root "$WIKI_ROOT" --components "<affected-components>"
   ```
 - If absent: read `$WIKI_ROOT/decisions/index.md` in full (unnarrowed discovery).
 
@@ -89,7 +89,7 @@ Exactly one of the five closed values. Populate `RATIONALE` on every branch — 
 
 ### `NOT_ARCHITECTURAL`
 
-The default. No candidate discovery was needed, or discovery found nothing that changes the classification. `ADR_REQUIRED: false`, `HUMAN_DECISION_REQUIRED: false`, `ADR_ID` empty. `RATIONALE` states the reversibility justification (task 4.3's stated basis for the disposition).
+The default. No candidate discovery was needed, or discovery found nothing that changes the classification. `ADR_REQUIRED: false`, `HUMAN_DECISION_REQUIRED: false`, `ADR_ID` empty. `RATIONALE` states the reversibility justification.
 
 ### `GOVERNED`
 
@@ -124,7 +124,7 @@ Run the `simple-english` skill in Plain mode over the drafted prose. If it is un
 Write it:
 
 ```bash
-bash lib/adr-store.sh write --wiki-root "$WIKI_ROOT" \
+bash ~/.claude/skills/lib/adr-store.sh write --wiki-root "$WIKI_ROOT" \
   --title "<imperative decision>" \
   --components "<comma-separated components>" \
   (--initiative "<id>" | --ticket "<id>" | --manual "<id>") \
@@ -167,8 +167,8 @@ cat >"$_adr_gate_scratch" <<'RESULT'
 ... (the exact block emitted in step 2) ...
 === END ADR_GATE_RESULT ===
 RESULT
-bash lib/adr-gate-parse.sh --result-file "$_adr_gate_scratch" ${TAP_LOG:+--log-file "$TAP_LOG"}
+bash ~/.claude/skills/lib/adr-gate-parse.sh --result-file "$_adr_gate_scratch" ${TAP_LOG:+--log-file "$TAP_LOG"}
 rm -f "$_adr_gate_scratch"
 ```
 
-This writes `META|adr-gate|info|{json}` once per invocation, on every path including `NOT_ARCHITECTURAL` — park rate is measurable from the first run, not only once Group 5's per-phase wiring lands. The calling phase, reading this skill's return within its own turn, can read the `ADR_GATE_RESULT` fields directly from the visible block for its own routing decision — it does not need to invoke `adr-gate-parse.sh` a second time, which would duplicate the log entry.
+This writes `META|adr-gate|info|{json}` once per invocation, on every path including `NOT_ARCHITECTURAL`. The calling phase, reading this skill's return within its own turn, can read the `ADR_GATE_RESULT` fields directly from the visible block for its own routing decision — it does not need to invoke `adr-gate-parse.sh` a second time, which would duplicate the log entry.
