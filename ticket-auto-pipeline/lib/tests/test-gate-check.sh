@@ -328,6 +328,34 @@ test_entry_complex_held() {
   }
 }
 
+# 6b. New auth logic as the only complexity signal is held in auto mode. The
+# score is the real complexity-score.sh output read by the real get_complexity,
+# not a fake value: `reversibility:auth-new` weighs 3, the threshold.
+test_entry_auth_new_alone_held_in_auto() {
+  _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  local td="${_ws}/${_tid}--test" rc=0
+  bash "$LIB_DIR/complexity-score.sh" write "$td" --axes "reversibility:auth-new" --reason "First sign-in module." >/dev/null || rc=$?
+  _fake_complexity=$(bash -c 'source "$1/notes-parse.sh"; get_complexity "$2"' _ "$LIB_DIR" "$td")
+  [ "$rc" -eq 0 ] && [ "$_fake_complexity" = "complex" ] || {
+    echo "expected auth-new alone to score complex, got '$_fake_complexity' (rc=$rc)"
+    _teardown
+    return 1
+  }
+
+  rc=0
+  _gate_entry || rc=$?
+  local held approved
+  held=$(grep -c '|GATE|gate|fail|held: complex ticket' "$LOG_FILE" 2>/dev/null || true)
+  approved=$(grep -c '|GATE|gate|done|auto-approved' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 1 ] && [ "${held:-0}" -eq 1 ] && [ "${approved:-0}" -eq 0 ] || {
+    echo "expected exit 1 with one held line and no auto-approve, got rc=$rc held=$held approved=$approved"
+    return 1
+  }
+}
+
 # 7. Gate start event written
 test_entry_gate_start_event_written() {
   _setup
@@ -3406,6 +3434,7 @@ for fn in \
   test_entry_simple_semi_auto_calls_flow_human_approve \
   test_entry_simple_manual_held \
   test_entry_complex_held \
+  test_entry_auth_new_alone_held_in_auto \
   test_entry_gate_start_event_written \
   test_entry_autonomy_from_log \
   test_entry_complexity_from_notes \
