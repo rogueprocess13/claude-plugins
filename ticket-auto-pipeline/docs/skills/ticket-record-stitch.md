@@ -8,9 +8,11 @@
 
 The planner, not the caller, decides what is shown: only `ok` entries, only frames from an environment `RECORD_ALLOWED` allows at stitch time, only the latest VERIFY attempt, and only files whose names and real paths sit inside that ticket's own `artifacts/recordings/`.
 
+By default every frame also carries an overlay, taken read-only from the ticket's pipeline log: phase agents' tokens as logged (total and output), wall-clock time since the ticket started, and the number of agents running at that moment across every ticket in the video. A value changes only when the log gains one. `--no-overlay` leaves it out. `--anim` adds a small pixel-art coder in the bottom-left corner that idles with no agent running and types faster with two or more agents or a high output-token rate (`RECORD_ANIM_FAST_TPS`, default 10 per second).
+
 ## Trigger
 
-**Slash command:** `/ticket-record-stitch <ID>... [--out FILE] [--order given]` or `/ticket-record-stitch --clip <ID>`
+**Slash command:** `/ticket-record-stitch <ID>... [--out FILE] [--order given] [--anim] [--no-overlay]` or `/ticket-record-stitch --clip <ID> [--anim] [--no-overlay]`
 
 **Natural language:** "stitch the recording for <ID>", "make the video for <ID>", "build the demo video"
 
@@ -22,6 +24,10 @@ The planner, not the caller, decides what is shown: only `ok` entries, only fram
 | `--out FILE` | Argument (video only) | No |
 | `--order given` | Argument (video only; default is by first frame time) | No |
 | `--clip` | Argument (one ticket's verification clip) | No |
+| `--anim` | Argument (adds the pixel-art coder) | No |
+| `--no-overlay` | Argument (no token/time/agent text) | No |
+| `{ID}-pipeline.log` | The log dir `lib/log-dir.sh` resolves (overlay values; read only) | No |
+| `RECORD_ANIM_FAST_TPS` | Environment (output tokens per second for the fast animation, default 10) | No |
 | `REPOS_ROOT` | Environment, else `./CLAUDE.md` | Yes |
 | `RECORD_ALLOWED` (+ `RECORD_UAT_SYNTHETIC`) | Environment, else `$REPOS_ROOT/CLAUDE.md` | Yes |
 | `artifacts/recordings/manifest.jsonl` and its frames | Each ticket's workspace | Yes |
@@ -49,12 +55,16 @@ flowchart TD
     E --> F[Resolve ticket dirs\nunder REPOS_ROOT]
     F --> G[Plan: read manifest.jsonl\nok entries, allowed env,\nlatest VERIFY attempt]
     G --> H[Whitelist each file:\nname, real path, no symlink]
-    H --> I{Any frames?}
+    H --> H2[Overlay values per frame\nfrom the pipeline logs]
+    H2 --> I{Any frames?}
     I -- no --> J([Exit 3, no file])
     I -- yes --> K{ffmpeg installed?}
     K -- no --> L([Exit 4, no file])
-    K -- yes --> M[Draw title cards,\nscale and pad frames]
-    M --> N[ffmpeg concat to H.264]
+    K -- yes --> M[Draw title cards,\nscale and pad frames,\ndraw overlay text]
+    M --> M2{--anim?}
+    M2 -- no --> N[ffmpeg concat to H.264]
+    M2 -- yes --> N2[One segment per frame\nwith the coder loop,\nconcat with -c copy]
+    N2 --> O
     N --> O([Print the output path])
 ```
 
