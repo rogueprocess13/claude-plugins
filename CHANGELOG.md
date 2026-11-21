@@ -25,6 +25,29 @@ A `--record` video showed what the pipeline did, but not what it cost or how lon
 - **`--anim`.** A 192×192 original pixel-art coder loops in the bottom-left corner: idle (3 fps) with no agent, normal (8 fps), fast (16 fps) with two or more agents or output tokens at `RECORD_ANIM_FAST_TPS` per second (default 10). Each frame becomes its own segment, joined with `-c copy`; total duration is unchanged. The frames are drawn from ASCII grids in `lib/record-assets/coder.grid` by a stdlib-only generator; a test keeps the committed PNGs in step with the grid. The SessionStart sync now copies `lib/record-assets/*.png` to `~/.claude/skills/lib/record-assets/`.
 - **`--no-overlay`** keeps the old output; `plan --no-overlay` is byte-identical to the previous plan. `/ticket-record-stitch` passes both options through.
 
+## ticket-planner 0.58.1 (2026-11-21) — gate ledger rows for rehearsal iterations 12–16 (data only)
+
+- **`ticket-planner/gates/gate-ledger.tsv`** now covers dispatch rehearsal iterations
+  01–16: 34 new rows, 60 fires (19 true, 29 false, 12 debatable). Labels come from each
+  run record's reconciled G7 review, else its Blocks table. Iterations 14 and 16 halted
+  before a review, so their unreviewed fires are `debatable`/`unlabelled` unless a finding
+  settles them (F40 parameter keys, F89 test-data spec for an in-test fixture, F94).
+  Totals: 159 rows, 322 fires (78 true, 210 false, 34 debatable).
+- **New G4 candidate:** Crosscheck `RESOLUTION_NOT_PROPAGATED` (iteration 16, F94: a
+  Consensus finding heading read as its own accepted block, still on main). The pinned
+  candidate list in `test-planner-gate-ledger.sh` now has four entries. Nothing is demoted.
+- **No gate changes.** Nothing reads the ledger to decide anything.
+
+## ticket-planner 0.58.0 (2026-11-21) — planner-halt-recall (a): each blocking Crosscheck check reports the units it judged
+
+A pass that judged nothing is not a pass. Rehearsal iterations 11, 12 and 15 passed `RESOLUTION_NOT_PROPAGATED` with no consensus block for it to compare, and the F94 precondition held unseen from iteration 08 to 16. This is the first, measuring part of M3: no verdict changes.
+
+- **Units judged.** Every blocking Crosscheck check (20, listed with the unit each counts in `lib/planner-crosscheck-units.sh`) counts the units it judged: citation tokens resolved, precedent identifiers searched, consensus blocks where two or more named specs were compared, Signals blocks, blocked-by tokens, status codes stated as a response, and so on.
+- **One trailing field.** The phase's `Crosscheck|check|done` and `fail` lines, and the matching stdout/stderr line, end with `units=<check>:<n|UNTESTED>,…`. The field is appended last, so no existing field moves; every reader of these lines reads the status or the timestamp and is unchanged. `UNTESTED` means the check judged nothing.
+- **Never a halt.** `UNTESTED` writes no `META|crosscheck` line and decides nothing. The count travels through a temp file only `planner_crosscheck_run` sets, so a family run on its own (tests, Specify's self-lint, the preflight) prints and returns exactly what it did before.
+- **Reading it back.** `planner_crosscheck_units_latest <INIT>` prints `<check>\t<n|UNTESTED>` from the latest result line (rc 1 for a log from before this release).
+- Tests: `test-planner-crosscheck-units.sh` (new; units on a normal run, `UNTESTED` on an empty initiative that still passes, a blocking run with the same verdict and finding lines, every family's output and rc identical with counting on and off).
+
 ## 0.140.0 (2026-11-21) — a person's approval is bound to the plan they approved
 
 `approve.sh` recorded that a person approved a ticket, but not which plan. An agent could rewrite the plan after the approval and the gate would still pass it. `fleet-controller` 0.57.0.

@@ -582,6 +582,15 @@ context window that introduced it. This front-loads the check; it does not repla
 Crosscheck, which still re-runs it as the final gate against the fully-reviewed
 artifacts.
 
+**Units judged (planner-halt-recall).** A pass that judged nothing is not a pass:
+several rehearsal runs "passed" `RESOLUTION_NOT_PROPAGATED` with no consensus block for
+it to compare. So each blocking check counts the units it judged, and the phase's
+`Crosscheck|check|done` or `fail` line ends with one field such as
+`units=citation:14,precedent:UNTESTED,resolution:2,…`. `UNTESTED` means the check judged
+nothing. The field is a measurement only: it never blocks and never changes a verdict.
+`planner_crosscheck_units_latest <INIT_ID>` reads it back; the check list and the unit
+each one counts are in `lib/planner-crosscheck-units.sh`.
+
 Every finding is written to state.log as `META|crosscheck|fail|<CODE> <message>` — the
 shape `ticket-retro`'s failure-histogram parser already reads (see
 [#176](https://github.com/willard-pro/claude-plugins/issues/176),

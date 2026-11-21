@@ -47,6 +47,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 # Extract the Signals JSON block from <spec_file>, canonicalized (sorted
 # keys, compact) so two blocks that differ only in key order or whitespace
 # still compare equal. Empty output if the block is missing or unparseable.
@@ -120,6 +127,7 @@ planner_crosscheck_signals() {
     json=$(_planner_crosscheck_signals_extract "$spec_file") || continue
     [ -z "$json" ] && continue
 
+    planner_crosscheck_units_add signals
     _sig_full_files["$json"]="${_sig_full_files[$json]:+${_sig_full_files[$json]} }${base}"
 
     key=$(_planner_crosscheck_signals_key "$json")
