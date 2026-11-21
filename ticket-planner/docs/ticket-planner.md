@@ -950,8 +950,8 @@ states constraints instead of exact calls in `## Technical Context`, limits Sign
 the ticket's own slice, pins the major version of a dependency a scaffold installs, and orders
 tickets so the one that creates a state comes before the one that needs it (prompt rules, no
 Crosscheck code). Not covered: the Definition-of-Ready check does not require the new sections,
-so a hand-written ticket without them is unchanged; `ticket-verify` does not treat `[unit]` and
-`[live]` criteria differently; synth-marked test-data specs carry no `## Verify Mode`.
+so a hand-written ticket without them is unchanged; `ticket-verify` treats `[unit]` and
+`[live]` criteria differently only with `VERIFY_AC_TAGS=true` (ticket-auto-pipeline, default off); synth-marked test-data specs carry no `## Verify Mode`.
 
 **`CODE_SPAN_EDGE_SPACE` (Crosscheck, warn only; rehearsal F53).** `planner_crosscheck_codespan`
 (`lib/planner-crosscheck-codespan.sh`, after the AC coverage family) emits one warning per

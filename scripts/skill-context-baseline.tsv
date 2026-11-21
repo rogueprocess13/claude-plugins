@@ -44,10 +44,11 @@ ticket-retro:conditional	4179
 # allow-growth: verify-qa-persona — references/qa-persona.md (Step 1g selection, guard, supporting-check rule and caps, Observations section), read only when VERIFY_QA_PERSONA=true (+6,198 bytes, 0.122.0)
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
-ticket-verify	175541
+ticket-verify	175504
 # allow-growth: ticket-auto-record — references/record.md (fixed viewport, one frame per settled step, the record.sh append call, password rule, failures ignored), read only when recording is on and VERIFY_MODE=browser (+3,984 bytes, 0.126.0)
 # allow-growth: #761 — one paragraph each in references/build-only.md (diff-only tickets: file and diff checks, no build tool) and references/live-backend.md (api-only tickets: curl and the test command, never a browser), read only in those modes (+917 bytes, 0.126.1)
-ticket-verify:conditional	27792
+# allow-growth: #773 — references/ac-tags.md (guard, tag kept per item, the named test, one verify-ac-tags.sh run per repository, counting and reports), read only when VERIFY_AC_TAGS=true and the ticket has a [unit] criterion (+5,863 bytes, 0.137.0)
+ticket-verify:conditional	33655
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 wiki-maintenance	92602

@@ -17,6 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.137.0 (2026-11-21) — verify proves a `[unit]` criterion with a named test it runs itself (#773)
+
+Planned ticket bodies tag each acceptance criterion `[unit]` or `[live]`. `ticket-verify` ignored the tags and tried to prove every criterion on the running system, including the ones only an automated test can prove. `fleet-controller` 0.56.2 (catalog entry), `ticket-planner` 0.56.2 (docs).
+
+- **New flag `VERIFY_AC_TAGS`, default `false`.** With it off nothing changes but one guarded line: Step 1i runs `verify-ac-tags.sh gate`, which prints `AC_TAGS=off`, and every criterion is proved live as before. `--env uat` is always off.
+- **With it on, a `[unit]` criterion is proved by a test verify runs.** The agent names the test that asserts the criterion (from the criterion, else by reading the branch's tests). New `lib/verify-ac-tags.sh run` then runs the project's test command once per repository in that repository's verify worktree and judges each named test from that run: a JUnit XML report written during the run, else, when the run wrote none, the name on an output line of a run that exited 0. Notes, PR text, an IMPLEMENT log line and an earlier run are never proof.
+- **The test command is learned, never guessed.** `BE_TEST_RUNNER`, else `BE_TEST_CMD`, for a repository listed in `BE_SERVICES`; `FE_TEST_CMD` for any other. With no `BE_SERVICES`, the one side that is configured; when both are, there is no command.
+- **One rule when it cannot be proved: the criterion fails.** No named test, no test command, no worktree, a failed or skipped test, or a test that is not in the run's results. It is never proved live instead: the tag says a live attempt cannot prove it, and a fallback would bring back the guess this change removes.
+- **`[live]` and untagged criteria are unchanged.** An untagged criterion is live. `[unit]` items still count in `criteria_met` / `criteria_total`; reports say `live` or `unit: <test>` per criterion.
+- **Skill text.** The rules are in `skills/ticket-verify/references/ac-tags.md`, read only when the gate prints `AC_TAGS=on`. `SKILL.md` is 37 bytes smaller: a few rationale sentences and hard line wraps went to make room for the one new line.
+- **Not changed.** `verify-mode.sh`: a browser ticket whose criteria are all `[unit]` still starts the stack. The verify agent's tools.
+
 ## 0.136.2 (2026-11-21) — approval provenance: the implement guard, the backfill and the operator text
 
 0.133.0 made a person's approval terminal-only and had the entry gate and `detect-resume.sh` require `approval_provenance: human` for a complex or manual-mode ticket. Three gaps were left. `fleet-controller` 0.56.1.

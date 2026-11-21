@@ -669,6 +669,7 @@
     "ticket-verify": {
       "files": [
         "plugin:skills/ticket-verify/SKILL.md",
+        "plugin:skills/ticket-verify/references/ac-tags.md",
         "plugin:skills/ticket-verify/references/build-only.md",
         "plugin:skills/ticket-verify/references/qa-persona.md",
         "plugin:skills/ticket-verify/references/live-backend.md",
