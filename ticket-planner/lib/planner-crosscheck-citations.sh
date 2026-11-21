@@ -64,7 +64,12 @@ PLANNER_CROSSCHECK_CITE_EXTENSIONS=$(
 # Claude Code session transcripts under .claude/projects/**/tool-results/,
 # which can quote real code and false-positive-resolve a citation or
 # precedent search against cached prose instead of the actual codebase.
-PLANNER_CROSSCHECK_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".claude" "tickets")
+#
+# .grill is grill-me's work dir: its answers/round-*.json and assessment.json
+# quote the brief, so an identifier the brief names "resolved" against the
+# brief itself (planner-halt-recall bug 1: iteration 13's `users` passed
+# live only because .grill/…/answers/round-1.json held it).
+PLANNER_CROSSCHECK_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".claude" ".grill" "tickets")
 
 # Specific directories excluded from both file resolution and precedent grep,
 # as paths relative to REPOS_ROOT and anchored there — unlike
@@ -628,13 +633,60 @@ _PLANNER_CROSSCHECK_PRECEDENT_PATTERNS=(
   's/.*following the `([A-Za-z_][A-Za-z0-9_]*)` pattern.*/\1/p'
 )
 
+# Identifiers a spec of this plan creates (planner-halt-recall bug 2). "The
+# existing `users` array" is true of a structure the same plan defines — s13
+# backend-foundation exports `users` and, one sentence later, "empties the
+# existing `users` and `articles` arrays" — and a greenfield repo can never
+# hold it, so searching only REPOS_ROOT always fired. An identifier counts as
+# created when a spec of the plan
+#   - marks it new: `X` (new), X (new in <slug>) — prose or TargetSymbols, or
+#   - names it in the run of code spans right after a creation verb (exports,
+#     defines, adds, creates, introduces, declares, new) with at most three
+#     words between: "exports `users`, `articles` and `reset()`".
+# A mere mention elsewhere in the plan is not creation, so a claimed
+# precedent nobody defines still fires. `name(args)` and `a.b` reduce to
+# `name` and both `a.b` and `b`.
+# Usage: _planner_crosscheck_plan_introduced <specs_dir>
+# Output: one identifier per line, sorted, deduped.
+_planner_crosscheck_plan_introduced() {
+  local specs_dir="$1" f
+  [ -d "$specs_dir" ] || return 0
+  local verb_re='(^|[^A-Za-z])([Ee]xports?|[Ee]xported|[Dd]efines?|[Dd]efined|[Aa]dds?|[Aa]dded|[Cc]reates?|[Cc]reated|[Ii]ntroduces?|[Ii]ntroduced|[Dd]eclares?|[Dd]eclared|[Nn]ew)( [A-Za-z'"'"'-]+){0,3} `[^`]+`((,| and| or|, and) `[^`]+`)*'
+  for f in "$specs_dir"/*.md; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "INDEX.md" ] && continue
+    {
+      grep -oE "$verb_re" "$f" 2>/dev/null | grep -oE '`[^`]+`'
+      grep -oE '`?[A-Za-z_][A-Za-z0-9_.]*(\([^)`]*\))?`?[[:space:]]*\([[:space:]]*new\b' "$f" 2>/dev/null |
+        grep -oE '^`?[A-Za-z_][A-Za-z0-9_.]*'
+    } | tr -d '`' | sed -E 's/\(.*$//'
+  done | while IFS= read -r t; do
+    [[ "$t" =~ ^[A-Za-z_][A-Za-z0-9_.]*$ ]] || continue
+    echo "$t"
+    [[ "$t" == *.* ]] && echo "${t##*.}"
+  done | sort -u
+}
+
+# The specs dir of the plan <file> belongs to: its own dir for a spec, the
+# artifacts dir's specs/ for proposal.md and consensus.md; empty otherwise.
+_planner_crosscheck_plan_specs_dir() {
+  local d
+  d="$(dirname "$1")"
+  if [ "$(basename "$d")" = "specs" ]; then
+    echo "$d"
+  elif [ -d "${d}/specs" ]; then
+    echo "${d}/specs"
+  fi
+}
+
 # Scan a file's prose for precedent claims and check each identifier is
-# actually found somewhere in REPOS_ROOT. Prints findings; returns count of
-# failures.
+# created by a spec of the same plan or found somewhere in REPOS_ROOT.
+# Prints findings; returns count of failures.
 _planner_crosscheck_scan_precedent() {
   local repos_root="$1" spec_file="$2"
   local failures=0
   local pattern line_num line identifier already_checked=""
+  local introduced="" introduced_read=0
 
   while IFS= read -r line_num_and_line; do
     [ -z "$line_num_and_line" ] && continue
@@ -653,6 +705,13 @@ _planner_crosscheck_scan_precedent() {
       already_checked="${already_checked}|${line_num}:${identifier}|"
 
       planner_crosscheck_units_add precedent
+      if [ "$introduced_read" -eq 0 ]; then
+        introduced_read=1
+        local plan_specs
+        plan_specs=$(_planner_crosscheck_plan_specs_dir "$spec_file")
+        [ -n "$plan_specs" ] && introduced=$(_planner_crosscheck_plan_introduced "$plan_specs")
+      fi
+      grep -qxF -- "$identifier" <<<"$introduced" && continue
       if ! _planner_crosscheck_precedent_search "$repos_root" "$identifier"; then
         echo "planner-crosscheck-citations: PRECEDENT_NOT_FOUND ${spec_file}:${line_num} → identifier '${identifier}' has zero matches under REPOS_ROOT"
         failures=$((failures + 1))
