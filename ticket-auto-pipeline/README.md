@@ -120,6 +120,7 @@ Optional:
 | `RECORD_ALLOWED` | Also a `CLAUDE.md` field. Environments `--record` may capture: `local` and/or `uat`, comma-separated. **Name only environments holding synthetic data.** `--record` is refused without it |
 | `RECORD_UAT_SYNTHETIC` | Also a `CLAUDE.md` field. Must be `true` for `uat` in `RECORD_ALLOWED` to count |
 | `RECORD_BOARD_URL` | Also a `CLAUDE.md` field. The Linear project or view URL the board recorder screenshots. See [Recording a Run](#recording-a-run---record) for the setup |
+| `FAST_PATH_CONFIDENCE_THRESHOLD` | Also a `CLAUDE.md` field. The planner confidence a planned ticket that is not pre-approved needs to take the appraise fast path. Default `0.85`; allowed `0.60` to `1.00`. See [Fast-path confidence threshold](#fast-path-confidence-threshold) |
 
 Fleet controller configuration (all optional, safe defaults):
 
@@ -476,6 +477,24 @@ The thin router calls `detect-resume.sh` directly as bash (no Claude agent spawn
 | `--semi-auto` | ✅ Auto-approved | ⛔ HELD | Auto-merged if outcome = Smooth |
 
 Auto-merge fires in both `--auto` and `--semi-auto` modes (never in `--manual`) when all three hold: autonomy is `auto` or `semi-auto`, complexity was `simple`, and the confirmed Linear outcome label was `Smooth`. The outcome is read from the `META|outcome-label|info|` pipeline-log line written by `outcome-label-check.sh` — the authoritative, Linear-confirmed label — not from the implement phase's own terminal line.
+
+## Fast-path confidence threshold
+
+A planned ticket skips the full appraisal (complexity sweep, prior-art search, codebase investigation) when its Planner Context block is `Pre-approved: true`, or when its `Confidence` is at or above the fast-path threshold. The threshold is `0.85` by default.
+
+The planner's confidence is a fixed formula that pays for evidence: services touched, existing symbols resolved, prior art. A new one-repo project has little of that evidence, so its tickets top out near `0.85` however well they are specified, and almost none take the fast path. Such a project can lower the bar for itself:
+
+```
+FAST_PATH_CONFIDENCE_THRESHOLD = 0.75
+```
+
+- **Where.** The environment first, then the tickets root `CLAUDE.md` (`$REPOS_ROOT/CLAUDE.md`). The field is read when the decision is made, so a change takes effect on the next appraisal.
+- **Allowed values.** A plain decimal from `0.60` to `1.00`. The floor is `0.60` because the formula gives `0.50` to a ticket with no evidence at all, and `0.60` is the lowest score that still shows some (one service and a standard exploration). `0` is not accepted: it would turn the check off. A value above `0.85` raises the bar; at `1.00` only pre-approved tickets take the fast path.
+- **Invalid values.** A value that is not a number in that range is ignored with a warning and the default `0.85` applies. An invalid environment value does not fall through to a lower `CLAUDE.md` value.
+- **What it does not change.** The planner's formula, its pre-approval threshold (`PLANNER_CONFIDENCE_THRESHOLD`), the validator floor (`PLANNED_TICKET_MIN_CONFIDENCE`, default `0.5`), the readiness critique, the blast-radius analysis and the approval gate. A fast-path ticket still runs those last three.
+- **Where you see it.** Every decision writes `META|fast-path-threshold` to the pipeline log with the threshold, its source, the default, the ticket's confidence and the result; the status is `warn` when the bar is lowered or a value was ignored. `notes.md` names the threshold when it let a ticket through. `/ticket-env-check` prints a `warn` row when the value is below the default or invalid.
+
+Use it for a sandbox or a greenfield project where a missed investigation is cheap. Leave it unset where the full appraisal is the safety net.
 
 ## Pipeline Safety Gates
 

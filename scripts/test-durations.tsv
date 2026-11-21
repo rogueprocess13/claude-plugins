@@ -116,6 +116,7 @@ python3 -m pytest fleet-controller/fleetd/tests/test_gate_hold.py -v	3.8
 bash fleet-controller/lib/tests/test-fleet-features.sh	3.6
 bash ticket-planner/lib/tests/test-planner-project-gate.sh	3.5
 bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh	3.4
+bash ticket-auto-pipeline/lib/tests/test-fast-path-threshold.sh	4.0
 bash ticket-auto-pipeline/lib/tests/test-branch-resolve.sh	3.4
 bash ticket-planner/lib/tests/test-planner-state.sh	3.3
 bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh	3.2

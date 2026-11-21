@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.133.0 (2026-11-21) — a project can set its own appraise fast-path confidence threshold (#774)
+
+The planner's confidence is a fixed formula that pays for evidence a new one-repo project does not have (several services, existing symbols, prior art). Its tickets top out near 0.85, so the appraise fast path, which needs 0.85, almost never fired there. The formula and the default are unchanged; a project can now lower the bar for itself on purpose.
+
+- **One field: `FAST_PATH_CONFIDENCE_THRESHOLD`.** Read from the environment first, then from the tickets root `CLAUDE.md` (`FAST_PATH_CONFIDENCE_THRESHOLD = 0.75`). The environment variable already existed; it was read with no validation and the `CLAUDE.md` field did not exist. Unset behaves exactly as before (0.85).
+- **Allowed: 0.60 to 1.00.** The formula gives 0.50 to a ticket with no evidence, and 0.60 is the lowest score that shows some. 0 is refused, because it would turn the check off. A value that is not a plain decimal in the range is ignored with a warning and 0.85 applies; an invalid environment value does not fall through to a lower `CLAUDE.md` value. **Behaviour change:** an environment value outside the range, which the old code used as given, is now ignored.
+- **One resolver, one comparison site.** `lib/fast-path-threshold.sh` (new) resolves and validates; `check_fast_path_eligible` (`lib/appraise-fast-path.sh`) is the only place the threshold is compared, and now resolves it at call time. Pre-approved tickets, the validator floor (`PLANNED_TICKET_MIN_CONFIDENCE`) and the planner's `PLANNER_CONFIDENCE_THRESHOLD` are untouched.
+- **A lowered bar is never silent.** Each comparison writes `META|fast-path-threshold` to the pipeline log (threshold, source, default, confidence, result; `warn` when lowered or when a value was ignored). `notes.md` names the threshold when it let a ticket through. `/ticket-env-check` prints a `FAST_PATH_CONFIDENCE_THRESHOLD` row in both modes: `warn` below the default or invalid, `info` above, nothing when unset; never a failure.
+- Tests: `lib/tests/test-fast-path-threshold.sh` (new).
+
 ## 0.132.2 (2026-11-21) — a ticket that adds new authentication always stops at the approve gate (#762)
 
 0.126.2 gave `reversibility:auth-new` (new auth logic nothing existing depends on) weight 2. A ticket whose only signal was new auth then scored simple and auto-approved in `auto` and `semi-auto` mode.

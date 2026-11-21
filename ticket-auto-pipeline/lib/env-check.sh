@@ -377,6 +377,19 @@ if [ "${_MODE:-full}" = "validate" ]; then
     fi
   fi
 
+  # FAST_PATH_CONFIDENCE_THRESHOLD (optional, #774) — silent when unset. A
+  # value below the default, or an invalid one, is a warning, never a failure.
+  if [ -f "$SCRIPT_DIR/fast-path-threshold.sh" ]; then
+    source "$SCRIPT_DIR/fast-path-threshold.sh"
+    while IFS='|' read -r _fp_name _fp_status _fp_value _fp_loc _fp_note; do
+      case "$_fp_status" in
+      ok) pass "$_fp_name ($_fp_value via $_fp_loc) — $_fp_note" ;;
+      warn) warn "$_fp_name ($_fp_value via $_fp_loc)" "$_fp_note" ;;
+      *) [ -z "$_fp_name" ] || info "$_fp_name ($_fp_value via $_fp_loc)" "$_fp_note" ;;
+      esac
+    done < <(fast_path_threshold_env_check_row "$(dirname "$CLAUDE_MD")" 2>/dev/null || true)
+  fi
+
   # Run readiness (#772, lib/readiness-env-check.sh): env-start.sh (with the
   # #419 VERIFY_REPO_PATH_* wiring), the Playwright MCP server and browser,
   # the GitNexus index and the prescan docs. Warnings only, never a failure.
@@ -760,6 +773,17 @@ else
   else
     _var "WIKI_ROOT" "warn" "" "CLAUDE.md" "wiki directory path — appraise skips wiki bootstrapping if absent"
   fi
+fi
+
+# ── Fast-path confidence threshold ──────────────────────────────────────────
+# Printed only when FAST_PATH_CONFIDENCE_THRESHOLD is set (environment, else
+# CLAUDE.md): warn when it lowers the bar or is invalid, never an issue
+# (lib/fast-path-threshold.sh, #774).
+if [ -f "$SCRIPT_DIR/fast-path-threshold.sh" ]; then
+  source "$SCRIPT_DIR/fast-path-threshold.sh"
+  while IFS='|' read -r _fp_name _fp_status _fp_value _fp_loc _fp_note; do
+    [ -z "$_fp_name" ] || _var "$_fp_name" "$_fp_status" "$_fp_value" "$_fp_loc" "$_fp_note"
+  done < <(fast_path_threshold_env_check_row "$PROJECT_DIR" 2>/dev/null || true)
 fi
 
 # ── Recording ───────────────────────────────────────────────────────────────
