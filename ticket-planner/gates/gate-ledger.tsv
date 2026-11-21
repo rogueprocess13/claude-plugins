@@ -1,4 +1,4 @@
-# gate-ledger.tsv — every gate fire observed in dispatch rehearsal iterations 01–11
+# gate-ledger.tsv — every gate fire observed in dispatch rehearsal iterations 01–16
 # (and the 05b same-intent rerun), labelled. Change seam-gate-safety, slice G3.
 # Data only: nothing reads this file to decide a gate. gate-ledger-summary.sh
 # counts it; test-planner-gate-ledger.sh checks it.
@@ -6,6 +6,10 @@
 # Sources: the rehearsal's findings.md, iter-*/run-record.md (Blocks tables) and
 # block-audit.md, with deep-dive D's corrections: RESOLUTION_NOT_PROPAGATED (F25)
 # is false, not true; UNSTATED_DEPENDENCY (F43) is debatable, not true.
+# Iterations 12–16 (rows added for delivery-first M3): the final column of each
+# run record's reconciled G7 review table, else its Blocks table; iterations 14
+# and 16 halted before a review, so their unreviewed fires are debatable/
+# unlabelled unless a finding settles them (F40, F89, F94).
 #
 # One row per fire, or per group of identical fires (same iteration, gate, round,
 # code, unit and label: see count). Aggregate halt codes (DRAFT_NOT_READY,
@@ -13,7 +17,7 @@
 # Audit advisories and MISSED entries that never blocked are not rows.
 #
 # Columns (tab-separated):
-#   iter      01..15 or 05b
+#   iter      01..16 or 05b
 #   gate      crosscheck | draft | draft-crosscheck (Crosscheck re-run inside the
 #             draft gate's loop) | draft-guard (a revise guard) | refinement |
 #             dor-check (the per-iteration negative control)
@@ -176,3 +180,37 @@ iter	gate	round	code	class	outcome	unit	count	label	cause	fixed	live	f_id	eviden
 11	draft-guard	1	TESTDATA_REGRESSION	revert	reverted	backend-auth	1	false	checker-bug	yes	no	F80	findings.md:180	test-built token with Source — read as missing Source; the revert dropped a valid criterion; test-built data needs no Source since planner 0.52.0
 11	dor-check	-	TEST_USER_MISSING	block	expected	negative-control	1	true	negative-control	-	-	-	iter-11/run-record.md:57	planted: Test User line removed from a copy of a passing body
 11	dor-check	-	TEST_DATA_UNSOURCED	block	expected	negative-control	1	true	negative-control	-	-	-	iter-11/run-record.md:57	planted: one Source: line removed
+12	crosscheck	-	OWN_UNDECLARED_REF	warn	logged	(multiple)	8	false	format	no	yes	F40	iter-12/run-record.md:50	parameter keys in Technical Context, all 8 specs; the same 8 on both draft-gate Crosscheck re-runs, counted once
+12	crosscheck	-	DISCOVERY_GAP_UNRESOLVED	warn	logged	discovery.md	2	false	live-logic	no	yes	-	iter-12/run-record.md:51	backend and frontend quick-scan rows for directories that do not exist yet; Discovery says no gap blocks Architecture
+12	draft	0	EDGE_CASE_GAP	block	revised	articles-api	1	true	plan-gap	-	-	-	iter-12/run-record.md:35	body with no article wrapper throws, 500 not 422; cleared r1
+12	draft	0	EDGE_CASE_GAP	block	revised	auth-pages	1	true	plan-gap	-	-	-	iter-12/run-record.md:36	sign-up leaves a token, so later sign-in criteria start signed in; cleared r1
+12	draft	0	MISSING_CORE_AC	block	revised	backend-foundation	1	true	plan-gap	-	-	-	iter-12/run-record.md:37	store lookups (case-insensitive email, exact username, by id, by slug) untested; cleared r1
+12	draft	0	MISSING_CORE_AC	block	revised	editor-page	1	true	plan-gap	-	-	-	iter-12/run-record.md:38	422 with several messages untested; cleared r1
+12	draft	0	EDGE_CASE_GAP	block	revised	frontend-shell	1	debatable	plan-gap	-	-	F84	iter-12/run-record.md:84	non-401 boot failure unspecified; the gap was real, but the r1 ASSUMED default (keep the token, signed-out header) contradicts the editor page guard (F84); G7 review final label debatable
+12	draft	0	EDGE_CASE_GAP	block	revised	user-auth-api	1	true	plan-gap	-	-	-	iter-12/run-record.md:40	email and username both taken: one key or both; assumed r1 (both keys in one 422)
+12	draft	1	EDGE_CASE_GAP	block	revised	articles-api	1	true	plan-gap	-	-	-	iter-12/run-record.md:41	whitespace-only or non-string title untested; resolved r2
+12	draft	1	MISSING_CORE_AC	block	revised	backend-foundation	1	true	plan-gap	-	-	-	iter-12/run-record.md:42	seeded passwords never checked with a bcrypt compare; resolved r2
+12	dor-check	-	TEST_USER_MISSING	block	expected	negative-control	1	true	negative-control	-	-	-	iter-12/run-record.md:64	planted: Test User section emptied
+12	dor-check	-	TEST_DATA_UNSOURCED	block	expected	negative-control	1	true	negative-control	-	-	-	iter-12/run-record.md:64	planted: Source stripped from one prerequisite row (deleting the whole row passed, F83: not a fire)
+13	crosscheck	-	DISCOVERY_GAP_UNRESOLVED	warn	logged	discovery.md	1	false	live-logic	no	yes	-	iter-13/run-record.md:25	published reference contract marked not explored; G7 review W1 false (process gap only)
+13	crosscheck	-	TEST_DATA_IMPLIED_WEAK	warn	logged	docs-conduit-description	1	debatable	live-logic	-	-	-	iter-13/run-record.md:52	repository name matched as an entity; not test data (environment state), but the criterion names a clone with no path; G7 review final label debatable
+13	draft	0	MISSING_CORE_AC	block	revised	api-article-create	2	true	plan-gap	-	-	-	findings.md:194	unauthenticated request with blank fields (401 before 422); missing article object and non-string field; cleared r1 (G7 B1, B2 resolved)
+13	draft	0	CONTRADICTORY_REQUIREMENTS	block	revised	api-article-create	1	true	plan-gap	-	-	F85	findings.md:194	not letters or digits vs an ASCII-only slug rule; structural, never revised, marked resolved by a scoped rescan of untouched sections (F85 leak, fixed in #752); still in the final ticket
+13	draft	0	EDGE_CASE_GAP	block	revised	api-article-reads	1	true	plan-gap	-	-	-	iter-13/run-record.md:49	fractional or trailing-garbage limit: parse rule unpinned; cleared r1 (G7 B4 resolved; that line names the item, not the code)
+13	draft	0	EDGE_CASE_GAP	block	revised	backend-foundation	1	true	plan-gap	-	-	-	iter-13/run-record.md:49	reset after mutating a seeded record untested; cleared r1 (G7 B5 resolved; that line names the item, not the code)
+13	draft	0	EDGE_CASE_GAP	block	demoted	frontend-shell	1	debatable	plan-gap	-	-	-	iter-13/run-record.md:29	non-401 boot failure; r1 rebutted with the Consensus deferral, demoted at the round limit; G7 review final label debatable
+13	dor-check	-	TEST_DATA_UNSOURCED	block	expected	negative-control	1	true	negative-control	-	-	-	iter-13/run-record.md:36	planted: Source stripped from one prerequisite row; the Test User mutation did not fire (F86 leak, not a row)
+14	crosscheck	-	DISCOVERY_GAP_UNRESOLVED	warn	logged	discovery.md	3	debatable	unlabelled	-	-	-	iter-14/run-record.md:17	no label recorded at run time (run halted, no G7 review); seen in iter-14/state.log: one unstated-edge-cases note, two quick-scan rows for directories that do not exist yet
+14	crosscheck	-	OWN_UNDECLARED_REF	warn	logged	(multiple)	8	false	format	no	yes	F40	findings.md:58	parameter keys in Technical Context, all 8 specs; no run-time label, labelled from the iter-14/state.log messages (the F40 pattern)
+14	draft	0	EDGE_CASE_GAP	block	revised	backend-scaffold	1	debatable	unlabelled	-	-	-	iter-14/run-record.md:18	no per-finding label recorded; assumed r1 (JSON 404 for non-API paths), cleared
+14	draft	0	MISSING_CORE_AC	block	revised	frontend-shell	1	debatable	unlabelled	-	-	-	iter-14/run-record.md:18	no per-finding label recorded; article deep link, cleared r1
+14	draft	0-2	MISSING_CORE_AC	block	demoted	backend-scaffold-test-data	1	debatable	upstream-bug	partial	-	F89	findings.md:205	synthesized test-data spec for an in-test fixture app (F89); both revisions erased by testdata-synth (F90); demoted at the round limit; the scan was right about the ticket, the ticket came from a planner bug
+14	draft	0-2	SCOPE_AMBIGUOUS	block	demoted	backend-scaffold-test-data	1	debatable	upstream-bug	partial	-	F89	findings.md:205	as above; demoted at the round limit
+14	draft	0-2	INTENT_AC_MISMATCH	block	halted	backend-scaffold-test-data	1	debatable	upstream-bug	partial	-	F89	findings.md:205	relational seed criterion on a fixture that is not stored data; structural, halted DRAFT_NOT_READY 1/9; the F42 precedent would say false; the F89 fix is prompt-only, no deterministic backstop
+15	draft	0	MISSING_CORE_AC	block	revised	frontend-shell	1	true	plan-gap	-	-	-	iter-15/run-record.md:47	a router that matches nothing passes; cleared r1 (G7 B1 resolved)
+15	draft	0	EDGE_CASE_GAP	block	revised	frontend-shell	1	true	plan-gap	-	-	-	iter-15/run-record.md:48	non-401 boot failure; assumed r1 (clear the token, fail closed), consistent with neighbours (G7 B2 resolved)
+15	dor-check	-	TEST_DATA_UNSOURCED	block	expected	negative-control	1	true	negative-control	-	-	-	iter-15/run-record.md:38	planted: Source stripped from the one prerequisite row, row kept
+15	dor-check	-	TEST_USER_MISSING	block	expected	negative-control	1	true	negative-control	-	-	-	iter-15/run-record.md:39	planted: Test User section emptied
+16	crosscheck	-	RESOLUTION_NOT_PROPAGATED	block	halted	(cross-file)	1	false	checker-bug	no	yes	F94	iter-16/run-record.md:28	a Consensus finding heading split from its body is read as its own accepted block, and the disposition word is the only term given to the second slug; the resolution is in that spec
+16	crosscheck	-	OWN_UNDECLARED_REF	warn	logged	(multiple)	9	false	format	no	yes	F40	findings.md:58	parameter keys in Technical Context, all 9 specs; not labelled at run time (halt before review), the run record names the F40 cause
+16	crosscheck	-	TEST_DATA_IMPLIED_WEAK	warn	logged	project-scaffold	1	debatable	unlabelled	-	-	-	iter-16/run-record.md:30	no label recorded at run time (run record: likely false, a route placeholder needs no data)
