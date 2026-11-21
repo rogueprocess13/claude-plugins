@@ -2195,7 +2195,9 @@ X0 review).
     stop; ticket-verify × oracle 2×2; predictions scored; reader agreement.
   - Rollback: delete the copy, reset the sandbox, re-cancel the issues.
 
-- [ ] **M2 — One PR: consumer fixes observed in X0 + F91 at the source** (ticket-auto-pipeline, ticket-planner)
+- [x] **M2 — One PR: consumer fixes observed in X0 + F91 at the source** (ticket-auto-pipeline, ticket-planner)
+  — DONE 2026-11-21: #804 (F91/F61, 0.138.0, planner 0.56.3) + #805 (#773 verify mode, 0.139.0, planner 0.57.0)
+  merged. Other X0 C-findings were already fixed by #756/#758/#764/#768. X0b live re-run judged optional.
   - Problem: C-coded failures from X0. Likely candidates: verify mode `browser` on API/store tickets;
     test-user SKIP. Plus F91 (Linear autolink corrupts a test value in body.md).
   - Root cause: consumer seams never exercised; `planner_ticketgen_record_baseline` adopts Linear's
@@ -2441,6 +2443,34 @@ feature working → move to Done → next ticket to Ready). Recording never chan
 
 Items 1–2 already yield clips to look at; 3 is the board half (~½ day); 4 waits on the access
 decision. Phase inspector and retro must ignore recording failures.
+
+## Step 23 — GitHub issue batch 2026-11-20/21 — code MERGED 2026-11-21; live checks + decisions open
+
+16 issues, one agent per issue, PRs #775–#802 merged (pipeline 0.123.x → 0.137.0). All closed except
+**#773** and **#667**, which stay open on purpose. Per-issue notes: memory `project_issue-batch-2026-11-20.md`.
+
+Last round (2026-11-21): #800 ADR gate runs inline in phase agents through `skill-ref.sh` (no Skill tool);
+#802 approval provenance follow-ups (`gate-check.sh --mode implement` is ticket-implement's Step 1 check,
+backfill seeds tracker-label approvals as `policy`, operator text names `approve.sh`); #801 `VERIFY_AC_TAGS`
+(default off; an unprovable `[unit]` criterion fails, never falls back to live).
+
+**Open — needs the user:**
+- [ ] Live checks on the tickets host. None of these changes has run on a real ticket: terminal approval
+      (`approve.sh` / `reject.sh` from a real terminal), `TICKET_ROUTER_PLAN_REVIEW`, ADR gate inline,
+      `VERIFY_AC_TAGS`, `/ticket-cancel` (re-run the Linear preflight: `workflow.json` changed), #765
+      merge-observed sweep.
+- [x] Move the adr-gate body to `skills/adr-gate/references/` and list it in `prompt_manifests` — DONE
+      2026-11-21, #803 (0.137.1).
+- [x] Bind an approval to a plan hash — DONE 2026-11-21, #806 (0.140.0): location bound, append-only amendments,
+      symlink/unresolvable log record fails closed. Live check on the tickets host pending.
+- [ ] #773 remainder: promote the advisory DoR codes after a rehearsal (record dor-advisory rows in X1).
+      Done in #805: all-`[unit]` verify build-only; Verify Mode on synthesised test-data specs.
+- [ ] #667 remainder: KNOWN_GAPS in `test-agent-tool-coverage.sh` (appraise / appraise-exec subagents and
+      Task tools, reproduce, verify, pr-review, gate-reconcile MCP fallbacks); fleetd phase-dispatch support
+      for STEP_2_2.
+- [ ] #770: dependents of a cancelled ticket keep waiting (agent recommends keep); Linear reason comment.
+- [ ] Old issue body revisions (#761–#774, one #667 comment) still show internal ticket ids in the public
+      edit history. GitHub has no API for it: delete in the web UI ("edited" dropdown).
 
 ## Ordering rationale
 
