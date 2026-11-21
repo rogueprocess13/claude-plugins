@@ -185,6 +185,32 @@ else
   _ok "ticket-implement has no tolerated gap"
 fi
 
+# ── The router's independent plan reviewer (STEP_2_2, #667) ──────────────────
+# `ticket-appraise-exec	Agent` stays in KNOWN_GAPS: Step 3.6's inline review
+# text is kept for TICKET_ROUTER_PLAN_REVIEW=false. With the flag on that step
+# is skipped and this agent does the review, so it must be read-only: it can
+# write its one result file and nothing else, and cannot spawn or run a skill.
+reviewer="$PLUGIN_DIR/agents/ticket-plan-review-agent.md"
+got=$(agent_tools "$reviewer" | sort | tr '\n' ' ')
+if [ "$got" = "Glob Grep Read Write " ]; then
+  _ok "ticket-plan-review-agent holds exactly Read, Grep, Glob, Write"
+else
+  _bad "ticket-plan-review-agent tools are not the read-only set: $got"
+fi
+if grep -q '^/ticket-auto-pipeline:ticket-plan-review	\|^ticket-plan-review	ticket-plan-review-agent$' <<<"$pairs" &&
+  [ -z "$(skill_gaps ticket-plan-review "$reviewer")" ] &&
+  ! grep -q '^ticket-plan-review	' <<<"$KNOWN_GAPS"; then
+  _ok "ticket-plan-review is in the dispatch table and needs no tool its agent lacks"
+else
+  _bad "ticket-plan-review: missing from the dispatch table, or it needs a tool its agent lacks"
+fi
+if [ "$(jq -r '.steps[] | select(.step_id == "STEP_2_2") | .spawn.agent' "$TABLE")" = "ticket-auto-pipeline:ticket-plan-review-agent" ] &&
+  ! grep -lE '^tools:.*\b(Agent|Skill)\b' "$PLUGIN_DIR"/agents/*.md | grep -q .; then
+  _ok "STEP_2_2 spawns the reviewer, and no phase agent was granted Agent or Skill"
+else
+  _bad "STEP_2_2 does not spawn ticket-plan-review-agent, or an agent now holds Agent/Skill"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

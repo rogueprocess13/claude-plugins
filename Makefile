@@ -96,6 +96,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-pr-review-comment.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-append-review.sh
 	bash ticket-auto-pipeline/lib/tests/test-router-step.sh
+	bash ticket-auto-pipeline/lib/tests/test-plan-review.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-run.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-mode.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-readiness.sh
@@ -335,6 +336,7 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_log_dir.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_router_step_parity.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_router_step_supervisor.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_plan_review.py -v
 	python3 -m pytest ticket-auto-pipeline/skills/ticket-auto/tests/test_dashboard_fleet.py -v
 
 test-planner:

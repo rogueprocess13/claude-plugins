@@ -4824,6 +4824,15 @@ class Supervisor:
             return False
         action = step.get('action')
 
+        if step.get('phase_dispatch') == 'manual-pickup':
+            # A step the table says phase dispatch does not run (STEP_2_2,
+            # the router's independent plan review, GitHub #667). fleetd's
+            # own preamble records the review as inline, so only a ticket a
+            # router started reaches this. The plan is unreviewed: never
+            # advance to the gate; record the position and say why, once.
+            self._note_manual_pickup_locked(tid, step_id, log_file)
+            return False
+
         if action == 'bash':
             exit_code = _phase_mod.run_gate_check(
                 tid, log_file, hb_log_file=hb_log_file)
@@ -4893,6 +4902,28 @@ class Supervisor:
                   f"{tid}/{step_id}: {exc}", file=sys.stderr)
             return False
         return True
+
+    def _note_manual_pickup_locked(self, tid, step_id, log_file):
+        """Leave `tid` at a step phase dispatch does not run, visibly."""
+        print(
+            f"fleetd[{os.getpid()}]: {tid} reached {step_id} — not "
+            f"dispatched under phase-dispatch; leaving for the router "
+            f"(/ticket-auto {tid})"
+        )
+        _store_record_position(
+            str(self._state_dir), tid, step_id, source='dispatch')
+        marker = f'|META|phase-dispatch-skip|warn|{step_id} '
+        try:
+            lines = (Path(log_file).read_text().splitlines()
+                     if log_file else [])
+        except OSError:
+            lines = []
+        if not any(marker in line for line in lines):
+            _append_pipeline_log_line(
+                str(self._state_dir), tid, 'META', 'phase-dispatch-skip',
+                'warn',
+                f'{step_id} is not run by fleetd phase dispatch — run '
+                f'/ticket-auto {tid} to continue')
 
     def _act_on_next_step_locked(self, tid, decision, table, log_file,
                                  hb_log_file, env_file, reason, counters):
@@ -5025,7 +5056,9 @@ class Supervisor:
 
         decision = _phase_mod.next_step(
             table, step_id, result, counters, log_lines=bracket_lines,
-            is_bug=is_bug)
+            is_bug=is_bug,
+            plan_review=(step_id == 'STEP_2'
+                         and _phase_mod.plan_review_router(all_lines)))
         if router_steps and self._router_step_inspect_locked(
                 tid, phase_token, decision, log_file, hb_log_file, env_file,
                 reason, counters):

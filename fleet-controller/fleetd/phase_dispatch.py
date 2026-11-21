@@ -2263,7 +2263,26 @@ def _gate_reconcile_held(log_lines):
     return False
 
 
-def next_step(table, step_id, result, counters, log_lines=(), is_bug=False):
+def plan_review_router(log_lines):
+    """Did the ticket's preamble record that the router reviews the plan?
+
+    Mirrors `plan_review_mode` in ticket-auto-pipeline/lib/plan-review.sh:
+    the last `META|plan-review|info|` line decides, `router` means STEP_2_2
+    follows EXEC and ticket-appraise-exec skipped its inline Step 3.6. `inline
+    …` or no line means the review ran inside EXEC. `log_lines` must be the
+    whole log: the line is written once, by the preamble.
+    """
+    mode = ''
+    for line in log_lines:
+        fields = line.split('|', 4)
+        if len(fields) == 5 and fields[1] == 'META' \
+                and fields[2] == 'plan-review' and fields[3] == 'info':
+            mode = fields[4]
+    return mode == 'router' or mode.startswith('router ')
+
+
+def next_step(table, step_id, result, counters, log_lines=(), is_bug=False,
+              plan_review=False):
     """Given the step that just finished and its result, what happens next.
 
     `result` is a `PhaseOutcome` (from `classify_phase`) for every agent-
@@ -2274,7 +2293,12 @@ def next_step(table, step_id, result, counters, log_lines=(), is_bug=False):
     step's own bracket, same contract as `classify_phase`. `counters` is the
     same dict `evaluate_loop` already takes. `is_bug` resolves STEP_1_5's
     table `condition` — see the caller-side note on caching it per ticket,
-    not re-fetching per step.
+    not re-fetching per step. `plan_review` is `plan_review_router` of the
+    whole log: True sends STEP_2 to STEP_2_2 (the router's independent plan
+    review, GitHub #667) instead of the gate, because EXEC skipped its inline
+    review. fleetd does not run STEP_2_2 (`phase_dispatch: manual-pickup` in
+    the table; the supervisor leaves the ticket there), so STEP_2_2 itself has
+    no transition here.
 
     Ported step by step from `SKILL.md`'s Dispatch Loop / `detect-resume.sh`
     — see design.md D22 for the full transition table. STEP_5_5 PR-comment
@@ -2305,7 +2329,14 @@ def next_step(table, step_id, result, counters, log_lines=(), is_bug=False):
         return _advance('STEP_2', 'reproduce done')
 
     if step_id == 'STEP_2':
+        if plan_review:
+            return _advance('STEP_2_2', 'exec done, plan review pending')
         return _advance('STEP_2_5', 'exec done')
+
+    if step_id == 'STEP_2_2':
+        raise DispatchTableError(
+            'next_step: STEP_2_2 (plan review) is not dispatched under '
+            'phase dispatch; lib/plan-review.sh decides its transition')
 
     if step_id in ('STEP_2_5', 'STEP_3'):
         exit_code = int(result)

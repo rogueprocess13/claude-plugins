@@ -221,7 +221,7 @@ DETECT_OUTPUT=$(bash "$DETECT_SH" "{TICKET_ID}")
 ```
 
 Parse the `DETECT_RESUME_RESULT` block and set all routing variables:
-`{RESUME_STEP}`, `{APPRAISE_FROM}`, `{REPRODUCE_FROM}`, `{EXEC_FROM}`, `{IMPLEMENT_FROM}`, `{MAINTENANCE_FROM}`, `{DOCUMENT_FROM}`, `{VERIFY_FROM}`, `{VERIFY_CHECKPOINT}`, `{PR_REVIEW_FROM}`, `{PR_ITERATE_FROM}`, `{TICKET_DIR}`, `{COMPLEXITY}`, `{AUTONOMY}`, `{ARTIFACT_TYPE}`, `{BRANCH}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{BRANCH_SOURCE}`, `{MERGE_POLICY}`, `{TICKET_TITLE}`, `{VERIFY_ATTEMPTS}`, `{VERIFY_LAST}`, `{ITERATION}`, `{RECONCILE_CYCLE}`, `{PR_FEEDBACK_CYCLE}`.
+`{RESUME_STEP}`, `{APPRAISE_FROM}`, `{REPRODUCE_FROM}`, `{EXEC_FROM}`, `{IMPLEMENT_FROM}`, `{MAINTENANCE_FROM}`, `{DOCUMENT_FROM}`, `{VERIFY_FROM}`, `{VERIFY_CHECKPOINT}`, `{PR_REVIEW_FROM}`, `{PR_ITERATE_FROM}`, `{TICKET_DIR}`, `{COMPLEXITY}`, `{AUTONOMY}`, `{ARTIFACT_TYPE}`, `{BRANCH}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{BRANCH_SOURCE}`, `{MERGE_POLICY}`, `{TICKET_TITLE}`, `{VERIFY_ATTEMPTS}`, `{VERIFY_LAST}`, `{ITERATION}`, `{RECONCILE_CYCLE}`, `{PR_FEEDBACK_CYCLE}`, `{PLAN_REVIEW}`.
 
 **If `RESUME_STEP = SCHEMA_MISMATCH`:**
 Report the schema mismatch with log vs expected version numbers. Stop here.
@@ -318,6 +318,7 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 | `STEP_1` | Spawn `ticket-appraise` agent |
 | `STEP_1_5` | Spawn `ticket-reproduce` agent |
 | `STEP_2` | Spawn `ticket-appraise-exec` agent |
+| `STEP_2_2` | Independent plan review (`plan-review.sh`; see `references/plan-review.md`) |
 | `STEP_2_5` / `STEP_3` | Run `bash gate-check.sh --mode entry` |
 | `STEP_3_5` | Spawn `ticket-gate-reconcile` agent |
 | `STEP_4` | Spawn `ticket-implement` agent, run `return-completeness-check.sh` (openspec tickets only), then `outcome-label-check.sh` |
@@ -336,6 +337,7 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 | `/ticket-auto-pipeline:ticket-appraise` | `ticket-auto-pipeline:ticket-appraise-agent` |
 | `/ticket-auto-pipeline:ticket-reproduce` | `ticket-auto-pipeline:ticket-appraise-agent` |
 | `/ticket-auto-pipeline:ticket-appraise-exec` | `ticket-auto-pipeline:ticket-appraise-agent` |
+| `/ticket-auto-pipeline:ticket-plan-review` | `ticket-auto-pipeline:ticket-plan-review-agent` |
 | `/ticket-auto-pipeline:ticket-gate-reconcile` | `ticket-auto-pipeline:ticket-gate-reconcile-agent` |
 | `/ticket-auto-pipeline:ticket-implement` | `ticket-auto-pipeline:ticket-implement-agent` |
 | `/ticket-auto-pipeline:guidance-extractor` | `ticket-auto-pipeline:guidance-extractor-agent` |
@@ -346,6 +348,8 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 | `/ticket-auto-pipeline:ticket-pr-iterate` | `general-purpose` |
 | `/ticket-auto-pipeline:ticket-retro` | `general-purpose` |
 <!-- GENERATED:dispatch-table END -->
+
+**If `{PLAN_REVIEW}` is `review` or `revise`**, before dispatching STEP_2 or STEP_2_2, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-auto references/plan-review.md`, then Read the printed path in full and follow it. If `skill-ref.sh` exits non-zero, write `META router-error fail "references/plan-review.md missing"` with `plog.sh`, finalize with exit 1 and stop. Otherwise it is never read.
 
 ### STEP_1 — Appraise
 
@@ -402,6 +406,10 @@ INSTRUCTIONS="Follow the skill exactly."
 NEXT_PHASE=EXEC
 ```
 
+### STEP_2_2 — Plan review
+
+Moved to `references/plan-review.md`.
+
 ### STEP_2_5 — Gate Check (bash only, no agent)
 
 Run `gate-check.sh` in entry mode — deterministic bash, no Claude agent involved:
@@ -456,26 +464,6 @@ NEXT_PHASE=GATE
 Spawn implement agent. Its post-spawn step (`router-step.sh post-spawn IMPLEMENT`)
 runs the return-completeness gate **before** `spawn_agent_post`: the gate must see
 the agent's returned work before the router commits the phase as `done`.
-
-**Pre-warming (openspec tickets):** For complex/openspec tickets, the implement
-agent may time out during context loading before any work is done. When
-`{ARTIFACT_TYPE}` is `openspec`, the pre-spawn step MUST load the artifact
-into context before spawning the implement agent:
-
-```bash
-# Pre-warm: load artifact content into the agent's initial context
-if [ "{ARTIFACT_TYPE}" = "openspec" ]; then
-  # Read tasks.md and relevant files into the agent session to avoid
-  # timeout during initial context loading
-  _artifact_dir="$(dirname "{ARTIFACT_PATH}")"
-  echo "Pre-warming implement agent: loading openspec artifact from $_artifact_dir"
-fi
-```
-
-**Timeout guidance:** For openspec tickets, the implement agent requires at
-least 10 minutes of context processing time. The router does not set the
-agent timeout directly (harness-controlled), but pre-warming reduces the
-risk of timeout during initial context load.
 
 ```
 STEP=implement PHASE=IMPLEMENT SKILL=/ticket-auto-pipeline:ticket-implement FROM_STEP={IMPLEMENT_FROM}
