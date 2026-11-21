@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.132.2 (2026-11-21) — a ticket that adds new authentication always stops at the approve gate (#762)
+
+0.126.2 gave `reversibility:auth-new` (new auth logic nothing existing depends on) weight 2. A ticket whose only signal was new auth then scored simple and auto-approved in `auto` and `semi-auto` mode.
+
+- **Weight 3.** `complexity-score.sh` now scores `reversibility:auth-new` at 3, the threshold. The ticket scores complex on that axis alone and is held for `/ticket-approve`. The axis line still names the kind: `reversibility:3 (auth-new)`.
+- **Unchanged.** `reversibility:auth-reuse` still weighs 0, so a ticket that only puts new endpoints behind an existing check stays simple. `auth-modify` and any other spelling still weigh 3.
+- The ticket-appraise rubric, `CLAUDE.md` and the skill doc carry the new weight. SKILL.md shrank.
+- Tests: `test-complexity-score.sh` asserts `auth-new` alone is complex at 3 (it asserted simple at 2). `test-gate-check.sh` adds `test_entry_auth_new_alone_held_in_auto`: the real score, read by the real `get_complexity`, is held at the entry gate in auto mode.
 ## 0.132.1 (2026-11-21) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
 
 - **Cause.** A new manifest carries no `stage` field: `write_ticket_manifest` (planner, `/ticket-create`) and `ensure_ticket_manifest` never write one, and a ticket run by hand has no manifest at all. `flow.sh`'s warn-only from-check compared that empty stage with the trigger's `from` (`Backlog`, `Todo` for `appraise-start`), so the first call for every ticket warned. `REPOS_ROOT` was set; this is not #608.
