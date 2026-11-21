@@ -376,7 +376,9 @@ set_epic_stage() {
 # approved=false clears both fields (removed, not just falsed) so a stale
 # provenance value never survives a clear (re-claim/ticket-reject's
 # clear-on-removal path). No-op (exit 1) if no manifest exists yet — callers
-# call ensure_ticket_manifest first.
+# call ensure_ticket_manifest first. Provenance `human` is refused (exit 4)
+# in an agent or fleetd-worker context, like set_ticket_regression_ack: a
+# pipeline approval is `policy`.
 set_ticket_approval() {
   local tid="$1" approved="$2" provenance="${3:-}"
   case "$approved" in
@@ -399,6 +401,11 @@ set_ticket_approval() {
       return 3
       ;;
     esac
+    if [ "$provenance" = "human" ] &&
+      { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${FLEET_WORKER_PID:-}" ] || [ -n "${FLEET_GENERATION:-}" ]; }; then
+      echo "manifest-write: an approval with provenance human is a person's — refused in an agent or fleetd-worker context" >&2
+      return 4
+    fi
     _manifest_update "$manifest_path" '.approved = true | .approval_provenance = $p' --arg p "$provenance"
   else
     _manifest_update "$manifest_path" 'del(.approved, .approval_provenance)'

@@ -15,6 +15,9 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_DIR="$LIB_DIR/.."
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/human-pty.sh"
+human_pty_init
 FLOW_SH_REAL="$PLUGIN_DIR/skills/ticket-flow/flow.sh"
 APPROVE_SH="$PLUGIN_DIR/skills/ticket-approve/approve.sh"
 REJECT_SH="$PLUGIN_DIR/skills/ticket-reject/reject.sh"
@@ -41,7 +44,7 @@ _teardown() { rm -rf "$_root"; }
 
 # _run <cmd...> — every script under test sees the same scratch state.
 _run() {
-  env -u LINEAR_API_KEY -u FLEET_GENERATION -u FLEET_WORKER_PID -u TAP_LOG -u FLEET_STATE_DIR \
+  env -u LINEAR_API_KEY -u FLEET_GENERATION -u FLEET_WORKER_PID -u CLAUDE_CODE_SESSION_ID -u TAP_LOG -u FLEET_STATE_DIR \
     FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none \
     CLAUDE_SKILLS_LIB="$LIB_DIR" REPOS_ROOT="$_root/repos" \
     FLEET_PIPELINE_LOG_DIR="$_root/logs" TICKET_FLOW_LOCK_DIR="$_root/logs" \
@@ -50,7 +53,10 @@ _run() {
     "$@"
 }
 _flow() { _run bash "$FLOW_SH_REAL" "$TID" "$@" >/dev/null 2>&1; }
-_approve() { _run bash "$APPROVE_SH" "$TID" 2>&1; }
+# A person's decision needs a person: a terminal, and the id typed back
+# (lib/tests/human-pty.sh).
+_flow_person() { _run python3 "$HUMAN_PTY_DIR/pty_run.py" x bash "$FLOW_SH_REAL" "$TID" "$@" >/dev/null 2>&1; }
+_approve() { _run python3 "$HUMAN_PTY_DIR/pty_run.py" "$TID" bash "$APPROVE_SH" "$TID" 2>&1; }
 _claim() { _run bash "$CLAIM_SH" "$TID" --complexity "$1" 2>&1; }
 # The router's pre-spawn claim (dispatch-table.json STEP_1 pre_dispatch).
 _router_claim() { _flow appraise-start --data complexity=simple; }
@@ -128,8 +134,8 @@ test_corrected_score_and_reappraisal_emit_again() {
   local after_correction
   after_correction=$(_count complexity-scored)
   _flow appraise-complete
-  _flow human-reject # back to Todo for re-appraisal
-  _router_claim      # the router claims the second appraisal
+  _flow_person human-reject # back to Todo for re-appraisal
+  _router_claim             # the router claims the second appraisal
   _claim complex >/dev/null
   local started scored
   started=$(_count appraise-started)
@@ -185,7 +191,7 @@ test_reapproval_after_reject_and_rehold_emits() {
   _setup
   _to_gate
   _approve >/dev/null
-  _run bash "$REJECT_SH" "$TID" >/dev/null 2>&1
+  _run python3 "$HUMAN_PTY_DIR/pty_run.py" "$TID" bash "$REJECT_SH" "$TID" >/dev/null 2>&1
   _to_gate
   _approve >/dev/null
   local after_reject

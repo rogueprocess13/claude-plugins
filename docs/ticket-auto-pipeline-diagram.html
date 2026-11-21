@@ -868,7 +868,7 @@
       "diagram": {
         "kind": "human",
         "phase": "GATE",
-        "note": "/ticket-approve (provenance human), or gate-check.sh auto-approving a simple ticket in auto/semi-auto mode (provenance policy). Writes manifest approved / approval_provenance, not a tracker label."
+        "note": "A person running approve.sh in their own terminal (provenance human; /ticket-approve prints the command), or gate-check.sh auto-approving a simple ticket in auto/semi-auto mode (provenance policy). Writes manifest approved / approval_provenance, not a tracker label."
       }
     },
     "human-reject": {
@@ -1276,12 +1276,12 @@ const DATA = {
       description: "Multi-layer decision point. Bash gates check content quality score, structural completeness (zero AC, missing repro steps), and verification readiness before complexity routing. Tickets can hold or gate-stop at any layer regardless of complexity.",
       labelsActive: [
         { name: "manifest: approved", note: "set on pass by human-approve — a local fact, not a label" },
-        { name: "manifest: approval_provenance", note: "human (/ticket-approve) or policy (auto-approve)" },
+        { name: "manifest: approval_provenance", note: "human (approve.sh at a terminal) or policy (auto-approve)" },
         { name: "notes.md: complexity", note: "drives auto vs hold" },
       ],
       steps: [
         { name: "gate-check",         desc: "Bash-only gate (gate-check.sh --mode entry). Five layered checks: (2.5) content quality score from critique — BLOCKED status or score <40 holds; (2.5a) ZERO_AC gate-stop if ticket has no ACs; (2.5b) BUG_NO_REPRO gate-stop if bug ticket lacks repro steps; (2.6) verification readiness — holds if 2+ of 4 prerequisites missing in plan artifact. No LLM involved." },
-        { name: "complexity-routing", desc: "Tickets that clear all content checks: simple + auto|semi-auto → auto-approve immediately. complex OR manual mode → hold in Approve until a person runs /ticket-approve (or /ticket-reject). Autonomy resolved once at startup." },
+        { name: "complexity-routing", desc: "Tickets that clear all content checks: simple + auto|semi-auto → auto-approve immediately. complex OR manual mode → hold in Approve until a person runs approve.sh (or reject.sh) in their own terminal; /ticket-approve and /ticket-reject print the command. Autonomy resolved once at startup." },
         { name: "gate-reconcile",     desc: "When a held ticket is approved with /ticket-approve, a gate-reconcile agent (STEP_3_5) fetches Linear comments, evaluates open questions, and either passes clean or re-holds with an amendment cycle." },
       ],
       gateText: {
@@ -1290,8 +1290,8 @@ const DATA = {
       },
       outcomes: [
         { verdict: "auto",  label: "simple",        desc: "Cleared all content gates + auto/semi-auto mode. gate-check.sh fires human-approve with provenance policy: manifest approved, Approve → Ready." },
-        { verdict: "pass",  label: "human-approve", desc: "A person runs /ticket-approve: manifest approved (provenance human), Approve → Ready." },
-        { verdict: "fail",  label: "human-reject",  desc: "A person runs /ticket-reject: approval cleared, loops back to Todo for re-appraisal." },
+        { verdict: "pass",  label: "human-approve", desc: "A person runs approve.sh in a terminal and types the ticket id back: manifest approved (provenance human), Approve → Ready." },
+        { verdict: "fail",  label: "human-reject",  desc: "A person runs reject.sh in a terminal: approval cleared, loops back to Todo for re-appraisal." },
       ],
       stopCodes: [
         { code: "CRITIQUE_NOT_RUN",           desc: "Appraise logged a critique start but notes.md has no Readiness Critique section — the critique crashed or its fetch failed. A failed evaluator is not run, never no findings." },

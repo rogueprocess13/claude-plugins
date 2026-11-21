@@ -97,11 +97,18 @@ _gate_emit_released() {
   emit_event "$TICKET_ID" gate-released "$(jq -nc --arg p "$1" '{provenance: $p}')" 2>/dev/null || true
 }
 
-# _gate_manifest_approved <TID> <expected-stage>
+# _gate_manifest_approved <TID> <expected-stage> [human]
 # tracker-approval-by-script: the sole approval decision read for Checks
 # 2.8b/2.8c/4 and _gate_reapprove — no tracker fetch, no fallback. Two-
 # factor (design D1): approved AND staged, so a manifest carrying a stale
 # approval fact for a ticket that never actually transitioned cannot pass.
+# With `human` as the third argument the approval must also carry
+# approval_provenance=human: a complex ticket, a manual-mode ticket and a
+# policy approval over open [needs-human] questions are a person's to
+# approve, and a `policy` approval (the pipeline's own) never stands in for
+# one. An approval of any other provenance reads as `hold`. The reapprove
+# gate passes no third argument: it follows ticket-pr-iterate's own policy
+# re-approval of a ticket that already cleared the entry gate.
 # Echoes exactly one of:
 #   pass                 — approved=true and stage matches
 #   hold                 — manifest read cleanly; not approved, or wrong stage
@@ -114,7 +121,7 @@ _gate_emit_released() {
 # `|| echo false` (tracker-read-failure-policy: "empty is never substituted
 # for unreadable").
 _gate_manifest_approved() {
-  local tid="$1" expected_stage="$2"
+  local tid="$1" expected_stage="$2" need="${3:-}"
   if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
     echo "hold-missing-manifest"
     return 0
@@ -128,6 +135,14 @@ _gate_manifest_approved() {
   if [ "$approved" != "true" ]; then
     echo "hold"
     return 0
+  fi
+  if [ "$need" = "human" ]; then
+    local prov
+    prov=$(get_ticket_manifest_field "$tid" approval_provenance 2>/dev/null) || prov=""
+    if [ "$prov" != "human" ]; then
+      echo "hold"
+      return 0
+    fi
   fi
   local stage stage_rc=0
   stage=$(get_ticket_manifest_field "$tid" stage 2>/dev/null) || stage_rc=$?
@@ -944,7 +959,7 @@ _gate_entry() {
   # to non-manual modes (manual has its own check at Check 4).
   if [ "$complexity" = "complex" ] && { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
     local _c28b_verdict
-    _c28b_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
+    _c28b_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
     if [ "$_c28b_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8b"
     fi
@@ -965,7 +980,7 @@ _gate_entry() {
   # contradicting 2.8b's own comment ("manual has its own check at Check 4").
   if [ "$complexity" = "complex" ] && [ "$autonomy" = "manual" ]; then
     local _c28c_verdict
-    _c28c_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
+    _c28c_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
     if [ "$_c28c_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8c"
     fi
@@ -992,7 +1007,7 @@ _gate_entry() {
   # setting and pass.
   if [ "$autonomy" = "manual" ]; then
     local _c4_verdict
-    _c4_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
+    _c4_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
     if [ "$_c4_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 4"
     fi
@@ -1020,7 +1035,7 @@ _gate_entry() {
       open_human=$(get_open_needs_human_count "$gate_td" 2>/dev/null) || open_human=0
       [[ "$open_human" =~ ^[0-9]+$ ]] || open_human=0
     fi
-    if [ "$open_human" -gt 0 ] && [ "$(_gate_manifest_approved "$TICKET_ID" "Ready")" != "pass" ]; then
+    if [ "$open_human" -gt 0 ] && [ "$(_gate_manifest_approved "$TICKET_ID" "Ready" human)" != "pass" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "fail" "held: open [needs-human] question(s) ($open_human) in notes.md ## Open Questions — answer them, then /ticket-approve"
       hb_gate "entry-gate" "fail" "held: open needs-human questions" "{\"open\":\"$open_human\"}"
       _gate_emit_held "open-human-questions"

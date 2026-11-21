@@ -203,8 +203,12 @@ test_tombstone_refuses_every_other_trigger() {
     LOG_FILE="$t/logs/$TID-pipeline.log" FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none \
       CLAUDE_SKILLS_LIB="$LIB_DIR" TICKET_FLOW_LOCK_DIR="$t/logs" REPOS_ROOT="$t/repos" \
       FLEET_PIPELINE_LOG_DIR="$t/logs" bash "$FLOW_SH" "$TID" "$trig" --data outcome=Smooth >/dev/null 2>&1 || rc=$?
-    if [ "$rc" -ne 14 ]; then
-      echo "trigger $trig exited $rc on a cancelled ticket, expected 14" >&2
+    # A person-only trigger called by a worker (no person at a terminal) is
+    # refused earlier still, with exit 15 — also before anything is written.
+    local want=14
+    case "$trig" in human-approve | human-reject | pr-iterate) want=15 ;; esac
+    if [ "$rc" -ne "$want" ]; then
+      echo "trigger $trig exited $rc on a cancelled ticket, expected $want" >&2
       ok=1
     fi
   done < <(jq -r '.triggers | keys[]' "$WF")
