@@ -72,6 +72,11 @@
 # which stays non-blocking regardless of this flag) or
 # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, which is governed by its own
 # DOR_STRICT_VERIFICATION switch.
+# ticket-body-v2 codes (GitHub #773, dor-body-v2.sh), judged only on a body
+# that carries the contract, all advisory by default: VERIFY_MODE_INVALID
+# (DOR_STRICT_VERIFY_MODE), EDGE_CASES_MISSING (DOR_STRICT_EDGE_CASES),
+# AC_UNTAGGED / AC_COUNT_HIGH / AC_POST_MERGE_STATE (DOR_STRICT_AC_SHAPE),
+# SCOPE_TC_MISMATCH (DOR_STRICT_SCOPE_FILES).
 #
 # `dor_quality_score` and `semantic_coverage_gaps` are diagnostic only — they
 # NEVER affect DOR_STATUS. See docs/dor-readiness.md.
@@ -112,6 +117,11 @@ if ! declare -f audit_ac_testability >/dev/null 2>&1; then
 fi
 if ! declare -f audit_test_data_check >/dev/null 2>&1; then
   source "$_DOR_SCRIPT_DIR/audit-test-data-check.sh"
+fi
+# A copy of this file without its sibling (a partial sync) runs none of the
+# ticket-body-v2 codes rather than failing the whole check.
+if ! declare -f _dor_body_v2_checks >/dev/null 2>&1 && [ -f "$_DOR_SCRIPT_DIR/dor-body-v2.sh" ]; then
+  source "$_DOR_SCRIPT_DIR/dor-body-v2.sh"
 fi
 # linear-api.sh is deliberately NOT sourced here — it sets `set -eo pipefail`
 # unconditionally at file scope (a pre-existing leak this change does not
@@ -1637,6 +1647,13 @@ check_ticket_ready() {
     fi
   else
     _dor_record "TEST_DATA_UNSOURCED" "null" "inapplicable" "TEST_DATA_MISSING/TEST_DATA_UNSEEDED already covers this"
+  fi
+
+  # ── ticket-body-v2 codes (GitHub #773, dor-body-v2.sh) ───────────────────
+  # Judged only on a body that carries the contract; advisory unless the
+  # code's DOR_STRICT_* switch is true. Appends to missing/advisory.
+  if declare -f _dor_body_v2_checks >/dev/null 2>&1; then
+    _dor_body_v2_checks "$body" "$type"
   fi
 
   DOR_MISSING=$(_dor_json_array "${missing[@]}")
