@@ -11,9 +11,25 @@
 # Public API:
 #   body_baseline_hash <text>
 #     Prints the 64-hex sha256 of <text> after normalisation: CRLF → LF,
-#     trailing whitespace stripped per line, trailing blank lines dropped.
-#     Leading whitespace and interior blank lines are significant. Exit 1
-#     when no sha256 tool exists.
+#     trailing whitespace stripped per line, trailing blank lines dropped,
+#     Linear autolinks undone (body_baseline_unlink). Leading whitespace and
+#     interior blank lines are significant. Exit 1 when no sha256 tool exists.
+#
+#   body_baseline_unlink <text>
+#     Prints <text> with every Linear autolink undone (F61, F91). Linear's
+#     renderer wraps a bare URL or a bare dotted token as a link to itself:
+#     `localhost:5173` style URLs and `Mixed.Case@Conduit.test` become
+#     `[T](<U>)` or `[T](U)`, where U is T, or T after `http://`, `https://`
+#     or `mailto:`. Only that exact shape is undone, back to T; a link whose
+#     target differs from its text is kept. Code spans and fenced blocks are
+#     never touched. Every writer of Linear's text into body.md passes it
+#     through this, so ticket-auto reads the composed literal, not the link.
+#
+#   body_baseline_literals <text>
+#     Prints every code literal of <text>, sorted, one per line: each inline
+#     code span's content, and each line inside a fenced block. TicketGen
+#     compares the composed body's literals with Linear's (after unlink) and
+#     keeps the composed body when Linear changed one (F91's guard).
 #
 #   body_baseline_read <pdir>
 #     Prints the hash stored in <pdir>/linear-baseline.sha. Exit 1 when the
@@ -39,9 +55,53 @@
 
 BODY_BASELINE_FILE="linear-baseline.sha"
 
+# _body_baseline_unlink_awk — stdin → stdout, autolinks undone outside code
+# spans and fences. Plain POSIX awk (mawk has no match() capture groups).
+_body_baseline_unlink_awk() {
+  awk '
+    function unlink(s,    out, m, t, u, i) {
+      out = ""
+      while (match(s, /\[[^]]+\]\(<?[^)> ]+>?\)/)) {
+        m = substr(s, RSTART, RLENGTH)
+        out = out substr(s, 1, RSTART - 1)
+        s = substr(s, RSTART + RLENGTH)
+        i = index(m, "](")
+        t = substr(m, 2, i - 2)
+        u = substr(m, i + 2, length(m) - i - 2)
+        sub(/^</, "", u)
+        sub(/>$/, "", u)
+        if (u == t || u == "http://" t || u == "https://" t || u == "mailto:" t) out = out t
+        else out = out m
+      }
+      return out s
+    }
+    /^[ \t]*(```|~~~)/ { fence = !fence; print; next }
+    fence { print; next }
+    {
+      n = split($0, seg, "`")
+      line = ""
+      for (k = 1; k <= n; k++) {
+        if (k > 1) line = line "`"
+        line = line ((k % 2) ? unlink(seg[k]) : seg[k])
+      }
+      print line
+    }'
+}
+
+body_baseline_unlink() {
+  printf '%s' "${1-}" | _body_baseline_unlink_awk
+}
+
+body_baseline_literals() {
+  printf '%s' "${1-}" | awk '
+    /^[ \t]*(```|~~~)/ { fence = !fence; next }
+    fence { print "F:" $0; next }
+    { n = split($0, seg, "`"); for (k = 2; k < n; k += 2) print "S:" seg[k] }' | LC_ALL=C sort
+}
+
 # _body_baseline_normalise — stdin → stdout, the D6 normalisation.
 _body_baseline_normalise() {
-  awk '
+  _body_baseline_unlink_awk | awk '
     { sub(/\r$/, ""); sub(/[ \t\r\f\v]+$/, ""); line[NR] = $0 }
     END {
       n = NR
