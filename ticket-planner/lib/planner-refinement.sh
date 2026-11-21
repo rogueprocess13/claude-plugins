@@ -328,15 +328,22 @@ planner_refinement_legacy() {
 # three-level resolver as the other deps — the one hash and classifier, no
 # copy here. Exit 1 (with a reason on stderr) when it cannot be found.
 _planner_refinement_source_baseline() {
-  declare -f body_baseline_classify >/dev/null 2>&1 && return 0
-  local f
-  f=$(_planner_refinement_resolve "body-baseline.sh") || {
-    echo "planner-refinement: body-baseline.sh not found (install ticket-auto-pipeline) — body drift not checked" >&2
-    return 1
-  }
-  # shellcheck source=/dev/null
-  source "$f"
-  declare -f body_baseline_classify >/dev/null 2>&1
+  if ! declare -f body_baseline_classify >/dev/null 2>&1; then
+    local f
+    f=$(_planner_refinement_resolve "body-baseline.sh") || {
+      echo "planner-refinement: body-baseline.sh not found (install ticket-auto-pipeline) — body drift not checked" >&2
+      return 1
+    }
+    # shellcheck source=/dev/null
+    source "$f"
+    declare -f body_baseline_classify >/dev/null 2>&1 || return 1
+  fi
+  # A ticket-auto-pipeline from before the F91 fix has no unlink: Linear's text
+  # is then written as it is, the behaviour before F91's fix, never an
+  # empty body.md.
+  declare -f body_baseline_unlink >/dev/null 2>&1 || body_baseline_unlink() { printf '%s' "${1-}"; }
+  declare -f body_baseline_literals >/dev/null 2>&1 || body_baseline_literals() { :; }
+  return 0
 }
 
 # _planner_refinement_linear_desc <TID>
@@ -398,7 +405,7 @@ _planner_refinement_drift_classify() {
       local old8 new8
       old8=$(body_baseline_read "$pdir" 2>/dev/null | cut -c1-8)
       new8=$(body_baseline_hash "$desc" 2>/dev/null | cut -c1-8)
-      printf '%s' "$desc" >"${pdir}/body.md"
+      body_baseline_unlink "$desc" >"${pdir}/body.md"
       body_baseline_write "$pdir" "$desc" 2>/dev/null
       rm -f "$marker" 2>/dev/null
       planner_state_write "$initiative_id" "META" "refinement" "step" "${tid} body adopted from Linear [${old8}→${new8}]"
@@ -1675,7 +1682,7 @@ planner_refinement_refresh_bodies() {
       continue
       ;;
     rebaseline) ;;
-    *) printf '%s' "$desc" >"${pdir}/body.md" ;;
+    *) body_baseline_unlink "$desc" >"${pdir}/body.md" ;;
     esac
     body_baseline_write "$pdir" "$desc" 2>/dev/null
     rm -f "${pdir}/body-drift" 2>/dev/null
@@ -1689,8 +1696,11 @@ planner_refinement_refresh_bodies() {
 # Called by the TicketGen script after it persisted planner/body.md.
 #   create  read the description back once; write the baseline from it. When
 #           Linear stored a different rendering than the composed body,
-#           body.md takes Linear's text (it is what ticket-auto will read,
-#           and the baseline describes it), with a META|ticketgen|warn line.
+#           body.md takes Linear's text with its autolinks undone (it is what
+#           ticket-auto will read), with a META|ticketgen|warn line. When
+#           Linear's text changes a code literal even after that, body.md
+#           keeps the composed text (F91): the drift is left for Refinement
+#           to hold and a person to look at, never adopted silently.
 #   skip    write the baseline only when none exists and the normalised
 #           Linear text equals body.md; otherwise leave it to Refinement,
 #           which classifies the ticket.
@@ -1723,10 +1733,20 @@ planner_ticketgen_record_baseline() {
     body_baseline_write "$pdir" "$desc" 2>/dev/null || true
     ;;
   *)
+    local unlinked
+    unlinked=$(body_baseline_unlink "$desc") || return 0
     if [ "$l" != "$m" ]; then
-      printf '%s' "$desc" >"${pdir}/body.md" 2>/dev/null || return 0
-      planner_state_write "$initiative_id" "META" "ticketgen" "warn" \
-        "${tid} Linear stored a different rendering of the description — body.md now holds Linear's text [${m:0:8}→${l:0:8}]" 2>/dev/null || true
+      if [ "$(body_baseline_literals "$unlinked")" != "$(body_baseline_literals "$(cat "${pdir}/body.md" 2>/dev/null)")" ]; then
+        planner_state_write "$initiative_id" "META" "ticketgen" "warn" \
+          "${tid} Linear's rendering changes a code literal — body.md keeps the composed text; Refinement reports the drift [${m:0:8}→${l:0:8}]" 2>/dev/null || true
+      else
+        printf '%s' "$unlinked" >"${pdir}/body.md" 2>/dev/null || return 0
+        planner_state_write "$initiative_id" "META" "ticketgen" "warn" \
+          "${tid} Linear stored a different rendering of the description — body.md now holds Linear's text, autolinks undone [${m:0:8}→${l:0:8}]" 2>/dev/null || true
+      fi
+    elif [ "$unlinked" != "$desc" ]; then
+      planner_state_write "$initiative_id" "META" "ticketgen" "info" \
+        "${tid} Linear autolinked the description — body.md keeps the composed text" 2>/dev/null || true
     fi
     body_baseline_write "$pdir" "$desc" 2>/dev/null || true
     ;;

@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.138.0 (2026-11-21) — Linear's autolinks never reach body.md (F91, F61)
+
+Linear's renderer wraps a bare URL or a bare dotted token as a link to itself: a Verification Plan value `Mixed.Case@Conduit.test` came back as `[Mixed.Case](<http://Mixed.Case>)@Conduit.test` (F91), and `http://localhost:5173` as `[http://localhost:5173](<http://localhost:5173>)` (F61). TicketGen copied that text into `body.md`, which ticket-auto reads, so the ticket carried a corrupted test value; and every autolink made Refinement re-scan a body that had not changed. `ticket-planner` 0.56.3.
+
+- **`body_baseline_unlink`** (`lib/body-baseline.sh`, the one shared body library) undoes exactly that shape, `[T](<U>)` or `[T](U)` where U is T, or T after `http://`, `https://` or `mailto:`, back to T. A link whose target differs from its text is kept. Code spans and fenced blocks are never touched. Plain POSIX awk (mawk has no capture groups).
+- **The drift hash undoes autolinks too**, so an autolinked rendering hashes as the composed text: no re-scan for it. A body with no autolink hashes exactly as before; a stored baseline that included autolinks classifies `rebaseline`, which only rewrites the stored hash.
+- **Every writer of Linear's text into `body.md` uses it:** TicketGen create, Refinement `adopt` (a person's Linear edit) and `--refresh-bodies`.
+- **TicketGen's guard (delivery plan M2):** when Linear's text, autolinks undone, still changes a code literal (`body_baseline_literals`: code-span contents and fenced lines), `body.md` keeps the composed text and a `META|ticketgen|warn` line says so. Refinement then reports the drift (`local-ahead`) for a person to look at. An autolink-only difference keeps the composed text with a `META|ticketgen|info` line.
+- **Compatibility.** A planner with an older ticket-auto-pipeline gets pass-through stand-ins for the two new functions, so it writes Linear's text as before and never an empty `body.md`.
+- Tests: `test-body-baseline.sh` (unlink, literals, hash, migration), `test-planner-body-drift.sh` (create autolink-only, re-render, changed literal, older library, adopt, refresh).
+
 ## 0.137.1 (2026-11-21) — the skill fingerprint covers the ADR gate text a phase follows (#667)
 
 Since 0.136.1 a phase agent follows the ADR gate inline from the shared preamble § 8. The gate's text lived in `skills/adr-gate/SKILL.md`, which no `prompt_manifests` entry listed, so a change to the gate never changed the fingerprint of the phases that run it.
