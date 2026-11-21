@@ -287,13 +287,13 @@ _ec() {
 }
 P=$(_project ec-low 'FAST_PATH_CONFIDENCE_THRESHOLD = 0.75')
 out=$(_ec full "$P")
-if printf '%s\n' "$out" | grep -q '^FAST_PATH_CONFIDENCE_THRESHOLD|warn|0.75|CLAUDE.md|below the default 0.85'; then
+if grep -q '^FAST_PATH_CONFIDENCE_THRESHOLD|warn|0.75|CLAUDE.md|below the default 0.85' <<<"$out"; then
   _ok "full mode: warn row when lowered"
 else
   _ko "full mode: no warn row"
 fi
 out=$(_ec validate "$P")
-if printf '%s\n' "$out" | grep 'FAST_PATH_CONFIDENCE_THRESHOLD (0.75 via CLAUDE.md)' | grep -q 'warn'; then
+if grep -q 'warn.*FAST_PATH_CONFIDENCE_THRESHOLD (0.75 via CLAUDE.md)' <<<"$out"; then
   _ok "validate mode: warn line when lowered"
 else
   _ko "validate mode: no warn line"
