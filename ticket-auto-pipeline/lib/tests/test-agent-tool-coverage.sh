@@ -9,13 +9,17 @@
 # agent holds neither tool: the agent improvises or skips the step.
 #
 # For every (skill, agent) pair in the dispatch table this test scans the
-# skill's SKILL.md and its references/*.md for instructions that need a tool:
+# skill's SKILL.md and its references/*.md for instructions that need a tool.
+# A skill that follows the shared preamble (its SKILL.md names
+# lib/skill-preamble-auto.md) is also scanned through the preamble, and through
+# every file the preamble tells the agent to resolve with skill-ref.sh and
+# follow inline (§ 8 reads adr-gate's SKILL.md that way):
 #
 #   Agent       "spawn a/an/the ... agent|subagent", `subagent_type`
-#   Skill       `Skill(`, or "Run/Invoke [the] `/slash-command`" opening a
-#               sentence, list item or clause (not "re-run", "then run", "must
-#               run", and not a line that hands the command to "the user":
-#               those are handoff prose, not instructions to the agent)
+#   Skill       `Skill(`, or "[Then] Run/Invoke [the] `/slash-command`" opening
+#               a sentence, list item or clause (not "re-run", "then run",
+#               "must run", and not a line that hands the command to "the
+#               user": those are handoff prose, not instructions to the agent)
 #   TaskCreate, TaskUpdate, TodoWrite, WebFetch, WebSearch   the literal name
 #   mcp__*      any `mcp__server__tool` name
 #
@@ -76,7 +80,7 @@ required_tools() {
     # No `grep -q` at the end of this pipe: it exits on the first match, the
     # first grep dies of SIGPIPE and pipefail turns a hit into a miss.
     [ -n "$(grep -vE '(the|a) user' "$f" |
-      grep -E 'Skill\(|(^|[.:*] |, )([Rr]un|[Ii]nvoke) (the )?`/[a-z]')" ] && echo Skill
+      grep -E 'Skill\(|(^|[.:*] |, )(Then )?([Rr]un|[Ii]nvoke) (the )?`/[a-z]')" ] && echo Skill
     grep -oE '\b(TaskCreate|TaskUpdate|TodoWrite|WebFetch|WebSearch)\b' "$f"
     grep -oE '\bmcp__[A-Za-z0-9_-]+__[A-Za-z0-9_]+' "$f"
   done | sort -u
@@ -88,11 +92,29 @@ agent_tools() {
     sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/(.*$//' | grep -v '^$'
 }
 
+PREAMBLE="$PLUGIN_DIR/lib/skill-preamble-auto.md"
+
+# inline_reads <file> — the plugin files <file> resolves with skill-ref.sh, one
+# path per line. An agent follows those inline, so their tool needs are its own.
+inline_reads() {
+  grep -oE 'skill-ref\.sh [a-z0-9-]+ [A-Za-z0-9._/-]+\.md' "$1" | sort -u |
+    while read -r _ s f; do echo "$PLUGIN_DIR/skills/$s/$f"; done
+}
+
+# preamble_files <skill> — the preamble and its inline reads, when the skill's
+# SKILL.md follows the preamble; nothing otherwise.
+preamble_files() {
+  grep -qF 'skill-preamble-auto.md' "$PLUGIN_DIR/skills/$1/SKILL.md" || return 0
+  echo "$PREAMBLE"
+  inline_reads "$PREAMBLE"
+}
+
 # skill_gaps <skill> <agent.md> — tools the skill needs and the agent lacks.
 skill_gaps() {
-  local skill_dir="$PLUGIN_DIR/skills/$1" have
+  local skill_dir="$PLUGIN_DIR/skills/$1" have pre=()
   have=$(agent_tools "$2")
-  required_tools "$skill_dir/SKILL.md" "$skill_dir"/references/*.md |
+  mapfile -t pre < <(preamble_files "$1")
+  required_tools "$skill_dir/SKILL.md" "$skill_dir"/references/*.md "${pre[@]}" |
     grep -vxFf <(printf '%s\n' "$have") || true
 }
 
@@ -126,6 +148,20 @@ if [ -z "$got" ]; then
   _ok "detector ignores negations and user-facing handoffs"
 else
   _bad "detector flagged clean wording: $got"
+fi
+
+# The preamble's § 8 wording before #667: the Skill tool, which no agent holds.
+cat >"$TMP/old-preamble.md" <<'EOF'
+Compose a request file and invoke the gate:
+
+Then invoke `/adr-gate --request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT" --log-file
+"$TAP_LOG"`. Read the `=== ADR_GATE_RESULT ===` block it returns.
+EOF
+got=$(required_tools "$TMP/old-preamble.md" | tr '\n' ' ')
+if [ "$got" = "Skill " ]; then
+  _ok "detector finds the pre-fix 'Then invoke /adr-gate' preamble wording"
+else
+  _bad "detector on the pre-fix preamble wording returned: $got"
 fi
 
 printf -- '---\nname: x\ntools: Bash, Read , Agent(Explore), mcp__a__b\n---\n' >"$TMP/agent.md"
@@ -209,6 +245,96 @@ if [ "$(jq -r '.steps[] | select(.step_id == "STEP_2_2") | .spawn.agent' "$TABLE
   _ok "STEP_2_2 spawns the reviewer, and no phase agent was granted Agent or Skill"
 else
   _bad "STEP_2_2 does not spawn ticket-plan-review-agent, or an agent now holds Agent/Skill"
+fi
+
+# ── The shared preamble and its inline ADR gate (§ 8, #667) ──────────────────
+# No phase agent holds the Skill tool, so § 8 has the agent resolve adr-gate's
+# SKILL.md with skill-ref.sh and follow it inline. The loop above already scans
+# the preamble and that file for every skill that follows the preamble; these
+# checks pin the parts a tool-name scan cannot see.
+GATE="$PLUGIN_DIR/skills/adr-gate/SKILL.md"
+sec8=$(awk '/^## 8\. ADR gate/ { on = 1 } on' "$PREAMBLE")
+flat=$(tr '\n' ' ' <<<"$sec8")
+
+preamble_skills=""
+preamble_agents=""
+while IFS=$'\t' read -r skill agent; do
+  [ -n "$skill" ] && [ -n "$(preamble_files "$skill")" ] || continue
+  preamble_skills+="$skill "
+  preamble_agents+="$agent"$'\n'
+done <<<"$pairs"
+preamble_agents=$(printf '%s' "$preamble_agents" | sort -u)
+if [ "$(wc -w <<<"$preamble_skills")" -ge 6 ] &&
+  [ "$(inline_reads "$PREAMBLE")" = "$GATE" ] && [ -f "$GATE" ]; then
+  _ok "the preamble is scanned for its skills, with adr-gate's SKILL.md as its one inline read"
+else
+  _bad "preamble scan is empty or its inline reads changed: skills='$preamble_skills' reads='$(inline_reads "$PREAMBLE")'"
+fi
+
+# The read line, in the order the root CLAUDE.md prescribes: condition, the
+# file, the resolver call, "Read the printed path in full", the hard stop.
+if grep -qE 'If you composed a request file, before acting on the decision.*`SKILL\.md`.*`bash ~/\.claude/skills/lib/skill-ref\.sh adr-gate SKILL\.md`.*Read the printed path in full.*If `skill-ref\.sh` exits non-zero.*reference-missing fail "adr-gate/SKILL\.md"` and stop: never classify from memory' <<<"$flat"; then
+  _ok "§ 8 reads the gate through skill-ref.sh: condition, file, resolver, full read, hard stop"
+else
+  _bad "§ 8 lacks the conditional read line for adr-gate's SKILL.md, or its parts are out of order"
+fi
+if grep -qF 'never invoke `/adr-gate`' <<<"$flat" &&
+  ! grep -qE 'CLAUDE_PLUGIN_ROOT|~/\.claude/skills/adr-gate' "$PREAMBLE"; then
+  _ok "§ 8 forbids the slash command and names no plugin-root or skill-dir path"
+else
+  _bad "§ 8 allows /adr-gate, or reaches the gate through CLAUDE_PLUGIN_ROOT or ~/.claude/skills/adr-gate"
+fi
+
+# Followed inline, the gate needs only Bash: the store, the parser and the
+# scratch files are Bash calls. An agent with no Read or Write tool reads with
+# `cat` and writes the ADR body with a heredoc, and § 8 must say so while such
+# an agent exists.
+lacking=""
+no_write=""
+no_read=""
+while IFS= read -r agent; do
+  [ -n "$agent" ] || continue
+  have=$(agent_tools "$PLUGIN_DIR/agents/$agent.md")
+  grep -qx Bash <<<"$have" || lacking+="$agent "
+  grep -qx Write <<<"$have" || no_write+="$agent "
+  grep -qx Read <<<"$have" || no_read+="$agent "
+done <<<"$preamble_agents"
+if [ -z "$lacking" ]; then
+  _ok "every agent that follows the preamble holds Bash"
+else
+  _bad "agents that follow the preamble but lack Bash: $lacking"
+fi
+if [ -z "$no_write$no_read" ] || grep -qF 'If you hold no Write or Read tool, use Bash instead: `cat` to read, a heredoc to write the ADR body file' <<<"$flat"; then
+  _ok "§ 8 gives agents without Write or Read a Bash fallback (no Write: ${no_write:-none}; no Read: ${no_read:-none})"
+else
+  _bad "agents without Write ($no_write) or Read ($no_read) follow § 8, which names no Bash fallback"
+fi
+if grep -q 'ticket-verify-agent' <<<"$no_write" && grep -q 'ticket-pr-review-agent' <<<"$no_write"; then
+  _ok "the no-Write fallback is exercised by the verify and pr-review agents"
+else
+  _bad "expected ticket-verify-agent and ticket-pr-review-agent among the no-Write agents: $no_write"
+fi
+
+# The gate's own commands must run from any working directory: the synced lib
+# dir, never CLAUDE_PLUGIN_ROOT (unset in a Bash call) or a cwd-relative lib/.
+bad_cmd=$(grep -nE 'CLAUDE_PLUGIN_ROOT|(bash|source) "?lib/' "$GATE" || true)
+missing=""
+for f in $(grep -oE '~/\.claude/skills/lib/[A-Za-z0-9._-]+\.sh' "$GATE" | sort -u); do
+  [ -f "$PLUGIN_DIR/lib/${f##*/}" ] || missing+="${f##*/} "
+done
+if [ -z "$bad_cmd" ] && [ -z "$missing" ] &&
+  [ "$(grep -cE '~/\.claude/skills/lib/(wiki-bootstrap|adr-store|adr-gate-parse)\.sh' "$GATE")" -ge 4 ]; then
+  _ok "adr-gate's commands use the synced lib dir and every script they name exists"
+else
+  _bad "adr-gate SKILL.md has a cwd-relative or plugin-root command, or names a missing lib script: $bad_cmd $missing"
+fi
+# The planner still runs the gate as a plain skill: frontmatter and the result
+# block the parser checks are untouched.
+if grep -qx 'name: adr-gate' "$GATE" && grep -qF '=== END ADR_GATE_RESULT ===' "$GATE" &&
+  grep -qF '/adr-gate --request-file' "$PLUGIN_DIR/../ticket-planner/lib/planner-phase-prompts.sh"; then
+  _ok "adr-gate is still a plain skill the planner invokes"
+else
+  _bad "adr-gate lost its skill frontmatter or result block, or the planner no longer invokes /adr-gate"
 fi
 
 echo
