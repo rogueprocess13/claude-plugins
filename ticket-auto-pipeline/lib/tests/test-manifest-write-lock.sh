@@ -10,6 +10,12 @@
 # Usage: bash test-manifest-write-lock.sh
 set -eo pipefail
 
+# These tests write approvals the way a person's approval is recorded
+# (provenance human), in-process. The writer refuses that in an agent or
+# fleetd-worker session, so the suite drops those variables: the environment
+# of a person, the same seam test-regression-risk.sh uses.
+unset CLAUDE_CODE_SESSION_ID FLEET_WORKER_PID FLEET_GENERATION
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

@@ -180,8 +180,8 @@ Optional — the pipeline works without it, just slower and less informed.
 
 | Your decision | Command | Effect |
 |---|---|---|
-| Approve the plan | `/ticket-approve CRE-47` | Records approval in the local manifest and moves the ticket `Approve → Ready`. Re-run `/ticket-auto CRE-47` to implement. |
-| Reject the plan | `/ticket-reject CRE-47` | Clears any approval and moves the ticket `Approve → Todo` for re-appraisal. |
+| Approve the plan | `bash ~/.claude/skills/ticket-approve/approve.sh CRE-47` in your own terminal, from the tickets root (`/ticket-approve CRE-47` prints it) | Asks you to type the ticket id back, records your approval in the local manifest and moves the ticket `Approve → Ready`. Re-run `/ticket-auto CRE-47` to implement. Not runnable from inside a Claude Code session: approval is a person's decision. |
+| Reject the plan | `bash ~/.claude/skills/ticket-reject/reject.sh CRE-47` in your own terminal (`/ticket-reject CRE-47` prints it) | Clears any approval and moves the ticket `Approve → Todo` for re-appraisal. |
 | Drop the ticket | `/ticket-cancel CRE-47 --reason "duplicate of CRE-12"` | Moves the ticket to `Canceled` for good and records why. Tickets blocked by it stay blocked. |
 
 Both commands need `REPOS_ROOT` set as an **environment variable** in the Claude Code session (see step 4 of Getting started) — they read and write the local manifest under `$REPOS_ROOT/.ticket-auto/`.

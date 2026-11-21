@@ -704,6 +704,54 @@ test_gate_held_no_manifest_logs_distinct_reason() {
   }
 }
 
+# ── a hold is lifted by a person's approval only ────────────────────────────
+# _gate_held_resume <provenance|none> — a held ticket whose manifest records
+# an approval of the given provenance at Ready; prints RESUME_STEP.
+_gate_held_resume() {
+  local prov="$1" tmpdir tid="GHA-1" extra='{}'
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/repos/.ticket-auto/initiatives/_index" \
+    "$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner"
+  echo "INIT-1" >"$tmpdir/repos/.ticket-auto/initiatives/_index/${tid}.initiative"
+  [ "$prov" = "none" ] || extra="{\"approved\":true,\"approval_provenance\":\"$prov\"}"
+  jq -nc --argjson e "$extra" '{type:"bug",initiative:"INIT-1",blocked_by:[],dispatch:false,stage:"Ready"} + $e' \
+    >"$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner/manifest.json"
+  {
+    echo "2026-07-05T10:00:00Z|META|schema|info|1"
+    echo "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex"
+    echo "2026-07-05T10:00:02Z|GATE|gate|fail|held: complex ticket"
+  } >"$tmpdir/logs/${tid}-pipeline.log"
+  local out
+  out=$(cd "$tmpdir" && REPOS_ROOT="$tmpdir/repos" bash "$DETECT_SH" "$tid" 2>/dev/null)
+  rm -rf "$tmpdir"
+  _field "$out" RESUME_STEP
+}
+
+test_gate_held_human_approval_resumes_at_reconcile() {
+  local step
+  step=$(_gate_held_resume human)
+  [ "$step" = "STEP_3_5" ] || {
+    echo "expected STEP_3_5 for a human approval, got $step"
+    return 1
+  }
+}
+
+test_gate_held_policy_approval_stays_held() {
+  # The pipeline's own (policy) approval never lifts a hold: this resume
+  # skips the entry gate, so it must be a person's approval.
+  local step
+  step=$(_gate_held_resume policy)
+  [ "$step" = "GATE_STILL_HELD" ] || {
+    echo "expected GATE_STILL_HELD for a policy approval, got $step"
+    return 1
+  }
+  step=$(_gate_held_resume none)
+  [ "$step" = "GATE_STILL_HELD" ] || {
+    echo "expected GATE_STILL_HELD with no approval, got $step"
+    return 1
+  }
+}
+
 test_gate_gate_done_still_advances_past_gate_held() {
   # The original marker must still work — this fix is additive, not a
   # replacement.
@@ -1445,6 +1493,8 @@ test_verify_checkpoint_empty_without_checkpoints() {
 }
 
 for fn in \
+  test_gate_held_human_approval_resumes_at_reconcile \
+  test_gate_held_policy_approval_stays_held \
   test_operator_stop_is_not_a_verify_attempt \
   test_operator_stop_after_real_failures_keeps_count \
   test_verify_attempts_duplicate_terminal_lines_count_once \
