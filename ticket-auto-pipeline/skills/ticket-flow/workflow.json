@@ -1,6 +1,8 @@
 {
   "_label_audit": "Every label declared below is classified (control/human-signal/vestigial) with writer/reader evidence in ../../docs/label-audit.md. Read it before adding, removing, or repurposing any label here.",
   "_vocabulary_note": "The `vocabulary` object below (tracker-event-vocabulary-and-emitter, Phase B1) is the board-agnostic event catalog lib/events.sh's emit_event validates against. It is a separate namespace from `triggers` on purpose — `triggers` is Linear-specific board-driver data (from/to state names, add/remove label names) that flow.sh executes unchanged; `vocabulary` describes what happened in pipeline terms, never a Linear column or label. A vocabulary entry's optional `trigger` field names the single state-machine trigger it is a 1:1 fact-equivalent of, consumed by flow.sh's generic post-mutation dual-write (Section 6 of that change); entries with no `trigger` field are emitted by a specific non-generic call site instead (see each event's `emitted_by`).",
+  "_initial_state_note": "The stage of a ticket or epic nothing has moved yet. New manifests carry no `stage` field; flow.sh's warn-only from-check reads an absent stage as this one (GitHub #766). It must be a state some trigger names in `from`.",
+  "initial_state": "Backlog",
   "well_known_states": [
     "Backlog",
     "Blocked"

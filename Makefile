@@ -444,6 +444,7 @@ test-flow:
 	@echo "=== ticket-flow tests ==="
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/skills/ticket-flow/tests/phase1.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/skills/ticket-flow/tests/phase2.sh
+	bash ticket-auto-pipeline/skills/ticket-flow/tests/test-initial-stage.sh
 
 # `echo … | grep -q` under pipefail misreads a match as a miss (SIGPIPE 141,
 # GitHub #640); scripts/check-grep-q-pipe.sh fails on any such line in non-test shell.

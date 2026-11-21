@@ -462,15 +462,29 @@ _hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" "$(_hb_detai
 # ── Warn-only from-precondition check (D-2) ─────────────────────────────────
 # Compares the trigger's declared origin against the manifest's stage —
 # never a live tracker state. Still does not block the mutation.
+#
+# A manifest with no `stage` (every new one: write_ticket_manifest and
+# ensure_ticket_manifest never write the field) or no manifest at all is a
+# ticket nothing has moved yet, so it is judged as workflow.json's
+# `initial_state` (GitHub #766). Before, the first appraise-start of every
+# ticket logged "ILLEGAL_TRANSITION ... from <none>". Only this check reads
+# the stand-in: CURRENT_STAGE and the manifest keep "no stage" as it is. A
+# manifest with a real stage is compared as before.
 EXPECTED_FROM=$(echo "$def" | jq -r '.from // empty')
+_FROM_STAGE="$CURRENT_STAGE"
+_from_stage_note=""
+if [ -z "$_FROM_STAGE" ]; then
+  _FROM_STAGE=$(jq -r '.initial_state // empty' "$SM" 2>/dev/null) || _FROM_STAGE=""
+  [ -z "$_FROM_STAGE" ] || _from_stage_note=" (no stage recorded)"
+fi
 if [ -n "$EXPECTED_FROM" ] && [ "$EXPECTED_FROM" != "null" ]; then
   _from_match=false
   if echo "$def" | jq -e '.from | type == "array"' >/dev/null 2>&1; then
-    if echo "$def" | jq -e --arg state "$CURRENT_STAGE" '.from | index($state) != null' >/dev/null 2>&1; then
+    if echo "$def" | jq -e --arg state "$_FROM_STAGE" '.from | index($state) != null' >/dev/null 2>&1; then
       _from_match=true
     fi
   else
-    if [ "$CURRENT_STAGE" = "$EXPECTED_FROM" ]; then
+    if [ "$_FROM_STAGE" = "$EXPECTED_FROM" ]; then
       _from_match=true
     fi
   fi
@@ -478,9 +492,9 @@ if [ -n "$EXPECTED_FROM" ] && [ "$EXPECTED_FROM" != "null" ]; then
     # .from may be an array, which `jq -r` pretty-prints over several lines —
     # flatten it to "A,B" for both the log line and the flat heartbeat DETAIL.
     _expected_from_flat=$(echo "$def" | jq -r '.from | if type == "array" then join(",") else tostring end')
-    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${CURRENT_STAGE:-<none>}, expected from ${_expected_from_flat}"
+    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${_FROM_STAGE:-<none>}${_from_stage_note}, expected from ${_expected_from_flat}"
     _hb_gate "flow-warn" "warn" "ILLEGAL_TRANSITION" \
-      "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER" actual "$CURRENT_STAGE" expected_from "$_expected_from_flat")"
+      "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER" actual "$_FROM_STAGE" expected_from "$_expected_from_flat")"
   fi
 fi
 

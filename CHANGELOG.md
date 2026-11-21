@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.132.1 (2026-11-21) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
+
+- **Cause.** A new manifest carries no `stage` field: `write_ticket_manifest` (planner, `/ticket-create`) and `ensure_ticket_manifest` never write one, and a ticket run by hand has no manifest at all. `flow.sh`'s warn-only from-check compared that empty stage with the trigger's `from` (`Backlog`, `Todo` for `appraise-start`), so the first call for every ticket warned. `REPOS_ROOT` was set; this is not #608.
+- **Fix.** `workflow.json` now declares `"initial_state": "Backlog"`. The from-check reads an absent stage as that state. Only the check uses the stand-in: the manifest, the dry-run `current.stage` and the computed stage are unchanged, so a trigger with no `to` still leaves the stage absent. This also covers manifests already on disk and new epic manifests (`epic-integration-open` expects `Backlog`). No manifest writer seeds a stage, because `manifest-backfill.sh` reads a present stage as "already backfilled".
+- **A real illegal transition still warns.** A manifest with a recorded stage is compared as before, and the line names that stage. A trigger that cannot leave the initial state (for example `implement-complete` on a ticket nothing has moved) still warns, as `from Backlog (no stage recorded)`. `<none>` appears only when a `workflow.json` declares no `initial_state`.
+- Tests: `skills/ticket-flow/tests/test-initial-stage.sh` (new, real `flow.sh`); `phase1.sh`'s array-`from` warn case now starts from `Review`.
 ## 0.132.0 (2026-11-21) — the Regression Risk gate reads a recorded acknowledgement, not notes.md (#771)
 
 ticket-implement's Regression Risk gate was cleared by changing `**Status:** UNACKNOWLEDGED` to `ACKNOWLEDGED` in notes.md by hand. Nothing recorded who did it, an agent could make the same edit, and the hold itself left no line in the pipeline log.

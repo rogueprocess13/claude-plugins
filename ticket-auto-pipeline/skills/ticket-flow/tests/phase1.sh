@@ -1209,16 +1209,19 @@ test_flow_adhoc_ticket_gets_manifest_via_flow() {
 }
 
 # ── ILLEGAL_TRANSITION warn must not abort flow.sh (GitHub #530) ────────────
-# appraise-start declares an ARRAY `from` (["Backlog","Todo"]). On a fresh
-# ticket (no manifest, CURRENT_STAGE="") the warn-only from-check fires; it
-# used to interpolate the pretty-printed array into a JSON string, hb_write
-# rejected the invalid DETAIL with rc 1, and `set -e` killed flow.sh before
-# the transition ran — but only when HB_LOG_FILE was set.
+# appraise-start declares an ARRAY `from` (["Backlog","Todo"]). When the
+# warn-only from-check fires it used to interpolate the pretty-printed array
+# into a JSON string, hb_write rejected the invalid DETAIL with rc 1, and
+# `set -e` killed flow.sh before the transition ran — but only when
+# HB_LOG_FILE was set. The ticket starts in Review so the warn fires: a fresh
+# ticket no longer warns (GitHub #766, tests/test-initial-stage.sh).
 test_flow_illegal_transition_warn_array_from_is_non_fatal() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs" "$tmpdir/repos"
   local hb="$tmpdir/logs/WIL-99-heartbeat.log"
+  _flow_seed_manifest "$tmpdir/repos" WIL-99 _adhoc
+  _flow_set_manifest_field "$(_flow_manifest_path "$tmpdir/repos" WIL-99 _adhoc)" '.stage = "Review"'
 
   local rc=0
   HB_LOG_FILE="$hb" _flow_run "$tmpdir" WIL-99 appraise-start --data complexity=simple \

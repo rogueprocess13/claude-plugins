@@ -45,6 +45,7 @@ bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh	20.9
 bash ticket-planner/lib/tests/test-planner-crosscheck-testdata.sh	18.4
 bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh	18.3
 bash ticket-auto-pipeline/lib/tests/test-record.sh	6.0
+bash ticket-auto-pipeline/skills/ticket-flow/tests/test-initial-stage.sh	2.5
 bash ticket-auto-pipeline/lib/tests/test-verify-record-reference.sh	1.0
 bash ticket-auto-pipeline/lib/tests/test-record-stitch.sh	15.0
 bash ticket-auto-pipeline/lib/tests/test-recorder-driver.sh	9.0
