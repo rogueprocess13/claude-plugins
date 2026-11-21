@@ -277,17 +277,13 @@ not restate the grammar anywhere else.
 
 ## 8. ADR gate
 
-If, while doing this phase's work, you meet a potential architectural decision — a
-choice that would materially change the architecture or constrain future implementation
-if reversed — you do not decide whether it needs governance. Invoke the gate; it owns
-that classification.
+If, while doing this phase's work, you meet a potential architectural decision — an
+approach you observe or are about to commit to that would materially change the
+architecture, or constrain other components or future work, if reversed — do not decide
+on your own judgment whether it needs governance. Run the gate first, at whatever step
+it comes up.
 
-You are not restricted to a fixed list of trigger moments. Any time you are about to
-commit to (or you observe) an approach that establishes a constraint other components or
-future work must follow, invoke the gate before proceeding on the strength of your own
-judgment.
-
-Compose a request file and invoke the gate:
+Compose a request file:
 
 ```bash
 _adr_gate_req="$(mktemp)"
@@ -305,10 +301,20 @@ PROPOSED_APPROACH: <what you are about to do, if applicable>
 REQUEST
 ```
 
-Then invoke `/adr-gate --request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT" --log-file
-"$TAP_LOG"`. Read the `=== ADR_GATE_RESULT ===` block it returns and route on
-`ADR_VERDICT` directly from that block — do not re-invoke `lib/adr-gate-parse.sh`
-yourself, the gate already self-parsed its own result once for the log:
+A phase agent holds no Skill tool, so never invoke `/adr-gate`: run the gate inline. If
+you composed a request file, before acting on the decision, read the gate's instructions,
+the `adr-gate` skill's `SKILL.md`: run
+`bash ~/.claude/skills/lib/skill-ref.sh adr-gate SKILL.md`, then Read the printed path in
+full and follow it yourself, with `--request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT"
+--log-file "$TAP_LOG"` as its input. If `skill-ref.sh` exits non-zero, run
+`bash ~/.claude/skills/lib/plog.sh META reference-missing fail "adr-gate/SKILL.md"` and
+stop: never classify from memory. Classify by that file's rules alone, not by what suits
+your plan. If you hold no Write or Read tool, use Bash instead: `cat` to read, a heredoc
+to write the ADR body file.
+
+Its last step runs `~/.claude/skills/lib/adr-gate-parse.sh` on your
+`=== ADR_GATE_RESULT ===` block. Route on `ADR_VERDICT` only after it exits 0; on exit 1
+correct the block and run that step again:
 
 - **`NOT_ARCHITECTURAL`** — continue. Nothing further to do. If the ticket currently
   carries `needs-adr` (a prior run parked or stopped on this same matter and a human has
@@ -316,8 +322,8 @@ yourself, the gate already self-parsed its own result once for the log:
 - **`GOVERNED`** — continue, bound by the stated constraint. No hold. Same clearing step
   as `NOT_ARCHITECTURAL` above if the ticket still carries `needs-adr` from an earlier
   run — this is the re-run case where the governing ADR has since been accepted.
-- **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed`
-  ADR. Emit the `=== HUMAN_HOLD ===` block from § 7 above with `REASON: ARCH_COMMITMENT`
+- **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — you wrote a `proposed` ADR. Emit
+  the `=== HUMAN_HOLD ===` block from § 7 above with `REASON: ARCH_COMMITMENT`
   and `BLOCKS` naming the new ADR's file path and its `## Decision` section. Also apply
   the label: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} needs-adr`. Do not proceed toward implementation
   or merge on the strength of this decision until the ADR is accepted.
@@ -326,20 +332,10 @@ yourself, the gate already self-parsed its own result once for the log:
   `flow-run.sh … needs-adr` call). This is not a park; the approach itself needs rethinking, not ratification —
   but the label is still how a human triaging the queue finds it.
 
-Either labeling call follows the same pattern `/ticket-critique` already uses for
-`needs-info` — a direct `lib/flow-run.sh` invocation (a Bash call, not the `/ticket-flow`
-slash command: phase agents have no Skill tool), non-fatal on failure (`flow-run.sh` logs the
-`META|flow-error` line itself; continue — a missing label must never prevent the
-hold/gate-stop itself from taking effect):
+Either labeling call is a direct `flow-run.sh` Bash call, never the `/ticket-flow` slash
+command, and is non-fatal: `flow-run.sh` logs its own `META|flow-error`, and a missing
+label must never prevent the hold or gate-stop from taking effect.
 
-```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} needs-adr
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# needs-adr carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
-```
-
-The gate never emits a hold, a gate-stop, or a tracker mutation itself — those are always
-yours to emit, exactly as described above. `docs/adr-gate-schema.md` is the source of
-truth for the field set, the closed verdict set, and the routing contract. Do not restate
-the grammar anywhere else.
+The gate's own steps never emit a hold, a gate-stop, or a tracker mutation — emit those
+only as routed above. `docs/adr-gate-schema.md` is the source of truth for the field set,
+the closed verdict set, and the routing contract. Do not restate the grammar anywhere else.

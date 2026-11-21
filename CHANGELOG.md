@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.136.1 (2026-11-21) — phase agents run the ADR gate inline (#667)
+
+The shared preamble § 8 told every phase agent to invoke `/adr-gate`. No phase agent holds the Skill tool, so the gate could not run as written under the router or under fleetd's `claude --agent` dispatch. No tool was granted and the gate is not a router step.
+
+- **Inline gate.** § 8 now has the agent run `bash ~/.claude/skills/lib/skill-ref.sh adr-gate SKILL.md`, read the printed path in full and follow it, with the request file, wiki root and log file as its input. If the resolver exits non-zero the agent writes `META|reference-missing|fail|adr-gate/SKILL.md` and stops; it never classifies from memory. The gate's last step still runs `adr-gate-parse.sh` on the `=== ADR_GATE_RESULT ===` block, and the agent routes on the verdict only after the parser exits 0.
+- **No Write or Read tool.** The verify and pr-review agents hold Bash and Read only, and the guidance extractor holds Bash only. § 8 tells such an agent to use Bash: `cat` to read, a heredoc to write the ADR body file. Everything else the gate does was already a Bash call.
+- **`adr-gate/SKILL.md` runs from any directory.** Its four commands used `lib/...` relative to the working directory, or `CLAUDE_PLUGIN_ROOT`, which is unset in a Bash call. They now call the synced `~/.claude/skills/lib/` scripts. `ticket-planner` still invokes `/adr-gate` as a plain skill; nothing changes there except that those commands no longer depend on the working directory.
+- **`skill-ref.sh` is unchanged.** It already resolves any file under a skill directory; `test-skill-ref.sh` now pins that for a `SKILL.md`.
+- **The coverage test scans the preamble.** `test-agent-tool-coverage.sh` adds the shared preamble, and every file the preamble reads through `skill-ref.sh`, to the scan of each skill that follows the preamble. Its Skill detector also matches a sentence that opens with "Then invoke `/command`", the wording the old § 8 used and the test missed. `KNOWN_GAPS` is unchanged: this gap was never in it.
+- **Not in a prompt manifest.** `adr-gate/SKILL.md` is read only when a phase meets an architectural decision, and the size gate counts only `references/` and `templates/` entries as conditional, so it is not listed in `prompt_manifests` and the skill fingerprint does not cover it (it did not before either).
+
 ## 0.136.0 (2026-11-21) — the router can review the plan with an independent agent (#667)
 
 Under the router a phase runs as a subagent and cannot spawn another agent, so the adversarial review in `ticket-appraise-exec` Step 3.6 ran inline, in the context that wrote the plan. The router can now run that review itself. `fleet-controller` 0.56.0.
