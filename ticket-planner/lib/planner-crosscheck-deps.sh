@@ -56,6 +56,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_DEPS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! declare -f _planner_crosscheck_known_slugs >/dev/null 2>&1; then
@@ -127,6 +134,7 @@ planner_crosscheck_deps() {
     for tok in "${tokens_arr[@]}"; do
       [ -z "$tok" ] && continue
 
+      planner_crosscheck_units_add deps-dangling
       exact=""
       for s in "${known_slugs[@]}"; do
         if [ "$s" = "$tok" ]; then
@@ -166,6 +174,9 @@ planner_crosscheck_deps() {
   local deps_json cyc members
   if declare -f planner_ticketgen_deps_json >/dev/null 2>&1; then
     deps_json=$(planner_ticketgen_deps_json "$specs_dir" 2>/dev/null)
+    if [ -n "$deps_json" ]; then
+      planner_crosscheck_units_add deps-cycle "$(jq -r 'length' <<<"$deps_json" 2>/dev/null)"
+    fi
     if [ -n "$deps_json" ] && ! planner_deps_check_acyclic "$deps_json" 2>/dev/null; then
       cyc=$(_planner_crosscheck_deps_cycle_nodes "$deps_json")
       members=$(paste -sd, - <<<"$cyc" | sed 's/,/, /g')

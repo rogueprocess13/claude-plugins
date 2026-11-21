@@ -76,6 +76,12 @@
 # which reads the whole log — shows *why* it was allowed through, distinct
 # from an automated pass.
 #
+# Units judged (planner-halt-recall, M3 part a): the phase's result line
+# (`Crosscheck|check|done|clean (...)` / `|fail|N blocking ...`) ends with one
+# `units=<check>:<n|UNTESTED>,...` field — how many units each blocking check
+# judged, UNTESTED for none. Appended last so no existing field moves; a
+# measurement only, never a halt. See planner-crosscheck-units.sh.
+#
 # Sourceable library — no set -euo pipefail.
 
 _PLANNER_CROSSCHECK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +93,8 @@ _planner_crosscheck_source_if_missing() {
   fi
 }
 
+_planner_crosscheck_source_if_missing "planner_crosscheck_units_add" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-units.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_citations" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-citations.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_propagation" \
@@ -428,6 +436,14 @@ planner_crosscheck_run() {
     return 1
   fi
 
+  # Units judged per blocking check (planner-halt-recall, M3 part a): every
+  # check appends to this file through planner_crosscheck_units_add; the
+  # totals land as one trailing `units=` field on the phase's result line.
+  # Dynamically scoped, never exported. A measurement only — no decision
+  # below reads it.
+  local PLANNER_CROSSCHECK_UNITS_FILE units_field
+  PLANNER_CROSSCHECK_UNITS_FILE=$(mktemp 2>/dev/null) || PLANNER_CROSSCHECK_UNITS_FILE=""
+
   # Test-data synthesis (planner-test-data-derivation) runs first, before
   # every check family, so the families validate the synthesized state.
   # Ordering decision: it sits AFTER the `Crosscheck|check|start` marker, not
@@ -603,16 +619,19 @@ planner_crosscheck_run() {
     total_accepted=$((total_accepted + a))
   fi
 
+  units_field=$(planner_crosscheck_units_field "$PLANNER_CROSSCHECK_UNITS_FILE")
+  [ -z "$PLANNER_CROSSCHECK_UNITS_FILE" ] || rm -f "$PLANNER_CROSSCHECK_UNITS_FILE"
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
-      "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
-    echo "planner-crosscheck: ${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted" >&2
+      "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries ${units_field}"
+    echo "planner-crosscheck: ${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted ${units_field}" >&2
     return 1
   fi
 
   planner_state_write "$initiative_id" "Crosscheck" "check" "done" \
-    "clean (${total_warn} warn, ${total_accepted} accepted)"
-  echo "planner-crosscheck: clean (${total_warn} warn, ${total_accepted} accepted)"
+    "clean (${total_warn} warn, ${total_accepted} accepted) ${units_field}"
+  echo "planner-crosscheck: clean (${total_warn} warn, ${total_accepted} accepted) ${units_field}"
   return 0
 }
 

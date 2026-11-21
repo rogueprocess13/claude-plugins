@@ -48,6 +48,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_BYPASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Reuses propagation.sh's term-extraction/threshold helpers
@@ -226,6 +233,7 @@ planner_crosscheck_bypass_sweep() {
       mapfile -t terms < <(echo "$block" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//' | sort -u)
       [ "${#terms[@]}" -eq 0 ] && continue
 
+      planner_crosscheck_units_add bypass
       local -a block_citations
       mapfile -t block_citations < <(echo "$block" | grep -oE "$PLANNER_CROSSCHECK_BYPASS_CITE_REGEX" | sed -E 's/:[0-9]+(-[0-9]+)?$//' | sort -u)
 

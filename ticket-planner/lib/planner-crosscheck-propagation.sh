@@ -51,6 +51,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 # carve_scope reads the Specify record bash writes (planner-phase-results.sh).
 if ! declare -f planner_specify_result_slugs >/dev/null 2>&1; then
   # shellcheck source=/dev/null
@@ -339,6 +346,13 @@ planner_crosscheck_consensus_propagation() {
       fi
     done
 
+    # Judged only when 2+ named specs had terms compared — fewer can never
+    # be asymmetric, so the block was not tested (F94: iterations 11, 12 and
+    # 15 passed with 0 such blocks).
+    if [ $((${#present[@]} + ${#absent[@]})) -ge 2 ]; then
+      planner_crosscheck_units_add resolution
+    fi
+
     if [ "${#present[@]}" -gt 0 ] && [ "${#absent[@]}" -gt 0 ]; then
       local snippet
       snippet=$(echo "$block" | tr '\n' ' ' | cut -c1-140)
@@ -411,6 +425,7 @@ planner_crosscheck_forward_references() {
         mapfile -t filtered < <(_planner_crosscheck_prop_terms "$stripped_line")
         [ "${#filtered[@]}" -eq 0 ] && continue
 
+        planner_crosscheck_units_add forward-ref
         local count
         count=$(_planner_crosscheck_prop_presence_count "$target_file" "${filtered[@]}")
         if [ "$count" -eq 0 ]; then
@@ -449,6 +464,7 @@ planner_crosscheck_carve_scope() {
   fi
 
   local now lost added n_rec n_now
+  planner_crosscheck_units_add carve-scope "$(printf '%s\n' "$recorded" | sed '/^$/d' | wc -l | tr -d ' ')"
   now=$(_planner_specify_slugs_on_disk "$specs_dir")
   lost=$(LC_ALL=C comm -23 <(printf '%s\n' "$recorded" | sed '/^$/d' | LC_ALL=C sort -u) \
     <(printf '%s\n' "$now" | sed '/^$/d' | LC_ALL=C sort -u) | paste -sd, - | sed 's/,/, /g')
