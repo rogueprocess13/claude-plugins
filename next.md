@@ -1543,7 +1543,7 @@ Step 12 items 5-7 gate one task in change 4.
 
 ---
 
-## Step 16 — Dispatch rehearsal loop (Conduit-lite) — started 2026-10-24
+## Step 16 — Dispatch rehearsal loop (Conduit-lite) — started 2026-10-24 — **streak loop RETIRED 2026-11-18, replaced by Step 21; history kept as regression evidence**
 
 Goal: one real idea goes grill-me → ticket-planner → `--create` → fleet dry-run with **zero
 blockers**, by running the chain, saving results, fixing each blocker at its source and re-running.
@@ -1763,6 +1763,78 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
                    Nothing in Linear; draft gate never reached. New F67–F70. Run 10 of 15.
                  - **PAUSED 2026-11-15** for Step 19 (LLM ↔ script seam): halts keep coming from a
                    recurring class, not one-off bugs. Iter 11 waits for Step 19's G1–G7.
+                 - [x] **Iter 11** (2026-11-16, INIT-1794825677-5521, planner 0.50.0 / tap 0.121.0): PASS end
+                   to end (grill 82, Crosscheck clean, draft gate 9/9 after 2 revise rounds, epic WIL-153 +
+                   WIL-154..162, Refinement 9/9, critique 9/9 CLEAR, `PREFLIGHT PASS rows=48 failed=0`,
+                   negative control failed as expected). **G7: NOT CLEAN** — independent review left 3
+                   debatable audit advisories (F77–F79) and one false revise-guard block (F80). Run 11 of 15,
+                   clean counter 0. New: F71 (Refinement format retry never fires — G6 fn not sourced), F72
+                   (contracts ugrep regex), F73/F74 (agents write operator answers / rewrite state.log), F75
+                   (Linear key source), F80 (TESTDATA_REGRESSION on `—` Source), F81 (composer case-insensitive
+                   VN dedupe). Record: `workbench/e2e-conduit-rehearsal/iter-11/run-record.md`. WIL-153..162
+                   cancel pending user OK.
+                 - [x] **Iter 12** (2026-11-16, INIT-1794853599-2599, planner 0.52.1 / tap 0.122.1): PASS end
+                   to end (grill 84 in 2 rounds, Crosscheck clean, draft gate 8/8 after 2 revise rounds with 8/8
+                   revisions applied and 0 reverted, epic WIL-163 + WIL-164..171, Refinement 8/8 all imported,
+                   critique 8/8 CLEAR, `PREFLIGHT PASS rows=43 failed=0`, negative control failed as expected).
+                   **G7: NOT CLEAN** — B5 and W5 debatable, plus F84: a revise ASSUMED answer in frontend-shell
+                   contradicts editor-page's `/editor` guard and no gate re-checks dependents. F71/F72/F75 fixes
+                   held. New: F82 (advisory "earlier revision" means not re-raised, not fixed), F83 (negative
+                   control wording), F84. Run 12 of 15, clean counter 0; 3 runs left, exit needs 2 clean in a
+                   row. Record: `workbench/e2e-conduit-rehearsal/iter-12/run-record.md`. WIL-163..171 cancelled and
+                   INIT abandoned 2026-11-16.
+                   - [x] **Before iter 13 (user approved 2026-11-16): fix F84 (+ F82 wording, F83 runbook).** MERGED #751 (4d0bded, planner 0.53.0), installed; restart before iter 13.
+                     **Chosen (after 3 Sonnet reviews): fix at the source, in the revise agent.** (1) Prompt rule:
+                     an ASSUMED default must not set behaviour a neighbour spec relies on (session, token, auth,
+                     error handling, data ownership); where it must, it matches what the neighbour states, else
+                     fails closed (deny / clear / signed out); if neither works, rebut. (2) The revise brief lists
+                     the spec's direct upstream (`blocked-by`) and direct downstream neighbour spec paths as
+                     read-only inputs. No keyword reject (false-reject risk costs clean runs).
+                     **Rejected: composer propagation** of upstream assumptions into dependent bodies: Related
+                     Tickets is a semantically inert section (edits rebase, no rescan); a cross-ticket conflict
+                     is raised as a structural code (CONTRADICTORY_REQUIREMENTS) that the revise loop never
+                     revises → halt; a dependent already at lineage round 2 gets the finding round-limit demoted;
+                     nested bullets risk Linear round-trip non-equivalence (F76). Kept as fallback if iter 13's
+                     review still finds cross-spec assumption conflicts.
+                     Same PR: F82 report wording, F83 runbook negative-control wording. Planner 0.53.0.
+                 - [x] **Iter 13** (2026-11-17, INIT-1794883205-8074 → WIL-172, planner 0.53.0 / tap 0.122.1): PASS end
+                   to end (grill 89, draft gate 9/9 in 1 revise round, 28/72 spawns, Refinement 9/9 imported,
+                   `PREFLIGHT WIL-172 PASS rows=48 failed=0`, critique 9/9 CLEAR). **G7: NOT CLEAN.** Run 13/15,
+                   counter 0. F84 fix held (neighbour lines present; boot-failure gap rebutted, no ASSUMED).
+                   New: **F85** structural CONTRADICTORY_REQUIREMENTS marked `resolved` by a scoped rescan that
+                   could not see its untouched sections (dor-semantic.sh lineage ~L642); **F86** `_scope_layers`
+                   only knows `FE`, Specify wrote `Frontend` → 4 frontend tickets skip TEST_USER/NAV_PATH (negative
+                   control exposed it); **F87** frontend session contract (guard vs boot order, setToken username,
+                   getToken caching) unpinned across tickets (reviewer U1–U3). Debatable: boot non-401 deferral,
+                   W2. Record: `$REHEARSAL/iter-13/run-record.md`. WIL-172..181 cancelled, INIT abandoned (2026-11-17).
+                   - [ ] **Before iter 14:** fix F85 + F86 (gate code, class C; user approved 2026-11-17); F87 open.
+                     Runs left: 14, 15 — both must be clean, so iter 14 is the last chance.
+                 - [x] **Iter 14** (2026-11-17, INIT-1794904930-5594, planner 0.53.1 / tap 0.122.2): HALTED at draft
+                   readiness, `DRAFT_NOT_READY` 1/9, nothing in Linear. **G7: NOT CLEAN** — 2 consecutive clean runs
+                   within the cap of 15 no longer possible. New: **F88** grill assessor variance (attempt 1 capped at
+                   75, discarded; fresh grill 82); **F89** Specify wrote `Source: generate` for an in-test fixture app
+                   (`GET /boom`) → testdata-synth made a DB-seed TD ticket; **F90** revise loop edits synth-marked TD
+                   specs, the post-round testdata-synth re-run reverts them, report says "applied". F85/F86 not
+                   exercised. Record: `$REHEARSAL/iter-14/run-record.md`.
+                   INIT-1794904930-5594 abandoned (2026-11-17).
+                   - [x] **F89 + F90 fixed:** PR #753 (planner 0.54.0) merged 2026-11-17 as 48b2480, 0.54.0 installed. User decisions 2026-11-17:
+                     cap raised 15 → 17 (runbook in #753), F87 + F88 left open (known, not fixed).
+                     Next: restart session, iter 15 (run 15/17; 15 AND 16 must both be clean).
+                 - [x] **Iter 15** (2026-11-17, INIT-1794929444-3879 → WIL-182, planner 0.54.0 / tap 0.122.2): PASS end
+                   to end (grill 87 in 1 answered round, 8 specs, Crosscheck clean 0 warn, draft gate 8/8 after 1
+                   revision, 19/64 spawns, Refinement 8/8 with 1 fresh scan, `PREFLIGHT WIL-182 PASS rows=43 failed=0`,
+                   critique 8/8 CLEAR, negative control failed as expected ×2). **G7: NOT CLEAN.** Run 15/17,
+                   counter 0. Debatable: W3 (**F91** Linear autolink corrupted one Verification Plan cell in WIL-185),
+                   W4 (4 open operator questions tested as defaults). Unflagged: **F87 recurs** (`/editor` guard vs
+                   boot token check; WIL-190:66 passes vacuously), **F92** (`toArticleResponse` two owners),
+                   **F93** (WIL-188 needs jake's token, says no password needed). No gate leak of the F85/F86/F90
+                   kind; F85, F86, F89, F90 not exercised. Record: `$REHEARSAL/iter-15/run-record.md`.
+                   WIL-182..190 cancelled, INIT abandoned (2026-11-17).
+                   - [ ] **Before iter 16 (user approved 2026-11-17): fix F87** (shared client-state lifecycle +
+                     vacuous-criterion rule at Specify/Consensus, revise-prompt clause; planner 0.55.0). F91 not in scope.
+                     3 Sonnet reviews done; warn code + cross-ticket draft pass rejected for now (fallback if F87 recurs).
+                     MERGED #754 (9327c53, planner 0.55.0) 2026-11-17; install, restart, iter 16.
+                     Runs left: 16, 17 — both must be clean.
               4. **If 07–09 show no improvement → reverse engineering**: hand-corrected ideal tickets
                  for the hardest specs (no-page scaffold, editor page), used as gate fixtures and to
                  compare planner output by property, not text.
@@ -1968,7 +2040,7 @@ item 6, `fleetd-shared-router-steps`, started 2026-11-11; its code merged the sa
 
 ---
 
-## Step 19 — LLM ↔ script seam: "the model judges; bash knows" — planned 2026-11-15, IN PROGRESS
+## Step 19 — LLM ↔ script seam: "the model judges; bash knows" — planned 2026-11-15, IN PROGRESS — **streak loop RETIRED 2026-11-18, replaced by Step 21; history kept as regression evidence**
 
 Decided 2026-11-15 (user): Track 0 runs now, in parallel with G1–G2; G7 runbook amendment approved
 (cap 15, warning labels in the exit criterion; applied to docs/runbooks/dispatch-rehearsal.md);
@@ -1976,8 +2048,12 @@ three openspec changes (seam-bash-derives, seam-gate-safety, seam-fail-closed); 
 G1–G7 go before the other open steps, because the rehearsal (Step 16) is blocked on them.
 Done 2026-11-15: Track 0 merged — #733 (planner replan parser, 0.43.7), #734 (fleet, 0.54.0),
 #736 (ticket-auto, 0.118.0); seam-bash-derives slice 1 merged — #735 (planner 0.44.0, F67/F70).
-Next: seam-bash-derives slices 2–5 (Consensus counts + CITED_ARTIFACT; ticket-auto TICKET/BODY_HASH;
-grill seal reads result.json; full corpus), then G3–G6. Follow-ups: fleetd phase dispatch should call
+Done 2026-11-15/16: seam-bash-derives slices 2–5b merged (#738–#742); seam-gate-safety G3–G6 merged
+(#743 ledger seed, #744 demotion registry + F58, #745 validator-only DoR retry, #746 harness errors
+never plan defects + Refinement 25% unevaluated halt). main d980708, ticket-auto-pipeline 0.121.0 /
+ticket-planner 0.50.0 (install together; planner refuses older tap). G1–G7 gate for iter 11 is met.
+Next: rehearsal iter 11 (run 11 of 15, clean counter 0); its gate fires go into the ledger before
+seam-gate-safety group 5. Watch the 25% unevaluated halt over iters 11–15. Then H1–H6. Follow-ups: fleetd phase dispatch should call
 auto-merge.sh before going live; reconcile scripts read only `- [needs-human]`.
 
 Why: every rehearsal run halted on a new instance of the same few mechanisms — scripts reading
@@ -1986,11 +2062,11 @@ shapes, prompt/check drift, no repair route, fail-open parsing, late validation.
 2 web reports, 5 design deep dives and 3 plan reviews are in the untracked folder
 `seam-audit-2026-11-15/` at the repo root; the plan is `seam-audit-2026-11-15/PLAN.md` (v2).
 
-- [ ] **Track 0 — live fail-opens** (bug-fix PRs, one per plugin, parallel): merge safety
+- [x] **Track 0 — live fail-opens** (bug-fix PRs, one per plugin, parallel): merge safety
       (PR branch check, outcome label can only withhold merge), router routes on parsed
       PHASE_RESULT, entry-gate critique/complexity/readiness/`[needs-human]`, fleet feedback grep +
       replan parser. fleetd `classify_phase` fail-closed goes on the phase-dispatch flag checklist.
-- [ ] **G1–G7 — gate for rehearsal iter 11:** bash derives facts (F67/F70), minimal corpus of real
+- [x] **G1–G7 — gate for rehearsal iter 11:** bash derives facts (F67/F70), minimal corpus of real
       rehearsal output, ledger seed, narrow demotions with sunsets, Refinement parity + unevaluated
       cap, validator-only DoR retry, runbook amendment (cap 15, stricter exit criterion — user sign-off).
 - [ ] **H1–H6 — hardening after iter 11:** fail-closed planner parsers (shadow run first), full
@@ -2001,6 +2077,370 @@ shapes, prompt/check drift, no repair route, fail-open parsing, late validation.
 - Delivery: openspec changes (a) seam-bash-derives, (b) seam-gate-safety, (c) seam-fail-closed;
   planner PRs one at a time, one version bump each.
 - Open: user to confirm Track 0 now, G7 runbook amendment, 3 changes vs 1 umbrella; order vs Steps 1–18.
+
+## Step 20 — Persona work from Dexter: planner review panel + QA persona for verify — both MERGED 2026-11-16; live checks open
+
+Two openspec changes Dexter proposed for this repo. Both ship off by default, so merging changed
+no behaviour.
+
+**A. `planner-persona-panel`** — PR #747 merged (b867e78, ticket-planner 0.51.0). Each authoring
+phase reads as a job function (`PLANNER_PHASE_PERSONAS`), and a panel of up to five persona
+reviewers reads each proposal before Review (`PLANNER_PERSONA_PANEL`). Consensus settles every
+finding; only a security or product-owner blocker that Consensus does not accept in full stops the
+plan, as an ordinary open decision (`panel.<ID>` row). New Crosscheck codes `PANEL_UNADDRESSED`
+(warn) and `PANEL_STOP_SKIPPED` (blocking). The branch was built on an older main (its 0.44/0.45
+were taken meanwhile), so it shipped as 0.51.0 with the panel-stop hardening commit on top.
+
+- [x] 1. Built (PR A dormant + PR B wiring), merged with main, hardening committed, `make test` 329/329, merged.
+- [ ] 2. Live check (task 4.3): one real plan with `PLANNER_PHASE_PERSONAS=true`, then one with
+      `PLANNER_PERSONA_PANEL=true`; compare artifacts, run time and cost with a plan from before.
+      Watch how often the security seat sits (its trigger words include `token` and `auth`).
+- [ ] 3. Dexter side (5.1–5.3): pin bump via `scripts/sync-plugin-pins.sh` (far behind — its own
+      change with a smoke run); confirm a panel stop shows on the Slack round card and the answer
+      reaches `--answers` with the `panel:<id>` key; set both flags for Dexter planning runs.
+- Known window: a crash between the proposal write and the reopen line in answer intake leaves an
+  upheld objection without a second Consensus run; Crosscheck then blocks with
+  `PANEL_STOP_SKIPPED … (upheld by the owner, not accepted)`.
+
+**B. `verify-qa-persona`** — PR #748 merged (782e7ed, ticket-auto-pipeline 0.122.0).
+`persona-select.sh --phase verify [--verify-mode …]` returns `qa-engineer` plus `qa/playwright-web`
+(browser), `qa/api-testing` (live-backend) or none (build-only). `ticket-verify` Step 1g loads it
+behind `VERIFY_QA_PERSONA` from `references/qa-persona.md`. The persona adds supporting checks (≤ 3
+per criterion, ≤ 12 total); PASS/FAIL stays on the acceptance criteria, extra findings go to an
+`Observations` section that Steps 6/7f and the remediation brief ignore. A guard forbids mocking
+(`page.route()`), URL navigation, new tickets/states and new pass criteria.
+
+- [x] 1. Implemented (selector, Step 1g reference, guard, docs, 405-combination selector golden), `make test` 326/326, merged. SKILL.md shrank 7 bytes.
+- [ ] 2. Live check (task 3.2): one real ticket per verify mode with the flag on; compare report,
+      verdict and run time with a like ticket from before.
+- [ ] 3. Dexter side (4.1–4.2): same pin bump as A; dexboard `personas.py` handles for
+      `qa/playwright-web` and `qa/api-testing`; run view shows the verify persona from `META persona-select`.
+- [ ] 4. Small follow-up: `architect.md` and `product-owner.md` `used-by` lists disagree with the selector.
+
+After the live checks: archive both changes (`openspec/changes/<name>/handoff.md` has the details).
+
+## Step 21 — Delivery-first programme: prove grill → planner → ticket-auto delivers working software — v2 AGREED 2026-11-18; M0 + X0 approved, M0 in progress
+
+Supersedes the Steps 16/19 rehearsal streak loop once agreed (iter 16 halted on F94; the
+iteration-17 investigation replaced run 17). Architecture, contracts, models, strategies:
+`delivery-plan-2026-11-18/PLAN.md` (v2, untracked). Reviews: `delivery-plan-2026-11-18/reviews/R1–R3`;
+objections, disagreements and rejections settled in `delivery-plan-2026-11-18/RESOLUTION.md`.
+Evidence: `seam-audit-2026-11-15/architecture-2026-11-17/SYNTHESIS.md` + A–E.
+
+Rule: optimise for delivering the software the rehearsal describes, not for passing the rehearsal.
+Order: environment → consumer ground truth → consumer fixes → measured subtraction → planner ground
+truth → **decide** → ownership / benchmark / initiative review / plan model.
+Per code milestone: one PR, one version bump per touched plugin, a compatibility note (planned vs
+unplanned tickets, old/new sibling versions, flag-off byte-identity golden), and a byte ceiling.
+New prompt text goes into sibling libs or `references/`, never into SKILL.md bodies that carry a
+size exception.
+Blocks: none after M2 (the X0b re-run is enough); 2 runs after a milestone that changes plan content;
+3 runs when variance is the question.
+
+**User decisions 2026-11-18** (answers to PLAN §11):
+1. Bar: oracle pass rate ≥ 80 % and delivered without human edit ≥ 70 %, **reported separately**. A
+   ticket whose oracle pass depends on an unresolved decision is not a success. Also report tickets
+   blocked + reasons, and defects found after implementation. Initial bar, not production readiness.
+2. Oracle Layer A: an agent drafts it from the brief; the user approves it before execution. Layer B
+   and the hidden decision truth set are written independently, by someone who has not read the tickets.
+3. X0 uses the existing WIL-182..190 in the copied work root. Record the original Linear state first;
+   the copy must not be able to affect the live initiative.
+4. One batch decision checkpoint after Consensus, before ticket generation. Only decisions that need
+   human input; confirmed ones never come back; unresolved ones never silently become requirements.
+5. Brownfield = **Ledgerly** at a pinned commit, as a disposable copy with no live customer data (not the
+   revenue-critical app). Fallback: a snapshot of another existing app. Prerequisite found: Crosscheck
+   hard-codes `ledgerly` as an excluded dir (`planner-crosscheck-contracts.sh`, `planner-crosscheck-bypass.sh`),
+   so those scans would skip the benchmark repo — remove before M6.
+6. Steps 16/19 streak loop retired; Step 21 replaces it. All iterations, reports, fixtures and failure
+   cases are kept as regression evidence.
+7. Enable Playwright and refresh the GitHub token before X0; checklist + smoke ticket are M0 acceptance.
+   Anything that cannot be enabled is recorded as E, never attributed to the planner or ticket-auto.
+
+**Separation rule:** X0 answers "can ticket-auto deliver an existing plan?"; X1 answers "can current
+grill-me → planner produce a plan ticket-auto can deliver?". Their results are reported separately and
+never pooled. Sequence: M0 → X0 → X1 → evidence review → choose the M5–M8 order. No architecture change
+lands during X0 or X1 (controlled experiment; only the M2/M3 changes needed to run X1, decided at the
+X0 review).
+
+- [ ] **M0 — Baseline freeze + environment readiness** (no pipeline code)
+  - Problem: results cannot be compared without a fixed reference (R7). Environment failures would be
+    confused with consumer failures (GitHub MCP token expired; Playwright plugin disabled in
+    `~/.claude/settings.json`; skip-worktree `CLAUDE.md` vs WIL-183, which edits it; ports 3000/5173).
+  - Root cause: no frozen baseline; the consumer path has never run on this host for planned tickets.
+  - Affected: tag `baseline/2026-11-18` (9327c53); `$REHEARSAL/BASELINE-SHA256SUMS` +
+    `chmod -R a-w $REHEARSAL/iter-*`; tar of `e2e-conduit/.ticket-auto/initiatives/`;
+    `$REHEARSAL/baseline-2026-11-18/` (versions, known-defects table, PLAN §3.3 predictions,
+    environment checklist); one `[X0-smoke]` throwaway ticket run end to end.
+  - Dependencies: none. Regression risk: none.
+  - Tests / evidence: `sha256sum -c` passes; checklist all green or recorded; smoke ticket merged.
+  - Rollback: delete the tag and folder, restore permissions, close the smoke ticket.
+
+- [ ] **M1 — X0: execute the iter-15 epic (consumer experiment)** (no pipeline code)
+  - Problem: no planned ticket has ever been implemented (R1); consumer seams are unexercised.
+  - Root cause: the runbook stops at fleet dry-run.
+  - Scope note: iter 15 is an old (planner 0.54.0), best-of-16 plan. X0 measures **ticket-auto only**
+    and is not used to rank planner work.
+  - Affected: copied work root (initiative + epic dirs + fresh sandbox clone at 200f5a4, abandon and
+    dispatch state cleared by a documented script in the copy only); Linear WIL-182..190 re-opened
+    (or fresh `[X0]` issues, Q3); `$REHEARSAL/oracle/` (Layer A per ticket from `idea.md`, user-approved,
+    hashed; Layer B sanity walk, observations only); `$REHEARSAL/x0/outcomes.md`, `operator-log.md`;
+    runbook gains §7 "Execution".
+  - Change: `/ticket-auto` per ticket in dependency order. The operator merges each passing PR before
+    the next ticket starts (epic + manual releases dependants before merge). A merge conflict counts
+    as a human edit and stops that branch. Checkpoint after WIL-185. Attribution per PLAN §3.4:
+    E/C/P/I/V, primary + secondary, tie-break, cascades separate, second reader only on ambiguous cells.
+  - Dependencies: M0. Regression risk: none to code; the sandbox is disposable.
+  - Tests: each Layer-A assertion fails on the pre-ticket code; oracle hash unchanged after each run.
+  - Evidence for acceptance: outcome table for WIL-183..185 (checkpoint), then the rest or a recorded
+    stop; ticket-verify × oracle 2×2; predictions scored; reader agreement.
+  - Rollback: delete the copy, reset the sandbox, re-cancel the issues.
+
+- [ ] **M2 — One PR: consumer fixes observed in X0 + F91 at the source** (ticket-auto-pipeline, ticket-planner)
+  - Problem: C-coded failures from X0. Likely candidates: verify mode `browser` on API/store tickets;
+    test-user SKIP. Plus F91 (Linear autolink corrupts a test value in body.md).
+  - Root cause: consumer seams never exercised; `planner_ticketgen_record_baseline` adopts Linear's
+    re-render into body.md.
+  - Change: fix only what X0 observed. For planned tickets only, read a **declared verify mode**
+    (Planner Context/manifest) before `verify_mode_classify`; the classifier is untouched for other
+    tickets. TicketGen refuses to adopt a re-render that changes a code-span literal or a credential
+    row; human Linear edits are still adopted through `body_baseline_classify`. Nothing documented
+    is deleted (Exploration Depth, `adopt_planner_proposal` go on an inert-paths list). The fast-path
+    threshold is not touched.
+  - Dependencies: M1. Regression risk: verify routing for planned tickets; body adoption. Golden tests
+    over the existing verify-mode fixtures; body-baseline tests; a seeded F91 autolink case.
+  - Evidence: X0b (re-run of only the C-failed tickets) no longer fails for that reason.
+  - Rollback: revert the PR.
+
+- [ ] **M3 — Measured subtraction of planner halts** (ticket-planner, small; mostly offline)
+  - Problem: blocking prose checks halt fresh plans (Crosscheck 111 blocks, 0 true; iter 16 F94), so
+    X1 cannot reach `--create`.
+  - Root cause: regex and word-overlap checks judging meaning (R2).
+  - Change: (a) `units=N` / `UNTESTED` on every blocking check (field appended at the end of the
+    line; grep the consumers first). (b) Ledger rows for iters 12–16. (c) Recall for the 8 blocking
+    prose codes (`RESOLUTION_NOT_PROPAGATED`, `PRECEDENT_NOT_FOUND`, `FORWARD_REF_UNFULFILLED`,
+    `CONTRACT_MISMATCH`, `CONTRACT_CONSUMERS_UNNOTIFIED`, `BYPASS_PATH_UNADDRESSED`, `SIGNALS_UNIFORM`,
+    `AC_STATUS_UNCOVERED`): seeded operators derived from iters 01–10 findings, tested on iters 11–15
+    finals, plus X0 P cases. (d) Codes with recall 0 move to `PLANNER_CROSSCHECK_WARN_CODES`
+    (`planner-crosscheck.sh`), with a ledger row and a sunset. No deletion. `gate-demotions.tsv`
+    stays reader-less.
+  - Dependencies: M1 (real cases). Regression risk: a defect only a demoted code caught; warn rows stay
+    visible, and the recall result is recorded.
+  - Tests: counter units; recall fixture set in the corpus layout (`scripts/corpus-scrub.sh`, privacy
+    test); corpus replay halts fewer with recall unchanged.
+  - Evidence: a recall table for the 8 codes; replay of the 16 recorded runs.
+  - Rollback: restore the warn-code list.
+
+- [ ] **M4 — X1: two fresh greenfield runs on current main, each executed end to end** (experiment)
+  - Problem: today's planner has never been measured by delivery; X0 cannot do it.
+  - Change: grill → planner → `--create` → X0 protocol, using the scripted-owner `--answers` file
+    for the grill and any planner stop. Record planner halts as data.
+  - Dependencies: M2, M3. Evidence: an outcome table comparable to X0; attribution counts.
+  - **Then decide** the order of M5–M8 from X0 + X1 (user decision; record it here).
+  - **X1 plan (added 2026-11-20, from the X0 review; X0 evidence in
+    `e2e-conduit-rehearsal/x0/REPORT.md`).** X1 is the before/after comparison with X0: same brief
+    (Conduit-lite), started again from the brief, on a pipeline with the M2 and M3 fixes.
+    - **Why not re-run the X0 tickets with a fixed consumer.** X0 already passed Layer A 92 of 92
+      with 8 of 8 merged, so the outcome cannot improve. A consumer-only re-run of all 8 tickets
+      shows process gains only, and the first tickets of X1 show those anyway. X0b in M2 stays what
+      it says: only the tickets that failed for a C reason, not the whole epic.
+    - **Reuse without change:** the Layer A oracle (92 assertions), the decision truth set (39) and
+      the Layer B walk, run from `$R/oracle` with the hashes checked before and after.
+    - **Baseline from X0, consumer side** (expected after M2): rescues 1 → 0; pipeline changes during
+      the run 2 → 0; runs for 8 tickets 14 → fewer; fast-path `api_error` on 5 tickets → 0; wrong
+      verify mode on 2 tickets → 0.
+    - **Baseline from X0, planner side** (the numbers X1 is compared with): 0 of 39 open decisions
+      confirmed by a product owner; 20 written as plain criteria with no flag; 5 settled by nobody;
+      7 Layer B gaps worth a ticket (`x0/oracle-run-2026-11-20/LAYER-B.md`); 1 P-xticket failure
+      (WIL-190 criteria 18–19, counted as a failure by user decision 2026-11-20).
+    - **Add one seeded-defect ticket.** X0 had no failed verify attempt, so it gives no evidence
+      that ticket-verify catches bad work. One ticket with a known defect fills the "verify fail"
+      row of the 2×2.
+    - **Protocol, fixing what X0 got wrong:** freeze the pipeline version for the whole run (X0 had
+      2 changes mid-run and is marked `assisted`); write the predictions before the run; run Layer A
+      after each ticket, not afterwards; the session does not approve its own gate holds (X0: 2
+      holds approved within seconds); keep the operator log during the run; stop and report at the
+      agreed checkpoint.
+    - **Blind spot:** fixes designed from the gaps this brief exposed are tested here on the same
+      brief. X1 on Conduit-lite is a regression check. Whether the fixes generalise is M6
+      (brownfield), which is the real test.
+    - **Size: 2 runs** (user decision 2026-11-20; the delivery plan is updated to match: item 5,
+      the M4 row and §8.3). One run against one run cannot separate a fix from run-to-run noise.
+
+- [ ] **M5 — Decision checkpoint, reusing the existing records** (ticket-planner, grill-me; flag `PLANNER_DECISION_CHECKPOINT`, default off)
+  - Problem: guesses become tested facts, different on each run (R4).
+  - Root cause: an architecture anchor can settle a grill Open Gap; Consensus Open Questions never
+    stop (F10); nothing renders unconfirmed status into tickets.
+  - Change: read-only `planner_decisions_report` (union of Parameters rows, `### O<n>` outcomes,
+    Assumption rows, Open Questions, TESTDATA_CONFIRM/CITED questions). Open-Gap overlap rule in
+    `planner_params_*` (an `architecture:`/`appraisal:` anchor on a must-ask kind that overlaps a
+    sealed Open Gap counts as `default`; the source family stays). Open Questions raise the existing
+    `planner-stop-describe.sh` stop. An `accept-proposed` answer value on the existing
+    `specify-param:`/`specify-answer:` keys. A `## Decisions` section from the composer, with parser
+    tolerance in dor-check, critique, render-equivalence and body-baseline. grill-me: Open Gaps status
+    column inside the seal (profile-gated); no implementation questions to the client.
+  - Failure handling: PLAN §6.4 (owner never answers; contradictory answers; answers changing mid-run).
+  - Dependencies: M4. Regression risk: a new planner stop in fleetd/Slack planning runs (the headless
+    `--answers` path must carry it); a new body section for existing parsers. Flag off = byte-identical.
+  - Tests: report units; overlap-rule units; composer golden with and without Decisions; seal
+    byte-identity for intents without the new column; two runs with one owner file.
+  - Evidence: silent-point behaviour identical across the two runs; 0 decision-derived ACs without a
+    status; P-decision failures in the next block ≤ X1.
+  - Rollback: flag off.
+
+- [ ] **M6 — Brownfield benchmark** (experiment; Q5 decided before M2)
+  - Problem: every finding comes from one greenfield brief.
+  - Change: a frozen copy of one of the user's apps (or a mutated public app); brief that extends it;
+    Layer A + Layer B oracle + the app's suite stays green + test count monotonic. One run.
+  - Dependencies: M2, M3. Evidence: an outcome table comparable to X0/X1.
+
+- [ ] **M7 — Initiative review (brief coverage A + cross-ticket B): offline → shadow → promote** (one new agent)
+  - Problem: requirements lost at Specify (C L1, L3, L4) and cross-ticket contracts unjudged (R5).
+  - Change: offline on the final bodies of iters 11/12/13/15 against a pre-labelled loss list and
+    the 8 historical cross-ticket cases (bar for B: ≥ 6/8; for A: precision/recall vs the list).
+    Then shadow inside revise round 1 (`planner-draft-readiness-gate.sh`; counts in
+    `PLANNER_DRAFT_SPAWN_BUDGET`; findings in `findings.r1.json`) for one block. Then promote each
+    checklist on its own numbers into the revise loop; never halt without revise. Kill B if X0 + X1
+    show no P-xticket failures and the offline bar fails.
+  - Dependencies: M3; M4 data. Regression risk: a new LLM false-finding source (hence offline + shadow).
+  - Rollback: flag off.
+
+- [ ] **M8 — Plan model step 2: sealed REQ ids + bash-derived plan.json** (only if M7-A needs ids or is unstable)
+  - Change: a profile-gated `## Requirements` section inside the seal (quote spans verified at seal);
+    planner grill-me version floor + absent-section fallback; `plan.json` derived by bash from the
+    Markdown (single writer; AC id ledger); optional `Covers: REQ-n` tokens; validators read plan.json.
+  - Evidence: graph checks re-find the M7-A losses without prose joins.
+  - Rollback: flag off; plan.json unread.
+
+- [ ] **Post-X0 proposal — ticket-gap loop: preflight finds the gaps, patch or re-plan closes them** (proposed 2026-11-20; input to the X0 review, not built during X0/X1)
+  - Premise: the planner will never write gap-free tickets (real-world tickets don't either). Stop
+    chasing a perfect planner; make gaps cheap to find and fix after planning.
+  - Problem: WIL-182's tickets passed critique (CLEAR 85–100), strict DoR and `e2e-preflight.sh`, yet
+    agents still guessed behaviour: 401/403/404/422 ordering, network/empty-body errors, trailing-space
+    username duplicate, unconfirmed security decisions later reversed by WIL-192; 56/71 ACs on
+    WIL-185/186; Scope vs Technical Context mismatches; six non-UI tickets verified in a browser
+    (claude-plugins #773, #761; comment on #667).
+  - Root cause: the existing loop already exists (`scripts/e2e-preflight.sh`, `planner-draft-readiness`
+    + `draft-revise-agent`, `/ticket-planner replan`, `readiness-feedback-loop`) but (1) every check
+    judges the ticket's **text** (sections present, ACs well-formed), not whether behaviour is
+    **decided**; (2) it runs once, at plan time, before sibling tickets change the code (WIL-190's
+    `navigate('/login')` vs the replace-based guard); fleet dispatch only re-runs
+    `ensure_ticket_readiness`; (3) implementation guesses never flow back — `readiness-feedback-loop`
+    is report-only by design; (4) the rehearsal's exit was "zero blockers at dry-run", not delivery.
+  - Change (extend what exists; no new loop):
+    - **A. "Two implementations" ambiguity check** — for each AC/outcome, would two reasonable
+      implementers differ in user- or operator-visible behaviour? Focus: errors and edge cases,
+      security/identity decisions, verify mode. Added to the draft-readiness evaluator and as a
+      `e2e-preflight.sh` row. Typed findings `{ticket, field, gap, options[], blast: local|cross|human}`
+      (location + admissible options; untyped feedback repairs poorly). Local → `draft-revise-agent`;
+      human → the M5 decision checkpoint. Overlaps M7-A; decide at the X0 review whether A is a
+      checklist inside M7 or its own change.
+    - **B. Deterministic preflight rows** (no LLM): AC count soft cap (~20); declared verify mode
+      present (ties to M2); Scope files ⊆ Technical Context files and vice versa; referenced files and
+      branches exist at the pinned ref; ACs that cannot hold live (frozen clock, unmerged base).
+    - **C. Just-in-time re-check at dispatch** — fleet runs A + B per ticket against the current epic
+      branch right before spawning it, not only at plan time. Local gap → patch the ticket
+      (`draft-revise-agent`, bounded rounds); cross-cutting gap → `replan` scoped to affected
+      undispatched tickets; human → hold with one specific question. Cap 2 rounds; stop when the
+      finding count does not drop (noisy-verifier rule).
+    - **D. Close the feedback loop** — implement agents log every guess (decision register in
+      notes.md); guesses flow into `readiness-feedback-loop`, which may now trigger patch/replan and
+      proposes template additions when the same gap class recurs (the #773 template gaps are the
+      first batch).
+  - **User decision 2026-11-20 — freeze rule vs patching:** the rehearsal freeze rule stays
+    (runbook §2: never hand-edit or patch a generated ticket, `body.md` or manifest; fix at the
+    source). Patching (C) is allowed in **production** runs only. Every patch must be recorded
+    (ticket, finding, before/after hash) and counted, so production patch volume is itself planner
+    feedback. Rehearsal and benchmark runs (X0/X1/M6) run with C disabled, or record C's findings
+    without applying them.
+  - Dependencies: X0 review (M1); M2 (declared verify mode) for B; M5 for the human route; M7 shares
+    A's offline → shadow → promote path. Regression risk: new LLM false-finding source (A, C) → offline
+    on WIL-182..193 first, then shadow; patch churn in production → round cap + recorded patches.
+  - Tests: B rows as fixture units; A offline against the WIL-182 gap list (recall on the known
+    gaps, false-finding rate on clean tickets); C round-cap and stop-rule units; D register → feedback
+    file golden.
+  - Evidence: next epic vs WIL-182 baseline — rework/follow-up tickets per epic, reversed decisions per
+    epic, agent guesses per ticket, oracle pass rate.
+  - Rollback: each of A–D behind its own flag; flag off = today's behaviour.
+  - Sources: SAGE (arXiv 2609.34268), REPOT (2605.30052), structured feedback (2607.14167), VRR-Stop
+    (2607.17641); two-implementations technique (levelup.gitconnected.com); Microsoft DoR playbook.
+
+Open (user): success bar (PLAN §8.3); oracle and truth-set authorship; X0 tracker (re-open vs fresh);
+checkpoint owner; brownfield target (before M2); retire the Steps 16/19 loop; Playwright + GitHub token
+for X0.
+
+## Step 22 — `--record`: capture the automation as it runs — code + docs MERGED 2026-11-21; live check (5.2) open
+
+Openspec change **`ticket-auto-record`** — all 5 PRs merged 2026-11-20/21: #776 flag+guard (`lib/record.sh`),
+#777 VERIFY capture, #780 stitch (`/ticket-record-stitch`, `lib/record-stitch.sh`), #786 recorder board driver +
+env-check rows, #792 README / plugin-overview how-to. ticket-auto-pipeline 0.130.0 at #786. Tasks 22 of 23 done;
+the change is not archived. The checklist below is superseded by the change's tasks.md.
+
+**Open — task 5.2, needs the user:** one ticket end to end with `--record` on a local synthetic-data project,
+then `/ticket-record-stitch`, and watch the video. The step-by-step checklist is the "PR 5" section of the
+change's `handoff.md`. `openspec/` is gitignored, so the newest `tasks.md` / `handoff.md` are in the worktree
+`.claude/worktrees/agent-a0163f75688377ac4/openspec/changes/ticket-auto-record/`, not the main checkout.
+Never run against a live system before 5.2:
+- the Linear board page reading (`locateCard` in `lib/board-drivers/record/board-shot.mjs`): if Linear's markup
+  differs, every board frame is skipped as `column-mismatch` (safe, but no board frames);
+- login-page detection (`isLoginUrl`), which decides `session-expired`;
+- fleetd's pusher passing `REPOS_ROOT` and `FLEET_BOARD_DRIVERS=linear,recorder` to drivers;
+- a real `npx playwright install chromium`, `recorder.sh login`, and a stitch over real frames.
+After 5.2 passes: remove the "Known limitation" paragraphs from README and plugin-overview, then archive.
+
+**Decided:** a missing `skills/ticket-verify/references/record.md` stays a hard stop (user, 2026-11-20).
+`make test` now needs real `ffmpeg` (`test-record-stitch.sh`); CI installs it.
+
+**Follow-ups (not started, not sequenced — the user places them):**
+- `ticket-auto-record-attach`: Linear upload + `recording-attached` outbox event. Waits on the client-access
+  decision (guest seat vs shared link).
+- REPRODUCE recording (it uses playwright-cli, so it needs its own capture path).
+
+**Goal.** Opt-in recording of a ticket's life for an internal or client demo: a board screenshot
+each time the ticket moves, a step-by-step capture of VERIFY / REPRODUCE in the app, attached to
+the ticket, and a separate stitch command that turns all captures into one video (board move →
+feature working → move to Done → next ticket to Ready). Recording never changes a pass or fail.
+
+**Design anchors (checked against the code 2026-11-20):**
+- **Flag.** `/ticket-auto {ID} --record` is parsed in `lib/ticket-preamble.sh` (beside `--auto`,
+  `--branch`) and written once as `META|record|on`; later phases and resumes read it from the log.
+  `TICKET_RECORD=true` for fleetd and a project default.
+- **Board capture is a board driver, not a hook.** `flow.sh` does no tracker I/O; moves reach
+  Linear through the outbox drain, which already runs several drivers (`FLEET_BOARD_DRIVERS`,
+  default `linear`), each with its own cursor and retry. A new `lib/board-drivers/recorder.sh`
+  (`FLEET_BOARD_DRIVERS=linear,recorder`) sees every move in order, can never fail the pipeline,
+  and survives a crash. It must capture only after the `linear` driver has applied the same event
+  (read that driver's cursor, or run after it in the same drain pass), or it shoots the card
+  before it moves.
+- **App capture.** The verify agent already saves a screenshot per criterion into `artifacts/`
+  (`agents/ticket-verify-agent.md`). Under `--record`: one per step, fixed viewport
+  (`browser_resize`), plus `artifacts/recordings/manifest.json` (ts, ticket, phase, event, file).
+  Real video needs a second Playwright MCP server started with video on — later slice.
+- **Attach to the ticket.** `linear-api.sh` has no upload today: add one (`fileUpload` → PUT to
+  the signed URL → comment). The comment is a tracker write from a phase, so it goes through the
+  outbox as a new vocabulary event (e.g. `recording-attached`) — skills never write to Linear.
+- **Synthetic data only.** `--record` is refused unless the target environment is declared
+  recordable (new CLAUDE.md field, e.g. `RECORD_ALLOWED = local`); a run against real data can
+  never end up in a recording.
+- **Linear session for board screenshots** is the weak link (expires silently): env-check reports
+  it, the way it now reports the board labels.
+
+| Item | Plugin(s) | Where |
+| --- | --- | --- |
+| 1–2, 4 | ticket-auto-pipeline | `lib/ticket-preamble.sh`, `skills/ticket-verify` + `ticket-reproduce`, `agents/ticket-verify-agent.md`, `lib/linear-api.sh`, `workflow.json` vocabulary |
+| 3 | ticket-auto-pipeline (+ fleet-controller if fleetd's pusher needs the driver listed) | `lib/board-drivers/recorder.sh`, `skills/ticket-flow/outbox-drain.sh` |
+| 5 | ticket-auto-pipeline | new `skills/ticket-record-stitch` (ffmpeg first; Remotion optional later) |
+
+- [x] 1. Flag, `META|record|on`, `TICKET_RECORD`, recordable-environment guard (refuse otherwise). (#776)
+- [x] 2. Per-step verify screenshots under `--record` + `recordings/manifest.jsonl` (#777; reproduce deferred).
+- [x] 3. Recorder board driver (#786; live board read unverified until 5.2) (screenshot or 2–3 s clip per move, after the `linear` driver
+      applied it; failures only `META|record|fail|<reason>`); env-check row for the saved session.
+- [ ] 4. Linear upload + `recording-attached` outbox event (comment with the clip after VERIFY
+      PASS). Blocked on a user decision: how the client sees it (guest seat vs shared link).
+- [x] 5. Stitch command: reads every manifest in time order, title card per ticket, re-runnable
+      without re-recording. (#780)
+
+Items 1–2 already yield clips to look at; 3 is the board half (~½ day); 4 waits on the access
+decision. Phase inspector and retro must ignore recording failures.
 
 ## Ordering rationale
 
@@ -2043,6 +2483,14 @@ shapes, prompt/check drift, no repair route, fail-open parsing, late validation.
    behind the active Step 15 programme and the Step 16 rehearsal. Item 1 edits
    `planner-phase-prompts.sh`, which Step 12 items 5–7 also edit (and re-pin its sha) — land
    those first. The operator decides the final slot.
+12. **Step 20 is new capability, already merged with flags off**, so only its live checks queue.
+   Run them after Step 19's iteration 11 so a planner flag does not change the rehearsal's
+   baseline mid-measurement. The Dexter pin bump (A3/B3) is one shared change. The operator
+   decides the final slot.
+
+13. **Step 21 replaces the Step 16/19 rehearsal loop once agreed.** It runs before Steps 1–15
+   and 20's live checks that touch the planner, so the measurement baseline is not moved mid-programme.
+   Its M0–M1 change no pipeline code and can start at once; Step 20's live checks wait until after M4.
 
 ### Parallel track
 
