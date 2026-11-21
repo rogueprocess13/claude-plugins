@@ -2440,6 +2440,13 @@ feature working → move to Done → next ticket to Ready). Recording never chan
       PASS). Blocked on a user decision: how the client sees it (guest seat vs shared link).
 - [x] 5. Stitch command: reads every manifest in time order, title card per ticket, re-runnable
       without re-recording. (#780)
+- [ ] 6. Stitch overlay — openspec `record-stitch-overlay`, specced 2026-11-21, not started. Top right:
+      running token counter (sum of `META|tokens` lines up to each frame), wall-clock timer since the
+      ticket's first log line, active agents across all tickets in the video. Optional `--anim`:
+      original pixel-art coder loop bottom left, speed tier idle/normal/fast from agents + output-token
+      rate (`RECORD_ANIM_FAST_TPS`, default 10, tune in the live check). Values step as the log gains
+      them, not real time. Transcripts are not kept in `logs/`, so the counter is per subagent stop, not
+      per message. Independent of 4; its live check can ride along with 5.2.
 
 Items 1–2 already yield clips to look at; 3 is the board half (~½ day); 4 waits on the access
 decision. Phase inspector and retro must ignore recording failures.
