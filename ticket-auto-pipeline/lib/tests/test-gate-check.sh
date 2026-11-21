@@ -90,6 +90,13 @@ FLOWEOF
 
   # Override resolve_ticket_dir
   resolve_ticket_dir() { echo "${_ws}/${1}--test"; }
+  # The ticket's change dir, where plan-binding.sh looks for an openspec plan.
+  resolve_change_dir() {
+    local d
+    d="${_ws}/openspec/changes/$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')-test/"
+    [ -d "$d" ] || return 12
+    echo "$d"
+  }
 
   # Override emit_event to record calls instead of writing real outbox
   # files (tracker-inbound-approval) — gate-check.sh sources the real
@@ -1826,7 +1833,7 @@ test_entry_one_missing_prereq_no_abort() {
 # 40. Complex + manual + approved label + Ready state → Check 2.8c overrides Check 3 (exit 0)
 test_entry_complex_manual_approved_ready_passes() {
   _setup
-  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/change/openspec-change.md"
+  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec/changes/cre-47-test/tasks.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
@@ -2443,7 +2450,7 @@ test_check5_auto_approve_emits_released_policy() {
 # 43. Check 2.8c (complex + manual + manifest approved+staged) override emits gate-released with human provenance
 test_check28c_manual_override_emits_released_human() {
   _setup
-  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/change/openspec-change.md"
+  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec/changes/cre-47-test/tasks.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
@@ -2475,7 +2482,7 @@ test_check28c_manual_override_emits_released_human() {
 # 44. Check 4 (simple + manual + manifest approved+staged) override emits gate-released with human provenance
 test_check4_manual_override_emits_released_human() {
   _setup
-  _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/${_tid}--test/simple-fix.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
@@ -2530,7 +2537,7 @@ _scaffold_approved_no_stage_manifest() {
 # (the default _fake_issue below carries no "approved" label at all).
 test_check28b_manifest_approved_and_staged_passes() {
   _setup
-  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/change/openspec-change.md"
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec/changes/cre-47-test/tasks.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
@@ -2601,7 +2608,7 @@ test_check4_policy_approval_does_not_pass_manual() {
 # Prints the mode's output; returns its exit code.
 _implement_auth() {
   _setup
-  _scaffold_exec_done "$1" "$2" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_exec_done "$1" "$2" "simple-fix" "${_ws}/${_tid}--test/simple-fix.md"
   [ "${5:-}" != "prior-implement" ] || _plog_raw "IMPLEMENT" "implement" "done" "Smooth"
   local repos_root rc=0 out
   repos_root=$(mktemp -d)
@@ -2731,7 +2738,7 @@ test_approval_need_rule() {
 # implement`, as its own process, log found through TAP_LOG, no heartbeat.
 test_implement_mode_cli() {
   _setup
-  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/change/openspec-change.md"
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec/changes/cre-47-test/tasks.md"
   local repos_root rc=0 out td
   repos_root=$(mktemp -d)
   td="${_ws}/${_tid}--test"
@@ -3654,9 +3661,9 @@ test_767_check5_unapproved_still_fires_once() {
 # the entry gate. Prints "rc|log|emits".
 _plan_bound_entry() {
   _setup
-  local plan="${_ws}/change/tasks.md" type="openspec"
+  local plan="${_ws}/openspec/changes/cre-47-test/tasks.md" type="openspec"
   [ "$1" = "complex" ] || {
-    plan="${_ws}/simple-fix.md"
+    plan="${_ws}/${_tid}--test/simple-fix.md"
     type="simple-fix"
   }
   _scaffold_exec_done "$1" "$2" "$type" "$plan"
@@ -3748,15 +3755,15 @@ test_plan_binding_implement_mode_refuses_changed_plan() {
   for prior in "" prior-implement; do
     out=$(
       _setup
-      _scaffold_exec_done complex auto simple-fix "${_ws}/simple-fix.md"
-      printf 'plan\n' >"${_ws}/simple-fix.md"
+      _scaffold_exec_done complex auto simple-fix "${_ws}/${_tid}--test/simple-fix.md"
+      printf 'plan\n' >"${_ws}/${_tid}--test/simple-fix.md"
       [ -z "$prior" ] || _plog_raw "IMPLEMENT" "implement" "done" "Smooth"
       repos_root=$(mktemp -d)
       REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
       REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
       _bind_plan "$repos_root"
       REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
-      printf 'other plan\n' >"${_ws}/simple-fix.md"
+      printf 'other plan\n' >"${_ws}/${_tid}--test/simple-fix.md"
       rc=0
       REPOS_ROOT="$repos_root" _gate_implement || rc=$?
       echo "rc=$rc"

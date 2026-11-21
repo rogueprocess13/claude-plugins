@@ -55,6 +55,12 @@ _fresh() {
   set_ticket_approved_plan "$TID" "$(plan_binding_compute "$TID")" >/dev/null
 }
 
+# _fresh_rebind — a person approves the plan as it stands now.
+_fresh_rebind() {
+  set_ticket_approval "$TID" true human >/dev/null
+  set_ticket_approved_plan "$TID" "$(plan_binding_compute "$TID")" >/dev/null
+}
+
 source "$LIB_DIR/manifest-write.sh"
 source "$LIB_DIR/plan-binding.sh"
 
@@ -117,6 +123,87 @@ test_append_passes_and_logs_once() {
   _is appended && _is appended &&
     [ "$(grep -c '|META|plan-binding|info|appended to approved plan [0-9a-f]\{12\}: tasks.md:+' "$ROOT/log")" = "1" ] &&
     plan_binding_check "$TID" && ! plan_binding_matches_exactly "$TID"
+}
+
+# Only gate-reconcile's shape is accepted after the approved bytes: an
+# `## Amendment #<N>` section. The accepted headings are logged.
+test_amendment_headings_logged() {
+  _fresh simple-fix
+  printf '\n\n## Amendment #1\nanswer\n\n## Amendment #2\nmore\n' >>"$SIMPLE"
+  _is appended && [[ "$PB_APPENDED" == "simple-fix.md:+"*" (## Amendment #1, ## Amendment #2)" ]] &&
+    grep -q '|META|plan-binding|info|appended to approved plan [0-9a-f]\{12\}: simple-fix.md:+[0-9]* (## Amendment #1, ## Amendment #2)$' "$ROOT/log"
+}
+
+test_appended_task_line_fails() {
+  _fresh simple-fix
+  printf -- '- [ ] also delete the audit table\n' >>"$SIMPLE"
+  _is changed && [[ "$PB_DETAIL" == *"simple-fix.md (appended text that is not an ## Amendment section)"* ]]
+}
+
+test_appended_other_heading_fails() {
+  local h
+  for h in '## Notes' '### Amendment #1' '## Amendment' '## Amendment #x' '# Amendment #1'; do
+    _fresh openspec
+    printf '\n%s\ntext\n' "$h" >>"$CHANGE/tasks.md"
+    _is changed && [[ "$PB_DETAIL" == *"tasks.md (appended text that is not an ## Amendment section)"* ]] || {
+      echo "  heading '$h' was accepted"
+      return 1
+    }
+  done
+}
+
+# Appended text that runs on the last approved line is not a new section.
+test_amendment_must_start_a_line() {
+  _fresh simple-fix
+  printf '# Fix' >"$SIMPLE"
+  _fresh_rebind
+  printf ' and more\n## Amendment #1\n' >>"$SIMPLE"
+  _is changed
+}
+
+# An amendment holding a control character is not plain text.
+test_amendment_with_control_character_fails() {
+  _fresh simple-fix
+  printf '\n## Amendment #1\nhidden \033[2J text\n' >>"$SIMPLE"
+  _is changed
+}
+
+# The pipeline log is agent-written: a forged artifact record pointing at an
+# unchanged copy of the plan never stands in for the ticket's own plan.
+test_forged_log_record_pointing_at_a_copy_fails() {
+  _fresh openspec
+  cp -r "$CHANGE" "$ROOT/copy-of-change"
+  printf '# Design\nrewritten\n' >"$CHANGE/design.md"
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$ROOT/copy-of-change/tasks.md" >>"$ROOT/log"
+  _is changed && [[ "$PB_DETAIL" == *"the pipeline log names another plan"*"copy-of-change"* ]] &&
+    _fresh simple-fix && cp "$SIMPLE" "$ROOT/simple-fix.md" && printf 'rewritten\n' >"$SIMPLE" &&
+    printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$ROOT/simple-fix.md" >>"$ROOT/log" &&
+    _is changed && [[ "$PB_DETAIL" == *"the pipeline log names another plan"* ]]
+}
+
+# A log record naming the ticket's own plan is fine.
+test_log_record_naming_the_own_plan_passes() {
+  _fresh openspec
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$CHANGE/tasks.md" >>"$ROOT/log"
+  _is match
+}
+
+# The plan is bound to its location: a copy elsewhere is another plan.
+test_moved_plan_fails() {
+  _fresh openspec
+  mv "$CHANGE" "$ROOT/openspec/changes/pb-1-renamed"
+  _is changed && [[ "$PB_DETAIL" == *"the plan moved: approved "*"pb-1-change, now "*"pb-1-renamed"* ]]
+}
+
+# The approval script refuses a plan whose log record disagrees (rc 4).
+test_compute_refuses_a_disagreeing_log_record() {
+  _fresh simple-fix
+  printf 'x\n' >"$ROOT/other.md"
+  mv "$ROOT/other.md" "$ROOT/simple-fix.md"
+  printf '2026-01-01T00:00:00Z|META|artifact|info|plan:%s\n' "$ROOT/simple-fix.md" >"$ROOT/log"
+  local rc=0
+  plan_binding_compute "$TID" --log-file "$ROOT/log" >/dev/null || rc=$?
+  [ "$rc" -eq 4 ]
 }
 
 test_edit_fails_naming_the_file() {
@@ -254,6 +341,15 @@ for fn in \
   test_ticking_checkboxes_still_matches \
   test_bracket_x_outside_a_list_item_is_content \
   test_append_passes_and_logs_once \
+  test_amendment_headings_logged \
+  test_appended_task_line_fails \
+  test_appended_other_heading_fails \
+  test_amendment_must_start_a_line \
+  test_amendment_with_control_character_fails \
+  test_forged_log_record_pointing_at_a_copy_fails \
+  test_log_record_naming_the_own_plan_passes \
+  test_moved_plan_fails \
+  test_compute_refuses_a_disagreeing_log_record \
   test_edit_fails_naming_the_file \
   test_insert_in_the_middle_fails \
   test_truncation_fails \

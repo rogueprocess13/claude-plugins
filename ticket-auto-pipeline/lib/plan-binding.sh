@@ -12,6 +12,7 @@
 #   "approved_plan": {
 #     "type": "simple-fix" | "openspec",
 #     "dir": "<the plan directory as resolved; for display only>",
+#     "location": "<physical path of simple-fix.md, or of the change dir>",
 #     "id": "<sha256 of the canonical file list>",
 #     "normalization": "task-checkbox-v1",
 #     "files": [{"path": "<relative to dir>", "size": <bytes>, "sha256": "<hex>"}],
@@ -25,19 +26,22 @@
 # changes neither a hash nor a size. `size` and `sha256` are of the
 # normalized content.
 #
-# The check (append-only rule). A plan passes when the type is the same,
-# every approved file still exists as a regular file, and the first `size`
-# bytes of its normalized content hash to the recorded sha256. Bytes after
-# them are allowed: that is how gate-reconcile's `## Amendment #N`, a
-# `## Verification #N` brief and a `## PR Review #N` section land. When there
-# are some, the check logs one `META|plan-binding|info|appended <file>:+<n>`
-# line (once per distinct message). Anything else fails: an approved file
-# edited, shortened, removed or replaced, and a file in the change dir that
-# was not approved. A human approval with no record (written before this
-# change) fails too.
+# The check (append-only rule). A plan passes when the type and the
+# location are the same, every approved file still exists as a regular
+# file, and the first `size` bytes of its normalized content hash to the
+# recorded sha256. Bytes after them are allowed only in the shape
+# gate-reconcile appends after an approval (Step 6): after optional blank
+# lines, an `## Amendment #<N>` section, plain text. When there are some, the
+# check logs one `META|plan-binding|info|appended to approved plan <id>:
+# <file>:+<n> (## Amendment #<N>, …)` line (once per distinct message).
+# Anything else fails: other appended text, an approved file edited,
+# shortened, removed or replaced, a file in the change dir that was not
+# approved, a plan at another location, and a pipeline log that names
+# another plan than the ticket's own. A human approval with no record
+# (written before this change) fails too.
 #
 # Sourced:
-#   plan_binding_resolve <TID> [--log-file F]   sets PB_TYPE, PB_DIR, PB_FILES (array)
+#   plan_binding_resolve <TID> [--log-file F]   sets PB_TYPE, PB_DIR, PB_LOCATION, PB_FILES (array)
 #   plan_binding_compute <TID> [--log-file F]   prints the record (no recorded_at); rc != 0 refuses
 #   plan_binding_short_id <record-json>         first 12 hex of the id
 #   plan_binding_check <TID> [--log-file F]     sets PB_STATUS, PB_DETAIL, PB_APPENDED
@@ -53,10 +57,12 @@
 #                                                  PLAN_BINDING_DETAIL=...  (exit as above)
 #   plan-binding.sh compute <TID> [--log-file F]   the record as JSON
 #
-# The plan is found the way every other caller finds it
-# (ticket-dir.sh resolve_plan_artifact, from the current directory, the
-# tickets root): the log's own record of the artifact first, then
-# simple-fix.md in the ticket dir, then the ticket's change dir.
+# The plan is found where the ticket's own files are (ticket-dir.sh
+# resolve_plan_artifact without a log, from the current directory, the
+# tickets root): simple-fix.md in the ticket dir, else the ticket's change
+# dir. The pipeline log is an agent-written file, so its artifact record is
+# never the source; when it names a plan, that must be the same plan (rc 4
+# otherwise), because the consumers that read the plan look there first.
 #
 # What this does not guarantee: the manifest is a file an agent can write.
 # The binding makes a rewrite of an approved plan visible and blocking; it
@@ -110,10 +116,59 @@ plan_binding_display_name() {
   fi
 }
 
+# _pb_resolve_one <TID> [<log>] — one resolve_plan_artifact call (with the
+# log's artifact record when <log> is given). Sets PB_TYPE, PB_DIR,
+# PB_LOCATION (canonical: the physical path of simple-fix.md, or of the
+# change dir) and PB_FILES. rc 12 no plan, 2 ambiguous, 3 a plan entry is
+# not a regular file.
+_pb_resolve_one() {
+  local tid="$1" log="${2:-}"
+  PB_TYPE="" PB_DIR="" PB_LOCATION=""
+  PB_FILES=()
+  declare -f resolve_plan_artifact >/dev/null 2>&1 || return 2
+  local out rc=0 PLAN_MODE="" PLAN_PATH="" CHANGE_DIR="" phys
+  if [ -n "$log" ]; then
+    out=$(resolve_plan_artifact "$tid" --log-file "$log" 2>/dev/null) || rc=$?
+  else
+    out=$(resolve_plan_artifact "$tid" 2>/dev/null) || rc=$?
+  fi
+  [ "$rc" -eq 0 ] || return "$rc"
+  eval "$out"
+  case "$PLAN_MODE" in
+  simple-fix)
+    [ -f "$PLAN_PATH" ] && [ ! -L "$PLAN_PATH" ] || return 3
+    PB_TYPE="simple-fix"
+    PB_DIR=$(dirname "$PLAN_PATH")
+    PB_FILES=("$(basename "$PLAN_PATH")")
+    phys=$(cd "$PB_DIR" 2>/dev/null && pwd -P) || return 2
+    PB_LOCATION="$phys/${PB_FILES[0]}"
+    ;;
+  openspec)
+    [ -n "$CHANGE_DIR" ] && [ -d "$CHANGE_DIR" ] || return 12
+    PB_TYPE="openspec"
+    PB_DIR="${CHANGE_DIR%/}"
+    PB_LOCATION=$(cd "$PB_DIR" 2>/dev/null && pwd -P) || return 2
+    local f bad=0
+    while IFS= read -r -d '' f; do
+      [ -f "$f" ] && [ ! -L "$f" ] || bad=1
+      PB_FILES+=("${f#"$PB_DIR"/}")
+    done < <(find "$PB_DIR" -mindepth 1 ! -type d -print0 2>/dev/null | LC_ALL=C sort -z)
+    [ "${#PB_FILES[@]}" -gt 0 ] || return 12
+    [ "$bad" -eq 0 ] || return 3
+    ;;
+  *) return 12 ;;
+  esac
+  return 0
+}
+
 # plan_binding_resolve <TID> [--log-file F]
-# PB_TYPE simple-fix|openspec, PB_DIR (no trailing slash), PB_FILES relative
-# paths sorted. rc 12 no plan, 2 ambiguous, 3 a plan entry is not a regular
-# file (a symlink, a device), 64 usage.
+# The ticket's plan, found where the ticket's own files are: simple-fix.md in
+# its ticket dir, else its openspec change dir (never from the log alone: a
+# pipeline log is a file an agent writes). When a log is given and names a
+# plan, that plan must be the same one; a log that points anywhere else is
+# rc 4 (PB_LOG_LOCATION is what it named). Sets PB_TYPE, PB_DIR, PB_LOCATION,
+# PB_FILES. rc 12 no plan, 2 ambiguous, 3 a plan entry is not a regular file,
+# 4 the log names another plan, 64 usage.
 plan_binding_resolve() {
   local tid="" log=""
   while [ $# -gt 0 ]; do
@@ -128,40 +183,22 @@ plan_binding_resolve() {
       ;;
     esac
   done
-  PB_TYPE="" PB_DIR=""
-  PB_FILES=()
+  PB_LOG_LOCATION=""
   [ -n "$tid" ] || return 64
-  declare -f resolve_plan_artifact >/dev/null 2>&1 || return 2
-  local out rc=0 PLAN_MODE="" PLAN_PATH="" CHANGE_DIR=""
-  if [ -n "$log" ]; then
-    out=$(resolve_plan_artifact "$tid" --log-file "$log" 2>/dev/null) || rc=$?
-  else
-    out=$(resolve_plan_artifact "$tid" 2>/dev/null) || rc=$?
+  local rc=0
+  if [ -n "$log" ] && [ -f "$log" ]; then
+    _pb_resolve_one "$tid" "$log" || rc=$?
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+      PB_LOG_LOCATION="$PB_LOCATION"
+    fi
   fi
-  [ "$rc" -eq 0 ] || return "$rc"
-  eval "$out"
-  case "$PLAN_MODE" in
-  simple-fix)
-    [ -f "$PLAN_PATH" ] && [ ! -L "$PLAN_PATH" ] || return 3
-    PB_TYPE="simple-fix"
-    PB_DIR=$(dirname "$PLAN_PATH")
-    PB_FILES=("$(basename "$PLAN_PATH")")
-    ;;
-  openspec)
-    [ -n "$CHANGE_DIR" ] && [ -d "$CHANGE_DIR" ] || return 12
-    PB_TYPE="openspec"
-    PB_DIR="${CHANGE_DIR%/}"
-    local f bad=0
-    while IFS= read -r -d '' f; do
-      [ -f "$f" ] && [ ! -L "$f" ] || bad=1
-      PB_FILES+=("${f#"$PB_DIR"/}")
-    done < <(find "$PB_DIR" -mindepth 1 ! -type d -print0 2>/dev/null | LC_ALL=C sort -z)
-    [ "${#PB_FILES[@]}" -gt 0 ] || return 12
-    [ "$bad" -eq 0 ] || return 3
-    ;;
-  *) return 12 ;;
-  esac
-  return 0
+  rc=0
+  _pb_resolve_one "$tid" || rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || return "$rc"
+  if [ -n "$PB_LOG_LOCATION" ] && [ "$PB_LOG_LOCATION" != "$PB_LOCATION" ]; then
+    return 4
+  fi
+  return "$rc"
 }
 
 # _pb_file_entry <dir> <rel> — {"path","size","sha256"} of the normalized file.
@@ -198,8 +235,8 @@ plan_binding_compute() {
   done
   files=$(jq -c 'sort_by(.path)' <<<"$files") || return 2
   id=$(_pb_files_id "$files") || return 2
-  jq -nc --arg t "$PB_TYPE" --arg d "$PB_DIR" --arg id "$id" --arg n "$PB_NORMALIZATION" \
-    --argjson files "$files" '{type: $t, dir: $d, id: $id, normalization: $n, files: $files}'
+  jq -nc --arg t "$PB_TYPE" --arg d "$PB_DIR" --arg l "$PB_LOCATION" --arg id "$id" --arg n "$PB_NORMALIZATION" \
+    --argjson files "$files" '{type: $t, dir: $d, location: $l, id: $id, normalization: $n, files: $files}'
 }
 
 plan_binding_short_id() {
@@ -212,8 +249,28 @@ plan_binding_names_plain() {
   local n
   while IFS= read -r -d '' n; do
     [ "$(plan_binding_display_name "$n")" = "$n" ] || return 1
-  done < <(jq -j '(.dir, .files[].path) | . + "\u0000"' <<<"$1" 2>/dev/null)
+  done < <(jq -j '(.dir, .location, .files[].path) | . + "\u0000"' <<<"$1" 2>/dev/null)
   return 0
+}
+
+# _pb_amendment_headings <file> <offset> — the appended bytes of <file>
+# after its first <offset> bytes, accepted only when they are what
+# gate-reconcile appends after an approval: after optional blank lines, an
+# `## Amendment #<N>` section (ticket-gate-reconcile Step 6), plain text with
+# no NUL byte. Prints the `## Amendment #<N>` headings found; rc 1 otherwise.
+_pb_amendment_headings() {
+  local file="$1" off="$2" text n
+  n=$(tail -c +"$((off + 1))" "$file" | LC_ALL=C tr -d '\000' | wc -c | tr -d ' ')
+  [ "$n" = "$(($(wc -c <"$file" | tr -d ' ') - off))" ] || return 1
+  text=$(
+    tail -c +"$((off + 1))" "$file"
+    printf x
+  )
+  text="${text%x}"
+  local re=$'^([ \t\r]*\n)*## Amendment #[0-9]+([ \t\r\n]|$)'
+  [[ "$text" =~ $re ]] || return 1
+  declare -f regression_risk_plain >/dev/null 2>&1 && regression_risk_plain "$text" || return 1
+  printf '%s\n' "$text" | grep -oE '^## Amendment #[0-9]+' | tr '\n' ',' | sed 's/,$//; s/,/, /g'
 }
 
 # _pb_recorded <TID> — the record from the manifest. rc 1 none, 2 unreadable
@@ -230,6 +287,7 @@ _pb_recorded() {
   jq -ec '.approved_plan
     | select(type == "object"
         and (.type == "simple-fix" or .type == "openspec")
+        and (.location | type == "string" and startswith("/"))
         and (.files | type == "array" and length > 0)
         and all(.files[]; (.path | type == "string" and length > 0)
                           and (.size | type == "number" and . >= 0 and . == floor)
@@ -280,14 +338,19 @@ plan_binding_check() {
     return 1
   fi
 
-  local rtype
+  local rtype rloc
   rtype=$(jq -r '.type' <<<"$rec")
+  rloc=$(jq -r '.location' <<<"$rec")
   rc=0
   if [ -n "$log" ]; then plan_binding_resolve "$tid" --log-file "$log" || rc=$?; else plan_binding_resolve "$tid" || rc=$?; fi
   if [ "$rc" -eq 12 ] || [ "$rc" -eq 2 ]; then
     PB_STATUS="changed"
     PB_DETAIL="the approved $rtype plan is no longer found"
     [ "$rc" -eq 2 ] && PB_DETAIL="more than one plan matches this ticket"
+    return 1
+  elif [ "$rc" -eq 4 ]; then
+    PB_STATUS="changed"
+    PB_DETAIL="the pipeline log names another plan ($(plan_binding_display_name "$PB_LOG_LOCATION")) than the ticket's own ($(plan_binding_display_name "$PB_LOCATION"))"
     return 1
   elif [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
     PB_DETAIL="the plan could not be resolved (rc $rc)"
@@ -298,10 +361,15 @@ plan_binding_check() {
     PB_DETAIL="the plan type changed: approved $rtype, now $PB_TYPE"
     return 1
   fi
+  if [ "$PB_LOCATION" != "$rloc" ]; then
+    PB_STATUS="changed"
+    PB_DETAIL="the plan moved: approved $(plan_binding_display_name "$rloc"), now $(plan_binding_display_name "$PB_LOCATION")"
+    return 1
+  fi
 
   local -a changed=() appended=()
   local -A approved=()
-  local path size sha cur tmp cur_size prefix
+  local path size sha cur tmp cur_size prefix heads
   while IFS=$'\t' read -r path size sha; do
     path=$(jq -r '.' <<<"$path")
     approved["$path"]=1
@@ -340,11 +408,17 @@ plan_binding_check() {
       PB_DETAIL="no sha256 tool (sha256sum or shasum)"
       return 2
     }
+    heads=""
+    if [ "$prefix" = "$sha" ] && [ "$cur_size" -gt "$size" ]; then
+      heads=$(_pb_amendment_headings "$tmp" "$size") || heads="-"
+    fi
     rm -f "$tmp"
     if [ "$prefix" != "$sha" ]; then
       changed+=("$(plan_binding_display_name "$path") (edited)")
+    elif [ "$heads" = "-" ]; then
+      changed+=("$(plan_binding_display_name "$path") (appended text that is not an ## Amendment section)")
     elif [ "$cur_size" -gt "$size" ]; then
-      appended+=("$(plan_binding_display_name "$path"):+$((cur_size - size))")
+      appended+=("$(plan_binding_display_name "$path"):+$((cur_size - size)) ($heads)")
     fi
   done < <(jq -r '.files[] | [(.path | tojson), (.size | tostring), .sha256] | @tsv' <<<"$rec")
 
@@ -355,10 +429,10 @@ plan_binding_check() {
 
   if [ "${#appended[@]}" -gt 0 ]; then
     PB_APPENDED=$(
-      IFS=,
+      IFS=';'
       printf '%s' "${appended[*]}"
     )
-    PB_APPENDED="${PB_APPENDED//,/, }"
+    PB_APPENDED="${PB_APPENDED//;/; }"
   fi
   if [ "${#changed[@]}" -gt 0 ]; then
     PB_STATUS="changed"
@@ -390,7 +464,7 @@ plan_binding_matches_exactly() {
   rec=$(_pb_recorded "$tid") || return 1
   cur=$(plan_binding_compute "$tid" "$@") || return 1
   jq -e -n --argjson a "$rec" --argjson b "$cur" \
-    '$a.type == $b.type and ($a.files | sort_by(.path)) == ($b.files | sort_by(.path))' >/dev/null 2>&1
+    '$a.type == $b.type and $a.location == $b.location and ($a.files | sort_by(.path)) == ($b.files | sort_by(.path))' >/dev/null 2>&1
 }
 
 # plan_binding_hold_message <TID> — the operator text, after a

@@ -166,6 +166,10 @@ case "$_p_rc" in
   echo "ticket-approve: the plan for $TICKET_ID holds an entry that is not a regular file (a symlink or a device). Nothing was recorded." >&2
   exit 7
   ;;
+4)
+  echo "ticket-approve: the pipeline log for $TICKET_ID names another plan than the one in its ticket dir or change dir. Find out which is the plan and remove the other, then run this again. Nothing was recorded." >&2
+  exit 7
+  ;;
 *)
   echo "ticket-approve: the plan for $TICKET_ID could not be found (rc $_p_rc). Nothing was recorded." >&2
   exit 7
