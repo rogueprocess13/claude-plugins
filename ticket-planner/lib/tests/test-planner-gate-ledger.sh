@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-planner-gate-ledger.sh — checks ticket-planner/gates/gate-ledger.tsv, the
-# labelled record of every gate fire in dispatch rehearsal iterations 01–11
+# labelled record of every gate fire in dispatch rehearsal iterations 01–16
 # (change seam-gate-safety, slice G3), and its read-only summary script.
 #
 #   - every row has the 15 columns, closed values and a consistent label/cause/
@@ -156,9 +156,11 @@ done
 cands=$(awk -F'\t' '/^== G4 demotion candidates/ { on = 1; getline; next } on && NF { print $1 " " $2 }' <<<"$out")
 # Pinned on purpose: a ledger change that adds or drops a candidate shows here.
 # G4 fixed F58 (draft-guard ASSUMPTION_INVALID) in the guard; its row is no
-# longer live, so it left the list.
-want_cands=$'refinement MISSING_CORE_AC\ndraft EDGE_CASE_GAP\ndraft INTENT_AC_MISMATCH'
-[ "$cands" = "$want_cands" ] && pass "G4 candidates are the pinned three" || fail "G4 candidates" "got: ${cands}"
+# longer live, so it left the list. Iter 16 added crosscheck
+# RESOLUTION_NOT_PROPAGATED (F94, a checker bug still on main); when F94 is
+# fixed, mark that row fixed=yes live=no and drop it here.
+want_cands=$'refinement MISSING_CORE_AC\ncrosscheck RESOLUTION_NOT_PROPAGATED\ndraft EDGE_CASE_GAP\ndraft INTENT_AC_MISMATCH'
+[ "$cands" = "$want_cands" ] && pass "G4 candidates are the pinned four" || fail "G4 candidates" "got: ${cands}"
 problems=$(awk -F'\t' '$13 ~ /(^| )F58( |$)/ && !($11 == "yes" && $12 == "no") { print $1 " " $4 " fixed=" $11 " live=" $12 }' "$WORK/data")
 check "F58 (ASSUMPTION_INVALID reuse) is fixed and not live" "$problems"
 

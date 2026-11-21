@@ -17,6 +17,19 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.58.1 (2026-11-21) — gate ledger rows for rehearsal iterations 12–16 (data only)
+
+- **`ticket-planner/gates/gate-ledger.tsv`** now covers dispatch rehearsal iterations
+  01–16: 34 new rows, 60 fires (19 true, 29 false, 12 debatable). Labels come from each
+  run record's reconciled G7 review, else its Blocks table. Iterations 14 and 16 halted
+  before a review, so their unreviewed fires are `debatable`/`unlabelled` unless a finding
+  settles them (F40 parameter keys, F89 test-data spec for an in-test fixture, F94).
+  Totals: 159 rows, 322 fires (78 true, 210 false, 34 debatable).
+- **New G4 candidate:** Crosscheck `RESOLUTION_NOT_PROPAGATED` (iteration 16, F94: a
+  Consensus finding heading read as its own accepted block, still on main). The pinned
+  candidate list in `test-planner-gate-ledger.sh` now has four entries. Nothing is demoted.
+- **No gate changes.** Nothing reads the ledger to decide anything.
+
 ## ticket-planner 0.58.0 (2026-11-21) — planner-halt-recall (a): each blocking Crosscheck check reports the units it judged
 
 A pass that judged nothing is not a pass. Rehearsal iterations 11, 12 and 15 passed `RESOLUTION_NOT_PROPAGATED` with no consensus block for it to compare, and the F94 precondition held unseen from iteration 08 to 16. This is the first, measuring part of M3: no verdict changes.
