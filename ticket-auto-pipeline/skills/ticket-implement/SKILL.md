@@ -67,22 +67,17 @@ Per shared preamble § 8, one task per step (Steps 1 through 6, sub-steps includ
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT check-approval start "Checking authorization"
 
-**Determine authorization** (tracker-approval-by-script: approval is a local manifest fact, not a Linear label — no tracker fetch for this check):
+**Determine authorization** (the entry gate's own rule, read from the local manifest — never a Linear label):
 
 ```bash
-source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
-_ia_approved=""
-if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-  _ia_approved=$(get_ticket_manifest_field "{TICKET-ID}" approved 2>/dev/null)
-fi
-echo "IMPLEMENT_APPROVED=${_ia_approved:-}"
+bash ~/.claude/skills/lib/gate-check.sh "{TICKET-ID}" - - --mode implement
 ```
 
-- If `IMPLEMENT_APPROVED=true` → authorized. This is a fresh implementation or human-re-approved rework (`/ticket-approve`).
-- If not approved, fetch the ticket from Linear (bash `get_issue` when `LINEAR_API_KEY` is set, MCP fallback otherwise) and check the live `rejected` label — still tracker-written, unlike `approved`. If present → authorized for UAT rework. Note: "UAT rework cycle — `rejected` label signals authorization for rework. Proceeding to Step 2 which will read the REMEDIATION_BRIEF from the plan."
-- If NEITHER the manifest's `approved` fact nor the live `rejected` label authorizes it → stop and report:
+- `IMPLEMENT_AUTH=approved` (exit 0) → authorized: a fresh implementation or an approved rework.
+- Anything else → not approved. Never approve the ticket yourself. Fetch the ticket from Linear (bash `get_issue` when `LINEAR_API_KEY` is set, MCP fallback otherwise) and check the live `rejected` label. If present → authorized for UAT rework: Step 2 reads the REMEDIATION_BRIEF from the plan.
+- If neither authorizes it → stop and report, with the printed `REASON=` text:
   ```
-  ⛔ {TICKET-ID} not approved yet. Run /ticket-approve {TICKET-ID} (or wait for the `rejected` label for UAT rework), then re-run.
+  ⛔ {TICKET-ID} not approved: {REASON} (or wait for the `rejected` label for UAT rework). Then re-run.
   ```
 
 **When authorized,** find the local directory:

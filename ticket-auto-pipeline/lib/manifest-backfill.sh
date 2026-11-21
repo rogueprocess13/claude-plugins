@@ -5,6 +5,16 @@
 # — never auto-run at fleetd start, so a tracker outage at boot never looks
 # like mass un-approval. The last tracker read of approval state the system
 # ever performs; every decision read after this ships is manifest-only.
+#
+# A label is not a person. The tracker's `approved` label can be set by
+# anyone with tracker access, an agent included, so an approval read from
+# it is seeded with provenance `policy`, never `human`: the entry gate and
+# ticket-implement's guard then let a simple auto/semi-auto ticket carry
+# on, and hold a complex or manual-mode one until a person runs
+# skills/ticket-approve/approve.sh in a terminal. Leaving the ticket
+# unapproved instead would strand a simple ticket already past its entry
+# gate (nothing re-approves it). A manifest that already carries a stage
+# is skipped whole, so an approval recorded as `human` is never rewritten.
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
@@ -24,6 +34,10 @@ source "$LIB_DIR/epic-branch.sh"
 # tracker-planner-and-fallback-cutover (2.1): the six type labels a ticket
 # may carry — same set template-select.sh resolves templates from.
 _BACKFILL_KNOWN_TYPES=("bug" "feature" "improvement" "security" "chore" "refactor")
+
+# The provenance of an approval read from the tracker's label (see the
+# header). A constant, not an option: nothing may seed `human` from here.
+readonly _BACKFILL_LABEL_PROVENANCE="policy"
 
 usage() {
   echo "Usage: $0 [--dry-run] [LOG-DIR]" >&2
@@ -70,6 +84,7 @@ fi
 seeded=0
 skipped=0
 failed=0
+label_approved=0
 # tracker-planner-and-fallback-cutover (2.2): per-field dry-run coverage
 # counts, so an operator can confirm coverage before committing rather than
 # reading through every "WOULD SEED" line by hand.
@@ -150,7 +165,7 @@ for log_file in "$LOG_DIR"/*-pipeline.log; do
     jq -R -s -c 'split("\n") | map(select(length > 0))') || true
 
   if $DRY_RUN; then
-    echo "$tid: WOULD SEED stage=${live_state:-<none>} approved=${live_approved} provenance=$([ "$live_approved" = "true" ] && echo human || echo "<none>") type=${live_type:-<none>} initiative=${live_init:-<none>} blocked_by=$live_blocked_by flags=$live_flags"
+    echo "$tid: WOULD SEED stage=${live_state:-<none>} approved=${live_approved} provenance=$([ "$live_approved" = "true" ] && echo "$_BACKFILL_LABEL_PROVENANCE" || echo "<none>") type=${live_type:-<none>} initiative=${live_init:-<none>} blocked_by=$live_blocked_by flags=$live_flags"
     seeded=$((seeded + 1))
     [ -n "$live_type" ] && dry_type_count=$((dry_type_count + 1))
     [ -n "$live_init" ] && dry_init_count=$((dry_init_count + 1))
@@ -162,15 +177,19 @@ for log_file in "$LOG_DIR"/*-pipeline.log; do
   if [ -n "$live_state" ]; then
     set_ticket_stage "$tid" "$live_state" 2>/dev/null || true
   fi
+  seeded_provenance="<none>"
   if [ "$live_approved" = "true" ]; then
-    # A person's approval is not seeded from an agent or fleetd-worker
-    # session (set_ticket_approval refuses it): say so instead of reporting
-    # an approval that was not written.
-    set_ticket_approval "$tid" true human 2>/dev/null || live_approved="true-not-seeded(run-in-a-terminal)"
+    # Say so instead of reporting an approval that was not written.
+    if set_ticket_approval "$tid" true "$_BACKFILL_LABEL_PROVENANCE" 2>/dev/null; then
+      seeded_provenance="$_BACKFILL_LABEL_PROVENANCE"
+      label_approved=$((label_approved + 1))
+    else
+      live_approved="true-not-seeded"
+    fi
   fi
   backfill_ticket_fields "$tid" "$live_type" "$live_init" "$live_blocked_by" "$live_flags" 2>/dev/null || true
 
-  echo "$tid: SEEDED stage=${live_state:-<none>} approved=${live_approved} type=${live_type:-<none>} initiative=${live_init:-<none>} blocked_by=$live_blocked_by flags=$live_flags"
+  echo "$tid: SEEDED stage=${live_state:-<none>} approved=${live_approved} provenance=${seeded_provenance} type=${live_type:-<none>} initiative=${live_init:-<none>} blocked_by=$live_blocked_by flags=$live_flags"
   seeded=$((seeded + 1))
 done
 
@@ -180,6 +199,9 @@ if $DRY_RUN; then
   echo "manifest-backfill (dry-run) field coverage: $dry_type_count would gain type, $dry_init_count would gain initiative, $dry_blocked_count would gain blocked_by, $dry_flags_count would gain flags"
 else
   echo "manifest-backfill: $seeded seeded, $skipped already complete, $failed failed"
+  if [ "$label_approved" -gt 0 ]; then
+    echo "manifest-backfill: $label_approved approval(s) came from the tracker's approved label and are recorded as policy, not as a person's. A complex or manual-mode ticket among them stays held until a person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh <ID>"
+  fi
 fi
 
 # ── Epic dispatch stamp (tracker-planner-and-fallback-cutover, 2.1) ─────────────

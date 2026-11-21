@@ -59,15 +59,15 @@ ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	7073	97
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26132	456
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26130	456
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	34911	511
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	1318	25
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	8285	185
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
 # exception: router floor ~22-26 KB (spawn bracketing, Agent-tool instruction, dispatch table, verdict rules)
-ticket-auto-pipeline/skills/ticket-auto/SKILL.md	42151	766
-ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
+ticket-auto-pipeline/skills/ticket-auto/SKILL.md	42143	766
+ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4825	134
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
 ticket-auto-pipeline/skills/ticket-cancel/SKILL.md	2076	30
 ticket-auto-pipeline/skills/ticket-create/SKILL.md	6781	71
@@ -79,9 +79,9 @@ ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	5412	86
 # allow-growth: cancel transition (#770) — exit code 14 row (+77 bytes, 0.129.0)
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7366	125
-ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5971	116
+ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5932	114
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-implement/SKILL.md	33469	471
+ticket-auto-pipeline/skills/ticket-implement/SKILL.md	33056	466
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
 ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8129	200
 ticket-auto-pipeline/skills/ticket-plan-review/SKILL.md	4079	67

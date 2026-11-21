@@ -452,6 +452,56 @@ test_writer_refuses_human_provenance_for_agents() {
     _fail "set_ticket_approval: provenance refusal wrong (rc=$rc)"
 }
 
+# ── operator text names the terminal command ────────────────────────────────
+# /ticket-approve and /ticket-reject only print a command, so a message that
+# tells a person to "run /ticket-approve <ID>" sends them on a detour. The
+# places an operator is told how to approve must name approve.sh itself.
+# Each entry: file (repo-relative) | text that must be present.
+test_operator_text_names_terminal_command() {
+  local repo="$PLUGIN_DIR/.." ok=true entry file want
+  local cmd='bash ~/.claude/skills/ticket-approve/approve.sh'
+  for entry in \
+    "ticket-auto-pipeline/lib/gate-check.sh|$cmd \$TICKET_ID" \
+    "ticket-auto-pipeline/lib/manifest-backfill.sh|$cmd <ID>" \
+    "ticket-auto-pipeline/skills/ticket-flow/flow.sh|$cmd <ID>" \
+    "ticket-auto-pipeline/install.sh|$cmd <ID>" \
+    "ticket-auto-pipeline/skills/ticket-auto/SKILL.md|$cmd {TICKET_ID}" \
+    "ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md|$cmd {TICKET-ID}" \
+    "ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md|$cmd <ID>" \
+    "ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md|$cmd {TICKET-ID}" \
+    "ticket-auto-pipeline/README.md|$cmd <id>" \
+    "fleet-controller/lib/fleet-notify.sh|$cmd %s" \
+    "fleet-controller/README.md|$cmd <ID>" \
+    "fleet-controller/features.json|$cmd <ID>" \
+    "README.md|$cmd " \
+    "docs/ticket-auto-pipeline-diagram.html|$cmd "; do
+    file="${entry%%|*}" want="${entry#*|}"
+    grep -qF -- "$want" "$repo/$file" 2>/dev/null || {
+      echo "    $file does not name: $want"
+      ok=false
+    }
+  done
+  # None of them tells a person to run the slash command with a ticket id
+  # (the two skills' own Usage blocks and ticket-verify, owned elsewhere,
+  # are not operator instructions and are not scanned).
+  local hits
+  hits=$(cd "$repo" && grep -nE '(run|Run|with|requires|until|via) `?/ticket-(approve|reject)( |`|\.|$)' \
+    ticket-auto-pipeline/lib/gate-check.sh ticket-auto-pipeline/lib/manifest-backfill.sh \
+    ticket-auto-pipeline/skills/ticket-flow/flow.sh ticket-auto-pipeline/install.sh \
+    ticket-auto-pipeline/skills/ticket-auto/SKILL.md ticket-auto-pipeline/skills/ticket-implement/SKILL.md \
+    ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md \
+    ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md ticket-auto-pipeline/README.md \
+    fleet-controller/lib/fleet-notify.sh fleet-controller/README.md fleet-controller/features.json \
+    fleet-controller/CLAUDE.md README.md docs/ticket-auto-pipeline-diagram.html 2>/dev/null) || true
+  [ -z "$hits" ] || {
+    echo "    still tells a person to run the slash command:"
+    echo "$hits" | sed 's/^/      /' | cut -c1-200
+    ok=false
+  }
+  $ok && _pass "operator text names approve.sh as the command to run, not /ticket-approve" ||
+    _fail "operator text still points at /ticket-approve"
+}
+
 # ── run ───────────────────────────────────────────────────────────────────────
 
 test_approve_planned_ticket
@@ -471,6 +521,7 @@ test_flow_direct_human_triggers_refused_for_agents
 test_flow_policy_approval_unaffected
 test_flow_invalid_provenance_is_usage_error
 test_writer_refuses_human_provenance_for_agents
+test_operator_text_names_terminal_command
 
 echo "---"
 echo "$PASS passed, $FAIL failed"

@@ -68,8 +68,9 @@ usage() {
   echo "  --provenance human|policy   Who approved (human-approve/pr-iterate only; default human)" >&2
   echo "      Provenance human, and the human-reject trigger, need a person at an" >&2
   echo "      interactive terminal: refused (exit 15) in an agent or fleetd-worker" >&2
-  echo "      session and with no controlling terminal. Use /ticket-approve and" >&2
-  echo "      /ticket-reject, which print the command to run." >&2
+  echo "      session and with no controlling terminal. A person runs, from the" >&2
+  echo "      tickets root: bash ~/.claude/skills/ticket-approve/approve.sh <ID>" >&2
+  echo "      (or bash ~/.claude/skills/ticket-reject/reject.sh <ID>)." >&2
   echo "" >&2
   echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
   echo "  11 verdict gate, 12 an earlier pending event could not be emitted," >&2
