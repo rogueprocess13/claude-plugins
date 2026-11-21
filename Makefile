@@ -180,6 +180,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-planner-context-extract.sh
 	bash ticket-auto-pipeline/lib/tests/test-planned-feedback-write.sh
 	bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh
+	bash ticket-auto-pipeline/lib/tests/test-fast-path-threshold.sh
 	bash ticket-auto-pipeline/lib/tests/test-template-select.sh
 	bash ticket-auto-pipeline/lib/tests/test-planner-artifacts.sh
 	# tracker-local-facts-read-migration

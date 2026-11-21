@@ -35,9 +35,17 @@ fi
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-FAST_PATH_CONFIDENCE_THRESHOLD="${FAST_PATH_CONFIDENCE_THRESHOLD:-0.85}"
+# The fast-path confidence threshold is resolved at call time by
+# fast-path-threshold.sh (GitHub #774): FAST_PATH_CONFIDENCE_THRESHOLD from the
+# environment, else from $REPOS_ROOT/CLAUDE.md, else the default 0.85. It is
+# deliberately not assigned here: an assignment at source time would read as
+# an environment value and hide the project's CLAUDE.md field.
 # Pre-approved tickets skip the confidence threshold — the planner declared them
 # ready. Non-pre-approved tickets must meet the confidence threshold.
+if ! declare -f fast_path_threshold_resolve >/dev/null 2>&1; then
+  _AFP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "$_AFP_LIB_DIR/fast-path-threshold.sh"
+fi
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -51,6 +59,25 @@ unset_fast_path_vars() {
   unset FAST_PATH_AFFECTED_SERVICES FAST_PATH_TARGET_SYMBOLS
   unset FAST_PATH_PRE_APPROVED FAST_PATH_GENERATED FAST_PATH_REGENERATE
   unset FAST_PATH_DESCRIPTION
+  unset FAST_PATH_THRESHOLD FAST_PATH_THRESHOLD_SOURCE
+  unset FAST_PATH_THRESHOLD_REJECTED FAST_PATH_THRESHOLD_REJECTED_SOURCE
+}
+
+# _fast_path_log_threshold <ticket-id> <confidence> <result>
+# One pipeline-log line per threshold comparison, so the bar a decision was
+# taken against is always on record: `info` at the default, `warn` when the
+# project lowered it or an invalid value was ignored. Written through plog.sh
+# (LOG_FILE, else the ticket's spawn-meta); with no log it is dropped.
+_fast_path_log_threshold() {
+  local status="info" plog
+  plog="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plog.sh"
+  [ -f "$plog" ] || return 0
+  if fast_path_threshold_lowered || [ -n "${FAST_PATH_THRESHOLD_REJECTED:-}" ]; then
+    status="warn"
+  fi
+  TICKET_ID="${TICKET_ID:-${1:-}}" bash "$plog" META fast-path-threshold "$status" \
+    "$(fast_path_threshold_describe) confidence=${2:-unknown} result=${3:-unknown}" \
+    >/dev/null 2>&1 || true
 }
 
 # fast_path_action <eligible> <reason>
@@ -72,8 +99,12 @@ fast_path_action() {
 #   0 — fast-path eligible (planned label + valid Planner Context + confidence ok)
 #   1 — not eligible (no planned label, no block, malformed, or api error)
 #   2 — confidence gated: either below validation threshold (0.5) + not pre-approved,
-#       or below fast-path threshold (0.85). Requires full investigation.
+#       or below the fast-path threshold (default 0.85; see
+#       fast-path-threshold.sh). Requires full investigation.
 # Sets FAST_PATH_ELIGIBLE (true/false), FAST_PATH_REASON, and FAST_PATH_EXIT_CODE.
+# When the threshold was compared it also sets FAST_PATH_THRESHOLD and
+# FAST_PATH_THRESHOLD_SOURCE (default | env | CLAUDE.md) and writes one
+# META|fast-path-threshold line to the pipeline log.
 # Also extracts all Planner Context fields into FAST_PATH_* variables on success.
 check_fast_path_eligible() {
   local ticket_id="$1"
@@ -158,16 +189,20 @@ check_fast_path_eligible() {
     return 0
   fi
 
-  # Non-pre-approved: must meet confidence threshold
-  if _confidence_at_or_above "$confidence" "$FAST_PATH_CONFIDENCE_THRESHOLD"; then
+  # Non-pre-approved: must meet the confidence threshold. This is the only
+  # comparison site; the value comes from the one resolver (GitHub #774).
+  fast_path_threshold_resolve
+  if _confidence_at_or_above "$confidence" "$FAST_PATH_THRESHOLD"; then
     FAST_PATH_ELIGIBLE="true"
     FAST_PATH_REASON="confidence_met"
     FAST_PATH_EXIT_CODE=0
     _extract_all_fields
+    _fast_path_log_threshold "$ticket_id" "$confidence" "confidence_met"
     return 0
   fi
 
   FAST_PATH_REASON="confidence_below_threshold"
+  _fast_path_log_threshold "$ticket_id" "$confidence" "confidence_below_threshold"
   FAST_PATH_EXIT_CODE=2
   return 2
 }
@@ -297,6 +332,10 @@ generate_fast_path_notes() {
     printf '## Session Log\n\n'
     printf '### %s\n' "$today"
     printf -- '- Fast-path appraisal from Planner Context (reason: %s).\n' "${FAST_PATH_REASON:-unknown}"
+    if [ "${FAST_PATH_REASON:-}" = "confidence_met" ] && [ -n "${FAST_PATH_THRESHOLD:-}" ]; then
+      printf -- '- Fast-path confidence threshold: %s (source: %s; default %s).\n' \
+        "$FAST_PATH_THRESHOLD" "${FAST_PATH_THRESHOLD_SOURCE:-default}" "$FAST_PATH_THRESHOLD_DEFAULT"
+    fi
     printf -- '- Complexity: %s (from Strategy=%s; reversibility: %s).\n' "$complexity" \
       "${FAST_PATH_STRATEGY:-unknown}" "${reversibility:-no match}"
     printf -- '- Skipped: complexity sweep, prior-art search, codebase investigation.\n'

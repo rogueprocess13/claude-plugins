@@ -109,6 +109,8 @@ Added by planner-business-framing. Informational only: no ticket-auto consumer p
 
 The floor is configurable via the `PLANNED_TICKET_MIN_CONFIDENCE` env var (default: 0.5). It is independent of ticket-planner's `PLANNER_CONFIDENCE_THRESHOLD` (the pre-approval threshold, default 0.85), which this validator does not read.
 
+The appraise fast path has a third, separate setting: a ticket that is not `Pre-approved` takes it only at `Confidence` ≥ `FAST_PATH_CONFIDENCE_THRESHOLD` (default 0.85). That one is a project field, read from the environment and then the tickets root `CLAUDE.md`, allowed from 0.60 to 1.00; an invalid value is ignored with a warning (`lib/fast-path-threshold.sh`, README "Fast-path confidence threshold").
+
 ## Determinism
 
 All validation is pure bash (grep, awk, jq). No LLM calls, no fuzzy matching. Field names must match exactly (case-sensitive). The only external dependency is `get_issue` (Linear API via `linear-api.sh`) to fetch the ticket description — the validator itself is deterministic given the same input.
