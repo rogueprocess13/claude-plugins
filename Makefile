@@ -62,11 +62,13 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-readiness-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-shadow.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-complexity-score.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh
+	bash ticket-auto-pipeline/lib/tests/test-regression-risk.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh
@@ -79,6 +81,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-record.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-record-reference.sh
 	bash ticket-auto-pipeline/lib/tests/test-record-stitch.sh
+	bash ticket-auto-pipeline/lib/tests/test-recorder-driver.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
 	bash ticket-auto-pipeline/lib/tests/test-merge-poll.sh
@@ -295,6 +298,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-refresh.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
+	# every tool a phase skill tells its agent to use is in the agent's tools: line (#667)
+	bash ticket-auto-pipeline/lib/tests/test-agent-tool-coverage.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-agent-guard.sh
 	# version-aware plugin-cache lookup (#468)
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh

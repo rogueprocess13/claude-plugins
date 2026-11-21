@@ -119,7 +119,7 @@ Optional:
 | `RECORD_DISABLE` | `true` turns recording off for a ticket whose log already has it on |
 | `RECORD_ALLOWED` | Also a `CLAUDE.md` field. Environments `--record` may capture: `local` and/or `uat`, comma-separated. **Name only environments holding synthetic data.** `--record` is refused without it |
 | `RECORD_UAT_SYNTHETIC` | Also a `CLAUDE.md` field. Must be `true` for `uat` in `RECORD_ALLOWED` to count |
-| `RECORD_BOARD_URL` | Also a `CLAUDE.md` field. The Linear project or view URL the board recorder screenshots |
+| `RECORD_BOARD_URL` | Also a `CLAUDE.md` field. The Linear project or view URL the board recorder screenshots. See [Recording a Run](#recording-a-run---record) for the setup |
 
 Fleet controller configuration (all optional, safe defaults):
 
@@ -179,7 +179,7 @@ Restart Claude Code after adding MCP servers.
 
 | Command | What it does |
 |---------|-------------|
-| `/ticket-auto <id>` | Full autonomous pipeline |
+| `/ticket-auto <id>` | Full autonomous pipeline. `--record` also keeps pictures of the run — see [Recording a Run](#recording-a-run---record) |
 | `/ticket-appraise <id>` | Investigation + complexity analysis |
 | `/ticket-appraise-exec <id>` | Artifact creation (simple-fix.md or openspec change) |
 | `/ticket-implement <id>` | Implementation workflow |
@@ -200,6 +200,7 @@ Approval and rejection are facts in the ticket's local manifest (tracker-approva
 | `/ticket-cancel <id> --reason "<why>"` | Retire a ticket nobody will finish: fires `cancel` (any state except Done → `Canceled`), clears the four projected labels and the approval, and writes `META\|cancel` and `META\|outcome\|info\|cancelled: …` to the pipeline log. Canceled is final. Tickets blocked by it are **not** released; the command lists them. Refused while a worker for the ticket is alive (`--force` overrides). Do not set Canceled by hand in Linear. |
 | Answer Open Questions | Reply in the ticket's Linear comment thread before approving; the gate-reconcile agent folds the answers into the plan on the next run. |
 | `bash ~/.claude/skills/lib/adversarial-override.sh [--log-file F] <id> --reason "<why>"` | Accept a plan the adversarial review BLOCKED without another review round. Writes `META\|adversarial-override\|info\|reason=…`, an `EXEC\|adversarial-review\|done\|WARNINGS — HUMAN OVERRIDE: …` line (so resume continues) and a WARN `adversarial_review` verifier-result (so `flow.sh`'s verdict gate does not refuse `pr-review-pass-*` later). Run it from a plain terminal: it refuses when `CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID` or `FLEET_GENERATION` is set (exit 4), needs a non-empty reason (exit 2), and refuses when no adversarial BLOCK is live (exit 5). The log defaults to `$FLEET_PIPELINE_LOG_DIR` (else `./logs`)`/<id>-pipeline.log`. A hand-written `done\|WARNINGS` line no longer clears the verdict gate ([#610](https://github.com/willard-pro/claude-plugins/issues/610)). Re-run `/ticket-auto <id>` afterwards. |
+| `bash ~/.claude/skills/lib/regression-ack.sh <id> [--note "<why>"]` | Acknowledge a ticket's Regression Risk (the `## ⚠️ Regression Risk` section of notes.md, written when the plan touches code a prior fix touched). The pipeline records every version of that section it sees in the ticket manifest, and implementation holds until a person has acknowledged every recorded version. The script prints each unacknowledged version with a risk id (also versions notes.md no longer shows, from the recorded text) and asks you to type the last id back; only then does it append `regression_acks` entries (`risk`, `provenance: human`, `by`, `at`, `note`) and write `gate-released` outbox events. So a changed section holds again, a deleted or renamed section still holds, and putting an old acknowledged text back does not clear a newer version. Run it from the tickets root, in an interactive terminal, with `REPOS_ROOT` exported. It refuses (exit 4) when `CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID` or `FLEET_GENERATION` is set, and when there is no terminal to ask on (the answer is read from `/dev/tty`, never stdin), so a pipeline agent or a Claude Code Bash call cannot run it. What you read is what you acknowledge: the current version is shown from notes.md itself, an earlier one from the text recorded with it, and each text must hash to the risk id it is shown under or the script refuses (exit 7). It also refuses (exit 7) when the section is not plain text (control or invisible characters, or bytes that are not UTF-8), since such text can hide or rewrite what your terminal shows: have the section rewritten as plain text. An earlier version recorded in that state has no stored text; the script says so and prints none of it, so you acknowledge that version unread, knowingly. Limits: this is not a sandbox. An agent that allocates its own pseudo-terminal, or writes the manifest file directly, gets past it, and asking an agent to do so hands it your decision. Editing notes.md acknowledges nothing ([#771](https://github.com/willard-pro/claude-plugins/issues/771)). Re-run `/ticket-auto <id>` afterwards. |
 
 The two slash commands need `REPOS_ROOT` in the environment (see [Required Environment](#required-environment)).
 
@@ -223,6 +224,147 @@ Fleet monitoring now lives in the separate [`fleet-controller`](../fleet-control
 ### Supporting
 
 `ticket-audit`, `ticket-audit-exec`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-critique`, `ticket-detect-resume`, `ticket-reproduce`, `wiki-maintenance`, `nav-hints`, `app-knowledge`.
+
+## Recording a Run (`--record`)
+
+`/ticket-auto <id> --record` keeps pictures of one ticket's run, and `/ticket-record-stitch` turns them into a short video: the card moving on the board, the feature working in the app, the card reaching Done. Recording is off unless you turn it on, and it is extra output only: it never changes a verdict, a gate decision or a route.
+
+### What is recorded
+
+| Recorded | Not recorded |
+|---|---|
+| **App frames**: in browser-mode VERIFY, one 1280×800 screenshot per settled step (first page, the page after login, each navigation, each Verification Plan step, each criterion's assertion point) | Any page with a typed password in a form (the login form, a change-password form). The video jumps from the page before login to the page after it |
+| **Board frames**: one screenshot of the card's column each time the card moves, taken by the `recorder` board driver once the card is seen in its new column | Build-only and live-backend VERIFY (there is no browser), and REPRODUCE |
+| | APPRAISE, IMPLEMENT and PR-REVIEW |
+| | Any page whose origin is not `LOCAL_URL` or `UAT_URL`, or whose environment `RECORD_ALLOWED` does not allow |
+
+Frames are screenshots shown for a fixed time (app 1.5 s, board 2 s), not live video.
+
+### Synthetic data only
+
+A recording is made to be shown to other people. **Record only environments that hold synthetic data.**
+
+- `RECORD_ALLOWED` names the environments that may be recorded: `local`, `uat`, or `local,uat`. Any other name makes the field invalid.
+- `uat` counts only when `RECORD_UAT_SYNTHETIC=true` is also set. That second field is your statement that UAT holds no real data.
+- An explicit `--record` is refused (exit 1, nothing written) when `RECORD_ALLOWED` is unset, invalid or allows nothing. `RECORD_ALLOWED=uat` without `RECORD_UAT_SYNTHETIC=true` allows nothing, so it refuses `--record`.
+- `TICKET_RECORD=true` (a fleet- or project-wide default) only warns in that case and records nothing, so it can never stall fleetd.
+
+The rule is enforced in bash, not by the agent: `record.sh` checks the page URL of every screenshot against `LOCAL_URL` / `UAT_URL` and deletes a screenshot it may not keep, and the stitch checks every frame again against the `RECORD_ALLOWED` in force when you stitch.
+
+### Setup (once per tickets root)
+
+App frames need only step 3. Board frames need all of it.
+
+1. **Create a dedicated Linear user** with read-only (or guest) access to the one demo project. Step 4 saves a browser session, and that session is a full login for whoever logged in. Never use your own account.
+
+2. **Install Playwright under the tickets root.** It is not bundled with the plugin; it needs Node.
+
+   ```bash
+   mkdir -p "$REPOS_ROOT/.ticket-auto/record" && cd "$REPOS_ROOT/.ticket-auto/record"
+   npm init -y                        # keeps npm in this directory; without a package.json it may install into a parent
+   npm i playwright
+   npx playwright install chromium    # the browser itself goes to ~/.cache/ms-playwright (per user)
+   ```
+
+3. **Add the fields to the project `CLAUDE.md`** (the one at `$REPOS_ROOT/CLAUDE.md`):
+
+   ```
+   RECORD_ALLOWED = local
+   RECORD_BOARD_URL = https://linear.app/<workspace>/project/<project-slug>/...
+   ```
+
+   `RECORD_BOARD_URL` must start with `https://linear.app/` and have `/project/` or `/view/` in its path; anything else is refused and no browser is started for it. Open it as a **board** layout, grouped by status, filtered to the demo project, with the pipeline's columns visible (not hidden or collapsed): `Todo`, `Approve`, `Ready`, `Review`, `UAT`, `Done`, and `Canceled` if a cancel is to be shown.
+
+4. **Save the Linear session**, from the tickets root. The driver is not synced to `~/.claude/skills/lib/`, so find it in the installed plugin:
+
+   ```bash
+   source ~/.claude/skills/lib/plugin-cache.sh
+   RECORDER="$(tap_cache_find ticket-auto-pipeline lib/board-drivers/recorder.sh)"
+   bash "$RECORDER" login
+   ```
+
+   A browser window opens on `RECORD_BOARD_URL`. Log in as the dedicated user, wait for the board, then press Enter in the terminal. The session is saved to `$REPOS_ROOT/.ticket-auto/record/linear-session.json` (mode 0600, directory 0700, with a `.gitignore` of `*` beside it). The three commands read `REPOS_ROOT` from the environment, else from `./CLAUDE.md`.
+
+   On a host with no display, log in on a machine that has one and pipe the file over:
+
+   ```bash
+   ssh <host> 'cd <tickets root> && bash <path to recorder.sh> import' < linear-session.json
+   ```
+
+   `bash "$RECORDER" check` prints one word: `ok`, `browser-missing`, `no-session`, `expired`, `timeout` or `error`.
+
+5. **Set `FLEET_BOARD_DRIVERS=linear,recorder`**, in that order, in the Claude Code session environment (the `env` block of `settings.local.json`) **and** in fleetd's environment. The recorder waits for `linear` to have moved the card; listed first, or not listed, it captures no board frames. fleetd's environment also needs `REPOS_ROOT`, which the driver reads from the environment only.
+
+6. **Run `/ticket-env-check`.** When `RECORD_ALLOWED` is set it adds eight rows, each `ok` or `warn` (a recording problem is never counted as an environment failure). It starts a headless browser once, so it can take up to 30 s.
+
+   | Row | `ok` means |
+   |---|---|
+   | `RECORD_ALLOWED` | the field is valid and allows at least one environment |
+   | `RECORD_BOARD_DRIVERS` | `recorder` is listed after `linear` |
+   | `RECORD_BOARD_URL` | the URL has the required shape (the URL itself is not printed) |
+   | `RECORD_FFMPEG` | `ffmpeg` is on `PATH` |
+   | `RECORD_BROWSER` | Node, Playwright and Chromium start |
+   | `RECORD_SESSION` | the saved session still gets past Linear's login page |
+   | `RECORD_SESSION_MODE` | the session file is 0600 and its directory 0700 |
+   | `RECORD_SESSION_IGNORED` | git would not track the session file |
+
+### Record and stitch
+
+```
+/ticket-auto <id> --record
+/ticket-record-stitch <id>
+```
+
+Recording is noted once in the ticket's pipeline log, so a resume without `--record` keeps recording. Run the stitch from the tickets root at any time; it reads only what is on disk and can be re-run.
+
+| Command | Output |
+|---|---|
+| `/ticket-record-stitch <id>... [--out FILE] [--order given]` | `./recording-<id>.mp4` (`./recording-<id>-plus<N>.mp4` for several tickets): per ticket a title card, then its board and app frames in time order. Only the latest VERIFY attempt is shown. Tickets come in the order of their first frame; `--order given` keeps the order typed |
+| `/ticket-record-stitch --clip <id>` | `<ticket dir>/artifacts/recordings/<id>-verify.mp4`: the latest VERIFY attempt's app frames only |
+
+The stitch needs `ffmpeg` (with `libx264`). So does `make test` in this repository: the render tests fail, not skip, without `ffmpeg` and `ffprobe`.
+
+### Settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RECORD_SHOT_TIMEOUT` | 25 | Seconds before a board screenshot is killed. 1–55; any other value means 25. The screenshot script stops itself after 20 s, so this is a backstop |
+| `RECORD_SHOT_DEBUG` | (unset) | `1` prints the browser's error text when you run `recorder.sh login` or `check` by hand. Never the session |
+| `RECORD_DISABLE` | (unset) | `true` turns recording off for a ticket whose log has it on |
+| `RECORD_STITCH_TIMEOUT` | 300 | Seconds one stitch render may take |
+
+### When a board frame is missing
+
+Every board frame that was not saved has a line in `<ticket dir>/artifacts/recordings/manifest.jsonl` with a `reason`. The run itself is not affected.
+
+| `reason` | Meaning | Fix |
+|---|---|---|
+| `superseded` | A later move of the same card was already waiting; only the last one is shot | None needed |
+| `board-not-applied` | `linear` had not projected the move yet | Check the driver order and the `linear` driver |
+| `column-mismatch` | The card was not seen in the expected column within 20 s | Check the board layout (step 3) |
+| `timeout` | The screenshot passed its time limit: the script's own 20 s, or a lower `RECORD_SHOT_TIMEOUT` | Usually a slow browser start or page load. A `RECORD_SHOT_TIMEOUT` above the default does not help |
+| `session-expired` | The saved session landed on a login page | `recorder.sh login` |
+| `no-session` | There is no saved session | `recorder.sh login` |
+| `browser-missing` | Node, Playwright or Chromium is not installed | Step 2 |
+| `no-board-url` | `RECORD_BOARD_URL` is not set | Step 3 |
+| `bad-board-url` | `RECORD_BOARD_URL` does not have the required shape | Step 3 |
+| `shot-failed` | Any other failure | Run `recorder.sh check` with `RECORD_SHOT_DEBUG=1` |
+
+A missing frame is final: the driver does not retry it. No board frames and no board lines in the manifest either usually means the recorder never ran, or ran without finding the ticket's workspace: check `FLEET_BOARD_DRIVERS` and `REPOS_ROOT` in the environment of whatever drained the outbox.
+
+App frames have their own reasons in the same file, such as `env-not-recordable` (the page was not on an allowed environment).
+
+### Known limitation: the board reading is untested against a live Linear board
+
+The code that finds the card on the Linear board page, and the code that recognises Linear's login page, have not been run against a real Linear page; the automated tests use a stand-in browser. If Linear's page differs from what that code expects, every card move gives `column-mismatch` (or a wrong `session-expired`): no board frames, and nothing else goes wrong. App frames and the stitch do not depend on it.
+
+### Retention
+
+Recordings live in the ticket's workspace under `artifacts/recordings/` (frames, `manifest.jsonl`, the clip) and go when the workspace is removed. Nothing else deletes them, and nothing uploads them. A video written by `/ticket-record-stitch` is an ordinary file in the directory you ran it from. The saved Linear session stays in `$REPOS_ROOT/.ticket-auto/record/` until you delete it; delete it when you stop recording.
+
+### If the run stops at "reference-missing"
+
+Under `--record`, VERIFY reads its recording instructions from `references/record.md`. If that file is missing the phase stops (`META|reference-missing|fail`). This only happens on a broken install, never because of a recording problem: reinstall the plugin (see [Upgrading](#upgrading)).
 
 ## Architecture
 
@@ -361,6 +503,7 @@ Each gate-stop emits a `|META|gate-stop|fail|<CODE>` line into the pipeline log.
 - **`LINEAR_API_KEY` missing**: Add to `~/.claude/settings.local.json` under `env`. Generate from Linear → Settings → API.
 - **`GITHUB_PERSONAL_ACCESS_TOKEN` missing**: Add to same `env` block. Generate from GitHub → Settings → Developer settings → Personal access tokens. Needs `repo` and `pull_requests` scopes.
 - **CLAUDE.md fields missing**: Add `REPOS_ROOT`, `LOCAL_URL`, `UAT_URL` to your project's `CLAUDE.md`. These are project-specific, not global.
+- **Run-readiness rows (`VERIFY_ENV_START`, `PLAYWRIGHT_MCP`, `PLAYWRIGHT_BROWSER`, `GITNEXUS_INDEX`, `PRESCAN_DOCS`)**: warnings, never a FAIL. Each note says which tickets need the item and gives the command to run. The check starts, installs, indexes and scans nothing, and it cannot see whether an MCP server is connected in the agent session; the row says so. The browser revision is checked only for an exactly pinned `npx @playwright/mcp@X.Y.Z` that is already in the npx cache.
 - **`/ticket-approve` fails with "could not make … manifest-addressable" (exit 3)**: `REPOS_ROOT` is in `CLAUDE.md` but not in the environment. Export it (e.g. the `env` block of `~/.claude/settings.local.json`) and start a new session.
 
 ### State machine drift
@@ -394,6 +537,7 @@ When the pipeline halts with a gate-stop, check the pipeline log for the specifi
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Artifact type doesn't match complexity score | Re-run `/ticket-appraise <id>` to re-evaluate complexity. |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the plan | Review `## Adversarial Review` in notes.md, fix the plan, re-run `/ticket-appraise-exec <id> --from-step create-artifact`. The detail names the round; from round 3 on, read the `### Approach review` section first — a `RECONSIDER` there means change the approach, not add detail. To accept the plan as is, run `adversarial-override.sh` (see [Human Decisions](#human-decisions)). |
 | `APPROVAL_REVOKED` | The manifest records no approval at re-approve time (approval was never granted, or was cleared by `re-claim`/`/ticket-reject`) | Run `/ticket-approve <id>`. |
+| `REGRESSION_RISK_UNACKNOWLEDGED` | ticket-implement found a regression risk that no person has acknowledged (`reason=unacknowledged`), whose content changed since it was acknowledged (`risk-changed`), an earlier recorded version that was never acknowledged while notes.md shows an acknowledged one (`earlier-risk`), a section removed from notes.md after it was recorded (`section-removed`), a section that could not be written to the manifest (`record-failed`), or one only hand-edited to `ACKNOWLEDGED` (`hand-edit`) | Review the section, then in a terminal in the tickets root: `bash ~/.claude/skills/lib/regression-ack.sh <id>` and type the risk id it asks for. For `record-failed`, fix the manifest file first (permissions, disk). Re-run `/ticket-auto <id>`. |
 | `REMEDIATION_BRIEF_TRUNCATED` | Remediation brief is incomplete or empty | Re-run `/ticket-appraise-exec <id>` with full remediation notes. |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review comment format couldn't be parsed | Check the PR review comment follows the expected verdict format. Re-run `/ticket-pr-review <id>`. |
 

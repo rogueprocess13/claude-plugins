@@ -122,7 +122,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-reconcile|done|cycle#2 reconci
 
 `IMPLEMENT`'s `code-review` terminal entry carries a `cycle#N` counter in `MSG`, same
 convention as PR feedback reconciliation. The fix-and-re-review loop is capped at 3 cycles;
-only `medium`-severity-and-above findings are blockers and drive re-spawns, `low`-severity
+only `medium`-severity-and-above findings are blockers and drive another cycle, `low`-severity
 findings are recorded to notes.md but never gate the commit. Exhausting all 3 cycles with
 medium+ findings still open is a gate-stop (`CODE_REVIEW_EXHAUSTED`, see below):
 
@@ -423,9 +423,8 @@ jq -s '[.[] | select(.kind == "run")]
 
 **Limits of this attribution — all of them load-bearing when reading the numbers:**
 
-- **Cross-plugin skills are not fingerprinted.** `ticket-implement` invokes
-  `/commit-commands:commit`, which is rooted in another plugin's `CLAUDE_PLUGIN_ROOT` and is
-  unresolvable from ours. A change there does not move the fingerprint.
+- **Cross-plugin skills are not fingerprinted.** A skill rooted in another plugin's
+  `CLAUDE_PLUGIN_ROOT` is unresolvable from ours. A change there does not move the fingerprint.
 - **The fingerprint is session-scoped.** It is computed once at `SessionStart`, so a plugin
   upgrade mid-session stamps subsequent runs with the *previous* value until the next session.
   `generated_at` and `plugin_version` in the artifact make the skew inspectable after the fact.
@@ -988,6 +987,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `CRITIQUE_NOT_RUN` | Check 2.5: `APPRAISE\|critique\|start` logged but notes.md has no `## Readiness Critique` (the critique died) |
 | `LINEAR_FETCH_FAILED` | Entry-gate `get_issue` failed or returned an unparseable payload. Reached only after `GATE_FETCH_MAX_ATTEMPTS` (default 3) consecutive holds (see "Gate fetch-attempt entries"); earlier attempts hold. `_gate_reapprove` still gate-stops on the first failure, never conflated with `APPROVAL_REVOKED` |
 | `APPROVAL_REVOKED` | The local manifest records no approval at re-approve time — approval was never granted, or was cleared by `re-claim` / `/ticket-reject` (tracker-approval-by-script; the Linear `approved` label is no longer read) |
+| `REGRESSION_RISK_UNACKNOWLEDGED` | ticket-implement Step 1 (`regression-risk.sh check`, #771): no human `regression_ack` in the manifest for the notes.md Regression Risk section as it stands. Only a person clears it |
 | `REMEDIATION_BRIEF_TRUNCATED` | REMEDIATION_BRIEF from verify exceeded length limit (Phase 2) |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review returned no parseable ✅/⚠️/❌ verdict line (Phase 2) |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the implementation plan (Phase 2). Detail is `ADVERSARIAL_BLOCKED — round N — …`; the `EXEC\|adversarial-review\|done\|BLOCKED` line is written just before it. From round 3 on the reviewer also does an approach review (`lib/adversarial-rounds.sh`, #203) |

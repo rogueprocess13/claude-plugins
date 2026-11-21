@@ -68,21 +68,11 @@ planned_feedback_write() {
     corrections_count=${corrections_count:-0}
   fi
 
-  # Files changed — from IMPLEMENT phase log entries, or git diff
-  local files_changed="[]"
-  local branch
-  branch=$(grep '^[^|]*|META|branch|info|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}')
-  if [ -n "$branch" ] && [ -d "$PWD/.git" ]; then
-    # Sanitize branch name: strip shell metacharacters ($, backticks, semicolons,
-    # pipes, newlines). Branch comes from our own pipeline log and should only
-    # contain git-ref-safe characters, but defense in depth.
-    local safe_branch="${branch//[;\`\$|]/\ }"
-    safe_branch="${safe_branch//$'\n'/ }"
-    # Try to get files changed on the branch vs main
-    if git rev-parse "$safe_branch" >/dev/null 2>&1; then
-      files_changed=$(git diff --name-only "origin/main...${safe_branch}" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
-    fi
-  fi
+  # Files changed — the ticket branch against its resolved base, in the
+  # ticket's own worktrees (GitHub #768).
+  local files_changed
+  files_changed=$(_pfw_files_changed "$tid" "$log_file")
+  [ -n "$files_changed" ] || files_changed="[]"
   # Fallback: log any files referenced in implement step
   if [ "$files_changed" = "[]" ] || [ "$files_changed" = "" ]; then
     files_changed=$(grep '^[^|]*|IMPLEMENT|' "$log_file" 2>/dev/null | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}' | grep -oP '/?[a-zA-Z0-9_/.-]+\.[a-zA-Z]+' 2>/dev/null | sort -u | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
@@ -97,27 +87,26 @@ planned_feedback_write() {
   # description exactly as today — migrating that parser is not called for
   # anywhere in the plan"). The ticket manifest schema deliberately carries
   # none of them (only type/initiative/blocked_by/dispatch/outcome_label).
-  # This still-live `get_issue` read is informational-only (feedback/drift
-  # computation, never a gate). The block and its fields are read through
+  # The `get_issue` read is informational-only (feedback/drift computation,
+  # never a gate) and only made when the caller already loaded linear-api.sh;
+  # otherwise, or when it fails, the block comes from the local copies
+  # (_pfw_planner_block). The block and its fields are read through
   # planner-context-extract.sh (GitHub #513) — the same anchored, fence-aware
   # extractor every other consumer uses, and the field names
   # planner_context_generate actually writes (`**Confidence:**`,
   # `**Affected Services:**`), not the older `- Confidence:` bullet shape.
 
-  # Predicted confidence — the Planner Context block's **Confidence:** value
-  local confidence_predicted=0 description="" pc_block=""
-  if declare -f get_issue >/dev/null 2>&1; then
-    description=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.description // ""' 2>/dev/null || true)
-    if [ -n "$description" ]; then
-      pc_block=$(printf '%s\n' "$description" | planner_context_extract)
-      local conf_val
-      conf_val=$(printf '%s\n' "$pc_block" | planner_context_field "Confidence")
-      # --argjson below needs a valid JSON number (no leading zeros, so
-      # `00.5` is refused rather than breaking the payload); anything else
-      # stays 0.
-      if [[ "$conf_val" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
-        confidence_predicted="$conf_val"
-      fi
+  # Predicted confidence — the Planner Context block's **Confidence:** value,
+  # or null when no block or no usable value can be read (GitHub #768). Never
+  # 0: a 0 reads downstream as a real prediction and a major planning miss.
+  local confidence_predicted=null pc_block="" conf_val
+  pc_block=$(_pfw_planner_block "$tid" "$log_file")
+  if [ -n "$pc_block" ]; then
+    conf_val=$(printf '%s\n' "$pc_block" | planner_context_field "Confidence")
+    # --argjson below needs a valid JSON number (no leading zeros, so
+    # `00.5` is refused rather than breaking the payload).
+    if [[ "$conf_val" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
+      confidence_predicted="$conf_val"
     fi
   fi
 
@@ -278,13 +267,126 @@ elif [ -f "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/confidence.sh" ]; then
   set +e +o pipefail
 fi
 
+# _pfw_planner_block <TID> <LOG_FILE>
+# Prints the ticket's `## Planner Context` block, or nothing. Sources, in
+# order: the tracker description when the caller already loaded
+# linear-api.sh; the planner's own body.md under the initiative; context.md in
+# the ticket workspace (looked up in the cwd and beside the log dir). The
+# router's post-implement block sources this file alone, so without the local
+# sources every run recorded no prediction at all (GitHub #768).
+_pfw_planner_block() {
+  local tid="$1" log_file="$2" block="" description="" f root
+  declare -f planner_context_extract >/dev/null 2>&1 || return 0
+
+  if declare -f get_issue >/dev/null 2>&1 && declare -f tracker_read >/dev/null 2>&1; then
+    description=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.description // ""' 2>/dev/null || true)
+    [ -z "$description" ] || block=$(printf '%s\n' "$description" | planner_context_extract)
+  fi
+
+  if [ -z "$block" ] && [ -n "${REPOS_ROOT:-}" ]; then
+    for f in "$REPOS_ROOT"/.ticket-auto/initiatives/*/tickets/"$tid"/planner/body.md; do
+      [ -f "$f" ] || continue
+      block=$(planner_context_extract "$f")
+      [ -z "$block" ] || break
+    done
+  fi
+
+  if [ -z "$block" ]; then
+    for root in "$PWD" "$(dirname "$log_file")/.."; do
+      for f in "$root"/"$tid"--*/context.md; do
+        [ -f "$f" ] || continue
+        block=$(planner_context_extract "$f")
+        [ -z "$block" ] || break 2
+      done
+    done
+  fi
+
+  [ -z "$block" ] || printf '%s\n' "$block"
+  return 0
+}
+
+# _pfw_branch_field <LOG_FILE> <key>
+# One field of the last `META|branch-context` line (`ticket`, `base`, ...).
+_pfw_branch_field() {
+  local line
+  line=$(grep '^[^|]*|META|branch-context|info|' "$1" 2>/dev/null | tail -1)
+  [ -n "$line" ] || return 0
+  printf '%s\n' "${line#*|META|branch-context|info|}" | tr ';' '\n' | sed -n "s/^$2=//p" | head -1
+}
+
+# _pfw_git_ref_ok <name> — a plain branch name, never an option or a range.
+_pfw_git_ref_ok() {
+  [[ "$1" =~ ^[A-Za-z0-9._/-]+$ ]] && [[ "$1" != -* ]] && [[ "$1" != *..* ]]
+}
+
+# _pfw_repo_diff <repo-dir> <branch> <base>
+# Names of the files the ticket branch changed against its base, one per
+# line. The base is `origin/<base>` when the remote ref exists, else the local
+# branch; the head is the ticket branch, else its remote ref.
+_pfw_repo_diff() {
+  local dir="$1" branch="$2" base="$3" head_ref="" base_ref=""
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  if git -C "$dir" rev-parse --verify -q "${branch}^{commit}" >/dev/null 2>&1; then
+    head_ref="$branch"
+  elif git -C "$dir" rev-parse --verify -q "origin/${branch}^{commit}" >/dev/null 2>&1; then
+    head_ref="origin/$branch"
+  else
+    return 0
+  fi
+  if git -C "$dir" rev-parse --verify -q "origin/${base}^{commit}" >/dev/null 2>&1; then
+    base_ref="origin/$base"
+  elif git -C "$dir" rev-parse --verify -q "${base}^{commit}" >/dev/null 2>&1; then
+    base_ref="$base"
+  else
+    return 0
+  fi
+  git -C "$dir" diff --name-only "${base_ref}...${head_ref}" 2>/dev/null
+}
+
+# _pfw_files_changed <TID> <LOG_FILE>
+# JSON array of the files the ticket changed. The ticket branch and its base
+# come from the log's `META|branch-context` line (the base is the epic branch
+# or the project default, not always `main`), and the diff runs in each of the
+# ticket's worktrees under $REPOS_ROOT/.ticket-auto/worktrees/<TID>/, since
+# the caller's cwd is the tickets root, not a code repo. Paths are prefixed
+# with the repo directory name, as Target Symbols are. With no worktree the
+# cwd is tried when it is a repo holding the branch. Prints `[]` when nothing
+# can be resolved.
+_pfw_files_changed() {
+  local tid="$1" log_file="$2" branch base wt slug list=""
+  branch=$(_pfw_branch_field "$log_file" ticket)
+  base=$(_pfw_branch_field "$log_file" base)
+  if ! _pfw_git_ref_ok "$branch" || ! _pfw_git_ref_ok "$base"; then
+    echo "[]"
+    return 0
+  fi
+
+  if [ -n "${REPOS_ROOT:-}" ]; then
+    for wt in "$REPOS_ROOT"/.ticket-auto/worktrees/"$tid"/*/; do
+      [ -d "$wt" ] || continue
+      slug=$(basename "$wt")
+      list+=$(_pfw_repo_diff "$wt" "$branch" "$base" | sed "s|^|${slug}/|")$'\n'
+    done
+  fi
+  if [ -z "${list//$'\n'/}" ]; then
+    list=$(_pfw_repo_diff "$PWD" "$branch" "$base")
+  fi
+
+  printf '%s\n' "$list" | sort -u | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]"
+}
+
 # Compute decision drift label from predicted vs actual confidence.
-# none: ≤0.10, minor: 0.11–0.25, major: >0.25
+# none: ≤0.10, minor: 0.11–0.25, major: >0.25; unknown when there is no
+# prediction to compare (GitHub #768).
 _compute_decision_drift() {
   local predicted="$1" actual="$2"
 
-  # Handle missing/zero values
-  [ -z "$predicted" ] && predicted=0
+  if [ -z "$predicted" ] || [ "$predicted" = "null" ]; then
+    echo "unknown"
+    return 0
+  fi
+
+  # Handle a missing actual value
   [ -z "$actual" ] && actual=0
 
   # Scale to integer hundredths for bash arithmetic

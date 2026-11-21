@@ -205,24 +205,15 @@ Assign a verdict:
 |-----------|-----------|---------|--------|
 | `{file}` | {TICKET-ID} [local-ticket\|mem] | CONFLICT\|ADJACENT\|SUPERSEDES | {one sentence} |
 
-**Status:** UNACKNOWLEDGED
-→ Edit this file and change Status to `ACKNOWLEDGED` before running `/ticket-implement {TICKET-ID}`.
+→ A person acknowledges this from a terminal: `bash ~/.claude/skills/lib/regression-ack.sh {TICKET-ID}`. An edit here does not.
 ```
 
-**E. Print to user:**
-
-If any CONFLICT verdict:
-```
-⚠️  REGRESSION RISK — CONFLICT DETECTED
-The implementation plan for {TICKET-ID} conflicts with a prior fix.
-See ## Regression Risk in notes.md. Change Status to ACKNOWLEDGED after reviewing before running /ticket-implement.
+Then record it (a failure here is a stop):
+```bash
+bash ~/.claude/skills/lib/regression-risk.sh record "{TICKET-ID}" "{TICKET_DIR}/notes.md"
 ```
 
-If ADJACENT or SUPERSEDES only (no CONFLICT):
-```
-ℹ️  Regression check: overlapping files found, no direct conflict (see ## Regression Risk in notes.md).
-Acknowledge in notes.md before implementing.
-```
+**E. Print to user** the worst verdict and: `See ## Regression Risk in notes.md. Implementation holds until a person runs regression-ack.sh.`
 
 If no overlap: write nothing — proceed silently.
 

@@ -423,12 +423,12 @@
     "gate-held": {
       "emitted_by": "gate-check.sh",
       "payload": { "reason": "string" },
-      "description": "A ticket was held at the entry or re-approval gate. Does not call flow.sh — a hold changes no Linear label or state."
+      "description": "A ticket was held at the entry or re-approval gate, or (data.gate = regression-risk, from regression-risk.sh) at ticket-implement's Regression Risk gate. Does not call flow.sh — a hold changes no Linear label or state."
     },
     "gate-released": {
       "emitted_by": "gate-check.sh",
       "payload": { "provenance": "string" },
-      "description": "A held gate was released and the ticket proceeded. provenance distinguishes human release from automatic re-evaluation."
+      "description": "A held gate was released and the ticket proceeded. provenance distinguishes human release from automatic re-evaluation. With data.gate = regression-risk (from regression-ack.sh) a person acknowledged the regression risk named by data.risk."
     },
     "human-hold-requested": {
       "emitted_by": "human-hold-parse.sh",

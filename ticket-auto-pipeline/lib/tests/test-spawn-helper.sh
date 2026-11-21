@@ -1900,6 +1900,67 @@ test_phase_terminal_write_emits_done_marker() {
   grep -q '|IMPLEMENT|implement|done|committed 3 files$' "$log"
 }
 
+# Issue #769: the APPRAISE done line's score comes from complexity-score.sh
+# (notes.md), never from the caller's free text.
+_ptw_appraise_notes() {
+  mkdir -p "$1"
+  printf '# Notes\n\n## Complexity\n**Score:** complex\n**Weighted score:** 6 (threshold 3)\n**Axes fired:** reversibility:3 (auth-modify), blast-radius:3\n**Reason:** r\n' >"$1/notes.md"
+}
+_PTW_FINAL='final: complex, score 6 = sweep 3 + blast-radius 3 (threshold 3), axes: reversibility:3 (auth-modify), blast-radius:3'
+
+test_phase_terminal_write_appraise_done_uses_score_formatter() {
+  local tmpdir log
+  tmpdir=$(_mktemp_test_dir)
+  log="$tmpdir/TEST-PTW7-pipeline.log"
+  echo "2026-06-02T10:00:00Z|META|schema|info|2" >"$log"
+  _ptw_appraise_notes "$tmpdir/tickets/TEST-PTW7--some-slug"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    phase_terminal_write PHASE=APPRAISE STEP=appraise RESULT=done \
+      MSG="complex (score 3, blast-radius)" LOG_FILE="$log" \
+      TICKET_DIR="$tmpdir/tickets/TEST-PTW7--some-slug"
+  )
+  [ "$(tail -1 "$log" | cut -d'|' -f2-)" = "APPRAISE|appraise|done|$_PTW_FINAL" ]
+}
+
+# fleetd passes no ticket: the id comes from the log name, the dir from cwd or
+# REPOS_ROOT. TEST-PTW8 must not match TEST-PTW88--*.
+test_phase_terminal_write_appraise_done_resolves_ticket_from_log() {
+  local tmpdir log
+  tmpdir=$(_mktemp_test_dir)
+  log="$tmpdir/TEST-PTW8-pipeline.log"
+  echo "2026-06-02T10:00:00Z|META|schema|info|2" >"$log"
+  _ptw_appraise_notes "$tmpdir/tickets/TEST-PTW8--a-slug"
+  mkdir -p "$tmpdir/tickets/TEST-PTW88--other"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    cd "$tmpdir/tickets" && REPOS_ROOT="" phase_terminal_write PHASE=APPRAISE STEP=appraise \
+      RESULT=done MSG="complex (score 6: auth)" LOG_FILE="$log"
+    cd / && REPOS_ROOT="$tmpdir" phase_terminal_write PHASE=EXEC STEP=exec RESULT=done LOG_FILE="$log"
+    cd / && REPOS_ROOT="$tmpdir" phase_terminal_write PHASE=APPRAISE STEP=appraise \
+      RESULT=done MSG="free text" LOG_FILE="$log"
+  )
+  [ "$(grep -c "|APPRAISE|appraise|done|${_PTW_FINAL}\$" "$log")" -eq 2 ] &&
+    grep -q '|EXEC|exec|done|agent done$' "$log"
+}
+
+test_phase_terminal_write_appraise_done_keeps_msg_without_score() {
+  local tmpdir log
+  tmpdir=$(_mktemp_test_dir)
+  log="$tmpdir/TEST-PTW9-pipeline.log"
+  echo "2026-06-02T10:00:00Z|META|schema|info|2" >"$log"
+  mkdir -p "$tmpdir/TEST-PTW9--slug"
+  printf '## Complexity\n\n**Score:**\n' >"$tmpdir/TEST-PTW9--slug/notes.md"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    cd "$tmpdir" && phase_terminal_write PHASE=APPRAISE STEP=appraise RESULT=done \
+      MSG="appraised" LOG_FILE="$log"
+    phase_terminal_write PHASE=APPRAISE STEP=appraise RESULT=fail MSG="crashed" \
+      LOG_FILE="$log" TICKET_DIR="$tmpdir/TEST-PTW9--slug"
+  )
+  grep -q '|APPRAISE|appraise|done|appraised$' "$log" && grep -q '|APPRAISE|appraise|fail|crashed$' "$log"
+}
+
 test_phase_terminal_write_prefixes_verdict() {
   local tmpdir log
   tmpdir=$(_mktemp_test_dir)
@@ -2698,6 +2759,9 @@ for fn in \
   test_pairing_meta_without_closed_key_counts_as_closed \
   test_phase_terminal_write_emits_done_marker \
   test_phase_terminal_write_prefixes_verdict \
+  test_phase_terminal_write_appraise_done_uses_score_formatter \
+  test_phase_terminal_write_appraise_done_resolves_ticket_from_log \
+  test_phase_terminal_write_appraise_done_keeps_msg_without_score \
   test_phase_terminal_write_marks_warn_continue \
   test_phase_terminal_write_rejects_bad_verdict \
   test_phase_terminal_write_suppresses_back_to_back_duplicate \

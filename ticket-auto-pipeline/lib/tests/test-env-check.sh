@@ -347,13 +347,16 @@ test_validate_passes_wired_env_start() {
   grep -q 'ok.*env-start.sh reads VERIFY_REPO_PATH_' <<<"$output"
 }
 
-test_validate_no_env_start_is_silent() {
+# GitHub #772: a missing env-start.sh used to be silent here and surfaced only
+# as verify-env-up.sh's exit 127 mid-run. A warning, never a failure.
+test_validate_warns_missing_env_start() {
   local tmpdir output
   tmpdir=$(mktemp -d)
   _mk_project_dir "$tmpdir"
   output=$(_validate_output "$tmpdir")
   rm -rf "$tmpdir"
-  ! grep -q 'env-start.sh' <<<"$output"
+  grep -q 'warn.*VERIFY_ENV_START.*env-start.sh not found' <<<"$output" &&
+    ! grep -q 'MISS.*env-start' <<<"$output"
 }
 
 test_validate_verify_served_ports() {
@@ -660,7 +663,7 @@ for fn in \
   test_claude_md_field_grammar \
   test_validate_warns_unwired_env_start \
   test_validate_passes_wired_env_start \
-  test_validate_no_env_start_is_silent \
+  test_validate_warns_missing_env_start \
   test_validate_verify_served_ports \
   test_validate_jgit_lock_none \
   test_validate_jgit_lock_stale_auto_cleaned \
