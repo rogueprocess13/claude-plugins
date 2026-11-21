@@ -31,6 +31,14 @@ A human approval is the fact the entry gate reads before a complex ticket is imp
 - `fleet-controller` 0.55.2: test only. `test-fleet-detect.sh` drops the agent variables before it records a person's approval in its fixtures. fleetd has no approval endpoint and fires no `human-approve`; its gate-hold reconciliation re-runs the entry gate, so it follows the rule above with no code change.
 - Tests: `lib/tests/test-ticket-approve.sh` (approve and reject refused in an agent or worker session, with no terminal and on a wrong typed id; approval under a pseudo-terminal; `flow.sh` called directly; policy approval unaffected; the manifest writer), `test-gate-check.sh` and `test-detect-resume.sh` (a policy approval does not release a complex, manual-mode or held ticket). Existing tests that approve as a person run under a pseudo-terminal through `lib/tests/human-pty.sh`.
 
+## 0.132.2 (2026-11-21) — a ticket that adds new authentication always stops at the approve gate (#762)
+
+0.126.2 gave `reversibility:auth-new` (new auth logic nothing existing depends on) weight 2. A ticket whose only signal was new auth then scored simple and auto-approved in `auto` and `semi-auto` mode.
+
+- **Weight 3.** `complexity-score.sh` now scores `reversibility:auth-new` at 3, the threshold. The ticket scores complex on that axis alone and is held for `/ticket-approve`. The axis line still names the kind: `reversibility:3 (auth-new)`.
+- **Unchanged.** `reversibility:auth-reuse` still weighs 0, so a ticket that only puts new endpoints behind an existing check stays simple. `auth-modify` and any other spelling still weigh 3.
+- The ticket-appraise rubric, `CLAUDE.md` and the skill doc carry the new weight. SKILL.md shrank.
+- Tests: `test-complexity-score.sh` asserts `auth-new` alone is complex at 3 (it asserted simple at 2). `test-gate-check.sh` adds `test_entry_auth_new_alone_held_in_auto`: the real score, read by the real `get_complexity`, is held at the entry gate in auto mode.
 ## 0.132.1 (2026-11-21) — a fresh ticket's first `appraise-start` no longer logs `ILLEGAL_TRANSITION … from <none>` (#766)
 
 - **Cause.** A new manifest carries no `stage` field: `write_ticket_manifest` (planner, `/ticket-create`) and `ensure_ticket_manifest` never write one, and a ticket run by hand has no manifest at all. `flow.sh`'s warn-only from-check compared that empty stage with the trigger's `from` (`Backlog`, `Todo` for `appraise-start`), so the first call for every ticket warned. `REPOS_ROOT` was set; this is not #608.
