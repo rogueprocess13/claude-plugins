@@ -43,6 +43,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_PANEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 declare -f planner_panel_results >/dev/null 2>&1 ||
@@ -63,6 +70,7 @@ planner_crosscheck_panel() {
     [ -n "$seat" ] || continue
     grep -qxF "status ${seat}" <<<"$disp" || nostatus="${nostatus:+${nostatus}, }${seat}"
     [ "$status" = "done" ] || continue
+    planner_crosscheck_units_add panel
     if [ "$bm" != "-" ]; then
       for id in ${bm//,/ }; do
         grep -qE "^disp ${id} " <<<"$disp" || missing="${missing:+${missing}, }${id}"

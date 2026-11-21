@@ -36,6 +36,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 # ── Config ──────────────────────────────────────────────────────────────────
 
 # Extensions treated as citable source — a `path:line` token only counts as a
@@ -341,6 +348,8 @@ _planner_crosscheck_check_citation() {
   local -a token_parts
   local marked_new=0
 
+  planner_crosscheck_units_add citation
+
   if [ -n "$symbol" ] && _planner_crosscheck_symbol_marked_new "$symbol"; then
     marked_new=1
     symbol=$(_planner_crosscheck_strip_symbol_annotation "$symbol")
@@ -643,6 +652,7 @@ _planner_crosscheck_scan_precedent() {
       esac
       already_checked="${already_checked}|${line_num}:${identifier}|"
 
+      planner_crosscheck_units_add precedent
       if ! _planner_crosscheck_precedent_search "$repos_root" "$identifier"; then
         echo "planner-crosscheck-citations: PRECEDENT_NOT_FOUND ${spec_file}:${line_num} → identifier '${identifier}' has zero matches under REPOS_ROOT"
         failures=$((failures + 1))

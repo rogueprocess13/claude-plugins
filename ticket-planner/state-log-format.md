@@ -74,7 +74,7 @@ When no source states a business outcome, Specify writes `**Outcome:** NEEDS_HUM
 `resolve` — address review findings, finalize proposal
 
 ### Crosscheck
-`check` — run the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters; `fail` means at least one blocking finding, not an agent crash (see `META|crosscheck` below)
+`check` — run the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters; `fail` means at least one blocking finding, not an agent crash (see `META|crosscheck` below). The `done` message is `clean ({W} warn, {A} accepted) units=…` and the `fail` message `{B} blocking finding(s), {W} warn, {A} accepted — see META crosscheck entries units=…`. The trailing `units=` field (planner-halt-recall) is one whitespace-free token, `<check>:<n|UNTESTED>` pairs joined by commas, one per blocking check in `PLANNER_CROSSCHECK_UNIT_CHECKS` (`planner-crosscheck-units.sh`): how many units that check judged, `UNTESTED` for none. It is a measurement only and never changes the verdict. Logs written before it carry no field; `planner_crosscheck_units_latest` returns 1 for them
 `testdata-synth` — test-data synthesis (planner-test-data-derivation), written after `check|start` and before any check family: `start`, then `done` with `{N} TD spec(s), {M} need(s)`. On failure there is no `fail` line (it would count as a phase failure); the `start` stays unclosed and each problem is a blocking `META|crosscheck|fail|TEST_DATA_SYNTH_FAILED …` finding. `planner_position_derive` ignores these lines
 
 ### EpicGen

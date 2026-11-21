@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.58.0 (2026-11-21) — planner-halt-recall (a): each blocking Crosscheck check reports the units it judged
+
+A pass that judged nothing is not a pass. Rehearsal iterations 11, 12 and 15 passed `RESOLUTION_NOT_PROPAGATED` with no consensus block for it to compare, and the F94 precondition held unseen from iteration 08 to 16. This is the first, measuring part of M3: no verdict changes.
+
+- **Units judged.** Every blocking Crosscheck check (20, listed with the unit each counts in `lib/planner-crosscheck-units.sh`) counts the units it judged: citation tokens resolved, precedent identifiers searched, consensus blocks where two or more named specs were compared, Signals blocks, blocked-by tokens, status codes stated as a response, and so on.
+- **One trailing field.** The phase's `Crosscheck|check|done` and `fail` lines, and the matching stdout/stderr line, end with `units=<check>:<n|UNTESTED>,…`. The field is appended last, so no existing field moves; every reader of these lines reads the status or the timestamp and is unchanged. `UNTESTED` means the check judged nothing.
+- **Never a halt.** `UNTESTED` writes no `META|crosscheck` line and decides nothing. The count travels through a temp file only `planner_crosscheck_run` sets, so a family run on its own (tests, Specify's self-lint, the preflight) prints and returns exactly what it did before.
+- **Reading it back.** `planner_crosscheck_units_latest <INIT>` prints `<check>\t<n|UNTESTED>` from the latest result line (rc 1 for a log from before this release).
+- Tests: `test-planner-crosscheck-units.sh` (new; units on a normal run, `UNTESTED` on an empty initiative that still passes, a blocking run with the same verdict and finding lines, every family's output and rc identical with counting on and off).
+
 ## 0.140.0 (2026-11-21) — a person's approval is bound to the plan they approved
 
 `approve.sh` recorded that a person approved a ticket, but not which plan. An agent could rewrite the plan after the approval and the gate would still pass it. `fleet-controller` 0.57.0.

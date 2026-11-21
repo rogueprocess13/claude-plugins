@@ -53,6 +53,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_CONTRACTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Reuses propagation.sh's known-slug helpers and bypass.sh's paragraph
@@ -525,6 +532,7 @@ planner_crosscheck_contract_mismatch() {
           _planner_crosscheck_contracts_any_block_deferential "$fileA" "$s" && continue
           _planner_crosscheck_contracts_any_block_deferential "$fileB" "$s" && continue
 
+          planner_crosscheck_units_add contract-mismatch
           local -a shapeA shapeB
           mapfile -t shapeA < <(_planner_crosscheck_contracts_shape_terms "$blockA" "$s" "${self_slugs[@]}" "${sib_slugs[@]}")
           mapfile -t shapeB < <(_planner_crosscheck_contracts_shape_terms "$blockB" "$s" "${self_slugs[@]}" "${sib_slugs[@]}")
@@ -847,6 +855,7 @@ planner_crosscheck_contract_consumers_unnotified() {
         _planner_crosscheck_contracts_genuine_retirement "$block" "$spec_file" "$s" || continue
         _planner_crosscheck_contracts_is_extended "$spec_file" "$s" && continue
 
+        planner_crosscheck_units_add contract-consumers
         local dir
         for dir in "${other_spec_dirs[@]}"; do
           local consumer_file

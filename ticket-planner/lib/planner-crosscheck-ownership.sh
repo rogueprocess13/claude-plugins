@@ -57,6 +57,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_OWNERSHIP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 declare -f planner_ownership_writes >/dev/null 2>&1 ||
@@ -223,6 +230,7 @@ planner_crosscheck_ownership() {
     done <<<"${W[$slug]}"
   done < <(find "$specs_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
 
+  planner_crosscheck_units_add ownership "${#slugs[@]}"
   local blocking=0 s src eff reason first msg items wk ws wop found near
   local spec_ref
   for slug in "${slugs[@]}"; do

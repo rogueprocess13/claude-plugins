@@ -41,6 +41,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_AC_COVERAGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! declare -f _planner_crosscheck_contracts_defenced >/dev/null 2>&1; then
@@ -50,9 +57,13 @@ fi
 
 # Uncovered codes of one spec, one "<code>\t<excerpt>" line each, in order of
 # first appearance. Pure over the file.
-# Usage: _planner_crosscheck_ac_coverage_one <spec_file>
+# With --units, a last line `#units\t<n>` gives how many distinct codes the
+# spec states as a response (the units judged, planner-halt-recall).
+# Usage: _planner_crosscheck_ac_coverage_one <spec_file> [--units]
 _planner_crosscheck_ac_coverage_one() {
-  _planner_crosscheck_contracts_defenced "$1" | tr -d '\r' | awk '
+  local units=0
+  [ "${2:-}" = "--units" ] && units=1
+  _planner_crosscheck_contracts_defenced "$1" | tr -d '\r' | awk -v units="$units" '
     function strip(w) {
       sub(/^[(`"\047*]+/, "", w)
       sub(/[)`"\047*,.;:!?]+$/, "", w)
@@ -110,6 +121,7 @@ _planner_crosscheck_ac_coverage_one() {
     }
     END {
       for (i = 1; i <= k; i++) if (!(order[i] in covered)) printf "%s\t%s\n", order[i], excerpt[order[i]]
+      if (units) printf "#units\t%d\n", k
     }
   '
 }
@@ -133,9 +145,13 @@ planner_crosscheck_ac_coverage() {
     grep -qF -- "${PLANNER_TESTDATA_SYNTH_MARKER:-<!-- planner:testdata-synth v1 -->}" "$spec_file" 2>/dev/null && continue
     while IFS=$'\t' read -r code excerpt; do
       [ -n "$code" ] || continue
+      if [ "$code" = "#units" ]; then
+        planner_crosscheck_units_add ac-coverage "$excerpt"
+        continue
+      fi
       echo "planner-crosscheck-ac-coverage: AC_STATUS_UNCOVERED ${base} status ${code} is stated as a response but no acceptance criterion checks it — \"${excerpt}\""
       found=1
-    done < <(_planner_crosscheck_ac_coverage_one "$spec_file")
+    done < <(_planner_crosscheck_ac_coverage_one "$spec_file" --units)
   done
   [ "$found" -eq 0 ]
 }
