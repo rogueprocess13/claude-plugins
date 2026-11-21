@@ -482,7 +482,12 @@ test_gate_held_sends_approval_prompt() {
   SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
     PATH="$bindir:$PATH" fleet_notify_gate_held "TST-40" "$state_dir" \
     "2026-09-11T07:35:16Z" >/dev/null 2>&1
-  grep -q "TST-40" "$capture" && grep -q "ticket-approve" "$capture"
+  # The prompt names the command a person runs in a terminal, not the
+  # /ticket-approve skill (which only prints that command).
+  grep -q "TST-40" "$capture" &&
+    grep -q "bash ~/.claude/skills/ticket-approve/approve.sh TST-40" "$capture" &&
+    grep -q "own terminal" "$capture" &&
+    ! grep -q "/ticket-approve TST-40" "$capture"
 }
 
 test_gate_held_writes_sent_sidecar() {

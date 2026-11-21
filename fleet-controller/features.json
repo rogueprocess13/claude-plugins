@@ -43,7 +43,7 @@
       "summary": "Autonomy fleetd dispatches every ticket with (/ticket-auto --auto, --semi-auto or --manual), Unset, whole-ticket spawn uses auto and phase dispatch keeps the preamble's TICKET_AUTONOMY, else manual. Shown as on when it is auto: simple tickets auto-approve and auto-merge.",
       "requires": [],
       "recommend": "situational",
-      "why": "auto is the old fixed behaviour and keeps a fleet hands-off; complex tickets still stop at the approval gate until /ticket-approve. Use manual to hold every ticket at that gate and leave every PR merge to a person. semi-auto currently gates and merges exactly like auto. fleet-env-check refuses any other value at fleetd startup.",
+      "why": "auto is the old fixed behaviour and keeps a fleet hands-off; complex tickets still stop at the approval gate until a person runs bash ~/.claude/skills/ticket-approve/approve.sh <ID> in their own terminal, from the tickets root. Use manual to hold every ticket at that gate and leave every PR merge to a person. semi-auto currently gates and merges exactly like auto. fleet-env-check refuses any other value at fleetd startup.",
       "docs": "fleet-controller/CLAUDE.md#configuration"
     },
     {

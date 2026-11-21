@@ -5,7 +5,7 @@ description: Post-gate-hold comment reconciliation agent. Spawned when a held ti
 
 # Ticket Gate Reconcile
 
-**Entry condition:** `RESUME_STEP=STEP_3_5` — gate was held, `/ticket-approve` has been run.
+**Entry condition:** `RESUME_STEP=STEP_3_5` — gate was held, a person has approved.
 
 ## Steps 1–4 — Load context, comments and open questions (agent starts cold)
 
@@ -41,9 +41,7 @@ If there are no unprocessed comments and no answered-but-unstruck question, skip
 
 ## Step 6 — Amendment logic
 
-Incorporate the comments and answers into the plan artifact.
-
-Read the current plan artifact from `$ARTIFACT_PATH`. Append an `## Amendment #N` section (where N = `{RECONCILE_N}`) that:
+Read the plan artifact from `$ARTIFACT_PATH`. Append an `## Amendment #N` section (where N = `{RECONCILE_N}`) that:
 1. Summarizes the user comments being incorporated
 2. Lists concrete changes to the plan required by the feedback
 3. Notes any design decisions made during reconciliation
@@ -102,7 +100,7 @@ Stop with a user-facing report:
 {list of still-unanswered questions}
 
 ### Next step
-Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` and re-run `/ticket-auto {TICKET-ID} --auto`.
+Review the amendment comment, run `bash ~/.claude/skills/ticket-approve/approve.sh {TICKET-ID}` in your own terminal, then re-run `/ticket-auto {TICKET-ID} --auto`.
 ```
 
 ## Step 8 — Clean pass

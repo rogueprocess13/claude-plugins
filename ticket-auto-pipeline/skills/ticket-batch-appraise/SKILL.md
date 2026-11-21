@@ -131,8 +131,7 @@ If any agent fails (error, timeout, no result) — mark it as `FAILED` and conti
 **Linear state:** All successful tickets → Approve + `claimed`, awaiting approval.
 
 **Next steps:**
-- Complex tickets: review the plan in notes.md, run `/ticket-approve <ID>`, then run `/ticket-implement <ID>`
-- Simple tickets: run `/ticket-approve <ID>` and then `/ticket-implement <ID>`
+- Review the plan in notes.md (complex tickets), approve in your own terminal with `bash ~/.claude/skills/ticket-approve/approve.sh <ID>`, then run `/ticket-implement <ID>`
 - Or: run `/ticket-auto <ID>` on any ticket to take it all the way to merge
 
 {Failed tickets: list IDs — re-run individually with `/ticket-appraise <ID>`}

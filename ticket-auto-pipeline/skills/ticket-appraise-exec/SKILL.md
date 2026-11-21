@@ -399,7 +399,7 @@ Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_
 **Open questions:**
 {From notes.md Open Questions — or "None"}
 {If any Open Questions bullet is tagged `[needs-human]`, append this line directly after the Open Questions block:}
-⚠️ Answer the `[needs-human]` question(s) above in a comment before running `/ticket-approve` — approving without answering first will trigger an extra gate-reconcile hold cycle.
+⚠️ Answer the `[needs-human]` question(s) above in a comment before approving, or gate-reconcile holds it again.
 
 **Next step:**
 {First concrete action from notes.md Next Steps}
@@ -452,9 +452,9 @@ bash ~/.claude/skills/lib/plog.sh EXEC handoff start "Writing final report"
 Linear updated — assigned to you, status → Approve + `claimed` (awaiting approval).
 
 > **Full state lifecycle:**
-> Todo + `claimed` (appraise) → Approve + `claimed` (end of exec) → Ready, manifest `approved: true` (human approves via `/ticket-approve`) → Review (after PR) → Done
+> Todo + `claimed` (appraise) → Approve + `claimed` (end of exec) → Ready, manifest `approved: true` (a person runs `approve.sh`) → Review (after PR) → Done
 
-Run `/ticket-implement {TICKET-ID}` once `/ticket-approve {TICKET-ID}` has been run.
+To approve, run `bash ~/.claude/skills/ticket-approve/approve.sh {TICKET-ID}` in your own terminal, from the tickets root. Then `/ticket-implement {TICKET-ID}`.
 ```
 
 bash ~/.claude/skills/lib/plog.sh EXEC handoff done "Reported to user"

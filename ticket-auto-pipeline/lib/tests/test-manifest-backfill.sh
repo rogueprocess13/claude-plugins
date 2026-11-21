@@ -358,7 +358,78 @@ test_backfill_readiness_skips_adhoc_and_already_ready() {
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
+# ── a label-derived approval is never a person's ─────────────────────────────
+# The tracker's `approved` label can be set by an agent, so the backfill
+# records it as `policy`. Run once as a person would (no agent variables)
+# and once from an agent session: neither may write `human`.
+_backfill_label_provenance() {
+  local ws out rc=0 prov approved
+  ws=$(_new_workspace)
+  touch "$ws/logs/WIL-1-pipeline.log"
+  out=$(env "$@" CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
+  local m
+  m=$(find "$ws/repos" -path '*/WIL-1/planner/manifest.json' 2>/dev/null | head -1)
+  approved=$(jq -r '.approved // empty' "$m" 2>/dev/null)
+  prov=$(jq -r '.approval_provenance // empty' "$m" 2>/dev/null)
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && [ "$prov" = "policy" ] &&
+    grep -q 'WIL-1: SEEDED .*approved=true provenance=policy ' <<<"$out" &&
+    grep -q 'recorded as policy, not as a person' <<<"$out" &&
+    grep -q 'bash ~/.claude/skills/ticket-approve/approve.sh <ID>' <<<"$out" || {
+    echo "    rc=$rc approved=$approved provenance=$prov out=$out"
+    return 1
+  }
+}
+
+test_backfill_label_approval_is_policy_never_human() {
+  if _backfill_label_provenance -u CLAUDE_CODE_SESSION_ID -u FLEET_WORKER_PID -u FLEET_GENERATION &&
+    _backfill_label_provenance CLAUDE_CODE_SESSION_ID=agent-session; then
+    _pass "manifest-backfill.sh: an approval read from the tracker label is seeded as policy, from a terminal and from an agent session"
+  else
+    _fail "manifest-backfill.sh: a label-derived approval must be seeded as policy, never human"
+  fi
+}
+
+test_backfill_dry_run_reports_policy() {
+  local ws out
+  ws=$(_new_workspace)
+  touch "$ws/logs/WIL-1-pipeline.log"
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" --dry-run "$ws/logs" 2>&1) || true
+  rm -rf "$ws"
+  if grep -q 'WIL-1: WOULD SEED .*approved=true provenance=policy ' <<<"$out" && ! grep -q 'provenance=human' <<<"$out"; then
+    _pass "manifest-backfill.sh: dry run reports a label-derived approval as policy"
+  else
+    _fail "manifest-backfill.sh: dry run should report provenance=policy (out=$out)"
+  fi
+}
+
+# A manifest that already records a person's approval is left exactly as it
+# is: the backfill never downgrades (or re-derives) an existing `human`.
+test_backfill_leaves_existing_human_approval_alone() {
+  local ws m before after out rc=0
+  ws=$(_new_workspace)
+  touch "$ws/logs/WIL-1-pipeline.log"
+  m="$ws/repos/.ticket-auto/initiatives/_adhoc/tickets/WIL-1/planner/manifest.json"
+  mkdir -p "$(dirname "$m")" "$ws/repos/.ticket-auto/initiatives/_index"
+  echo "_adhoc" >"$ws/repos/.ticket-auto/initiatives/_index/WIL-1.initiative"
+  jq -n '{id:"WIL-1",dispatch:false,stage:"Ready",approved:true,approval_provenance:"human"}' >"$m"
+  before=$(jq -S -c '{stage,approved,approval_provenance}' "$m")
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
+  after=$(jq -S -c '{stage,approved,approval_provenance}' "$m")
+  rm -rf "$ws"
+  if [ "$rc" -eq 0 ] && [ "$before" = "$after" ] &&
+    [ "$after" = '{"approval_provenance":"human","approved":true,"stage":"Ready"}' ] &&
+    grep -q 'WIL-1: SKIP (already carries stage)' <<<"$out"; then
+    _pass "manifest-backfill.sh: an existing human approval is not rewritten"
+  else
+    _fail "manifest-backfill.sh: existing human approval changed (rc=$rc before=$before after=$after out=$out)"
+  fi
+}
+
 test_backfill_seeds_from_mocked_get_issue
+test_backfill_label_approval_is_policy_never_human
+test_backfill_dry_run_reports_policy
+test_backfill_leaves_existing_human_approval_alone
 test_backfill_idempotent
 test_backfill_dry_run_writes_nothing
 test_backfill_handles_adhoc_ticket
