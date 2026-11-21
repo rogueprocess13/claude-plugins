@@ -67,6 +67,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_PARAMS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 declare -f _planner_crosscheck_contracts_defenced >/dev/null 2>&1 ||
@@ -220,6 +227,7 @@ planner_crosscheck_params() {
       if [ "$place" = ac ]; then where="Acceptance Criteria"; else where="the Verification Notes Expected column"; fi
       while IFS= read -r line; do
         [ -n "$line" ] || continue
+        planner_crosscheck_units_add params
         lnum=$(cut -f1 <<<"$line")
         canon=$(cut -f2 <<<"$line")
         lit=$(cut -f3- <<<"$line" | tr -s ' \t' '  ')

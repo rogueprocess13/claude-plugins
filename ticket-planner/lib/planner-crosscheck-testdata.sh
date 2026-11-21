@@ -48,6 +48,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_TESTDATA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! declare -f _planner_crosscheck_known_slugs >/dev/null 2>&1; then
@@ -1054,6 +1061,7 @@ planner_crosscheck_testdata() {
     done < <(_planner_testdata_notes_problems "$spec_file")
 
     while IFS=$'\037' read -r label data kind value; do
+      planner_crosscheck_units_add testdata-source
       reason=""
       if [[ "$value" == *"|"* ]]; then
         reason="Source value contains '|'"
@@ -1164,6 +1172,7 @@ planner_crosscheck_cited_artifacts() {
   local blocking=0 status name raw key
   local -a missing=()
   while IFS=$'\037' read -r status name raw; do
+    planner_crosscheck_units_add cited-artifacts
     case "$status" in
     MALFORMED)
       _planner_testdata_emit "planner-crosscheck-testdata: CITED_ARTIFACT_MALFORMED discovery.md ## Cited Artifacts item cannot be parsed: \"${raw}\" — write it as \`<name>\` — FOUND: <location> or \`<name>\` — NOT FOUND (searched: …)"
@@ -2071,6 +2080,7 @@ planner_crosscheck_testdata_tripwires() {
     [ "$slug" = "INDEX" ] && continue
     _planner_testdata_spec_is_synth "$spec_file" && continue
 
+    planner_crosscheck_units_add testdata-tripwires
     nac=$(_planner_testdata_ac_items "$spec_file" | grep -c . || true)
     nneeds=$(_planner_testdata_spec_needs "$spec_file" | grep -c . || true)
     if [ "${nac:-0}" -gt 0 ] && [ "${nneeds:-0}" -eq 0 ] &&

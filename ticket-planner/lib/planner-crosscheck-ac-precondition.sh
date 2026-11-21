@@ -53,6 +53,13 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Units judged (planner-halt-recall): planner_crosscheck_units_add is a no-op
+# unless planner_crosscheck_run set PLANNER_CROSSCHECK_UNITS_FILE.
+if ! declare -f planner_crosscheck_units_add >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-units.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-crosscheck-units.sh"
+fi
+
 _PLANNER_CROSSCHECK_ACPRE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 declare -f planner_acpre_check_row >/dev/null 2>&1 ||
@@ -285,6 +292,7 @@ planner_crosscheck_ac_precondition() {
   fi
 
   [ "$dmore" -eq 0 ] || details+=" and ${dmore} more"
+  planner_crosscheck_units_add ac-precondition "$nc"
   planner_state_write "$init" META ac-precondition done \
     "${nc} checked, ${nu} unchecked, ${np} planned, ${ni} input${details:+: ${details}}" >/dev/null 2>&1
 
