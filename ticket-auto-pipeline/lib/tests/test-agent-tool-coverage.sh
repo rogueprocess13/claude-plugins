@@ -13,7 +13,7 @@
 # A skill that follows the shared preamble (its SKILL.md names
 # lib/skill-preamble-auto.md) is also scanned through the preamble, and through
 # every file the preamble tells the agent to resolve with skill-ref.sh and
-# follow inline (§ 8 reads adr-gate's SKILL.md that way):
+# follow inline (§ 8 reads adr-gate's references/gate.md that way):
 #
 #   Agent       "spawn a/an/the ... agent|subagent", `subagent_type`
 #   Skill       `Skill(`, or "[Then] Run/Invoke [the] `/slash-command`" opening
@@ -249,10 +249,11 @@ fi
 
 # ── The shared preamble and its inline ADR gate (§ 8, #667) ──────────────────
 # No phase agent holds the Skill tool, so § 8 has the agent resolve adr-gate's
-# SKILL.md with skill-ref.sh and follow it inline. The loop above already scans
-# the preamble and that file for every skill that follows the preamble; these
-# checks pin the parts a tool-name scan cannot see.
-GATE="$PLUGIN_DIR/skills/adr-gate/SKILL.md"
+# references/gate.md with skill-ref.sh and follow it inline. The loop above
+# already scans the preamble and that file for every skill that follows the
+# preamble; these checks pin the parts a tool-name scan cannot see.
+GATE="$PLUGIN_DIR/skills/adr-gate/references/gate.md"
+GATE_SKILL="$PLUGIN_DIR/skills/adr-gate/SKILL.md"
 sec8=$(awk '/^## 8\. ADR gate/ { on = 1 } on' "$PREAMBLE")
 flat=$(tr '\n' ' ' <<<"$sec8")
 
@@ -266,17 +267,17 @@ done <<<"$pairs"
 preamble_agents=$(printf '%s' "$preamble_agents" | sort -u)
 if [ "$(wc -w <<<"$preamble_skills")" -ge 6 ] &&
   [ "$(inline_reads "$PREAMBLE")" = "$GATE" ] && [ -f "$GATE" ]; then
-  _ok "the preamble is scanned for its skills, with adr-gate's SKILL.md as its one inline read"
+  _ok "the preamble is scanned for its skills, with adr-gate's references/gate.md as its one inline read"
 else
   _bad "preamble scan is empty or its inline reads changed: skills='$preamble_skills' reads='$(inline_reads "$PREAMBLE")'"
 fi
 
 # The read line, in the order the root CLAUDE.md prescribes: condition, the
 # file, the resolver call, "Read the printed path in full", the hard stop.
-if grep -qE 'If you composed a request file, before acting on the decision.*`SKILL\.md`.*`bash ~/\.claude/skills/lib/skill-ref\.sh adr-gate SKILL\.md`.*Read the printed path in full.*If `skill-ref\.sh` exits non-zero.*reference-missing fail "adr-gate/SKILL\.md"` and stop: never classify from memory' <<<"$flat"; then
+if grep -qE 'If you composed a request file, before acting on the decision.*`references/gate\.md`.*`bash ~/\.claude/skills/lib/skill-ref\.sh adr-gate references/gate\.md`.*Read the printed path in full.*If `skill-ref\.sh` exits non-zero.*reference-missing fail "adr-gate/gate\.md"` and stop: never classify from memory' <<<"$flat"; then
   _ok "§ 8 reads the gate through skill-ref.sh: condition, file, resolver, full read, hard stop"
 else
-  _bad "§ 8 lacks the conditional read line for adr-gate's SKILL.md, or its parts are out of order"
+  _bad "§ 8 lacks the conditional read line for adr-gate's references/gate.md, or its parts are out of order"
 fi
 if grep -qF 'never invoke `/adr-gate`' <<<"$flat" &&
   ! grep -qE 'CLAUDE_PLUGIN_ROOT|~/\.claude/skills/adr-gate' "$PREAMBLE"; then
@@ -326,15 +327,29 @@ if [ -z "$bad_cmd" ] && [ -z "$missing" ] &&
   [ "$(grep -cE '~/\.claude/skills/lib/(wiki-bootstrap|adr-store|adr-gate-parse)\.sh' "$GATE")" -ge 4 ]; then
   _ok "adr-gate's commands use the synced lib dir and every script they name exists"
 else
-  _bad "adr-gate SKILL.md has a cwd-relative or plugin-root command, or names a missing lib script: $bad_cmd $missing"
+  _bad "adr-gate references/gate.md has a cwd-relative or plugin-root command, or names a missing lib script: $bad_cmd $missing"
 fi
-# The planner still runs the gate as a plain skill: frontmatter and the result
-# block the parser checks are untouched.
-if grep -qx 'name: adr-gate' "$GATE" && grep -qF '=== END ADR_GATE_RESULT ===' "$GATE" &&
+# The planner still runs the gate as a plain skill: SKILL.md keeps its
+# frontmatter and reads the same reference, which holds the result block the
+# parser checks.
+if grep -qx 'name: adr-gate' "$GATE_SKILL" && grep -qF '=== END ADR_GATE_RESULT ===' "$GATE" &&
+  grep -qF '`bash ~/.claude/skills/lib/skill-ref.sh adr-gate references/gate.md`' "$GATE_SKILL" &&
+  ! grep -qF 'ADR_GATE_RESULT' "$GATE_SKILL" &&
   grep -qF '/adr-gate --request-file' "$PLUGIN_DIR/../ticket-planner/lib/planner-phase-prompts.sh"; then
-  _ok "adr-gate is still a plain skill the planner invokes"
+  _ok "adr-gate is still a plain skill the planner invokes, and it reads the same gate file"
 else
-  _bad "adr-gate lost its skill frontmatter or result block, or the planner no longer invokes /adr-gate"
+  _bad "adr-gate lost its frontmatter or its read of references/gate.md, holds a second copy of the gate, or the planner no longer invokes /adr-gate"
+fi
+
+# The skill fingerprint covers the gate text a phase follows: every manifest
+# that loads the preamble lists the gate file, right after the preamble.
+unlisted=$(jq -r '.prompt_manifests | to_entries[] | .value.files as $f
+  | ($f | index("lib:skill-preamble-auto.md")) as $i | select($i != null)
+  | select($f[$i + 1] != "plugin:skills/adr-gate/references/gate.md") | .key' "$TABLE")
+if [ -z "$unlisted" ] && [ "$(jq '[.prompt_manifests[].files | index("lib:skill-preamble-auto.md") | select(. != null)] | length' "$TABLE")" -ge 6 ]; then
+  _ok "every manifest that loads the preamble lists adr-gate's references/gate.md after it"
+else
+  _bad "manifests load the preamble without the gate file right after it: $(tr '\n' ' ' <<<"$unlisted")"
 fi
 
 echo
