@@ -36,6 +36,14 @@ elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/log-dir.sh" ]; then
   source "$(dirname "${BASH_SOURCE[0]}")/../../lib/log-dir.sh"
 fi
 
+# plan-review.sh — the router's independent plan review, STEP_2_2 (#667).
+# Same two-location lookup; without it PLAN_REVIEW stays `off`.
+if [ -f "$LIB_DIR/plan-review.sh" ]; then
+  source "$LIB_DIR/plan-review.sh"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-review.sh" ]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-review.sh"
+fi
+
 CURRENT_SCHEMA_VERSION=1
 
 # Trailing META subtypes that never invalidate a completed run when they
@@ -178,6 +186,14 @@ fi
 
 # ── Level 1: RESUME_STEP detection ──────────────────────────────────────────
 
+# Independent plan review (#667): off | review | revise | resolved | stopped,
+# read from the log alone (lib/plan-review.sh). `off` unless the preamble
+# recorded META|plan-review|info|router.
+PLAN_REVIEW="off"
+if [ -s "$LOG_FILE" ] && declare -f plan_review_state >/dev/null 2>&1; then
+  PLAN_REVIEW=$(plan_review_state "$LOG_FILE" 2>/dev/null || echo off)
+fi
+
 if [ ! -s "$LOG_FILE" ]; then
   RESUME_STEP="STEP_1"
 else
@@ -290,6 +306,20 @@ else
     # EXEC phase claimed done but artifact was never written — re-run EXEC
     RESUME_STEP="STEP_2"
     hb_gate "resume-point" "ok" "EXEC_NO_ARTIFACT detected — resuming at STEP_2 (re-run EXEC)"
+  elif [ "$PLAN_REVIEW" = "review" ] && grep -q '^[^|]*|EXEC|create-artifact|done|' "$LOG_FILE"; then
+    # The router reviews the plan itself (STEP_2_2) and no verdict covers the
+    # plan as it now stands: EXEC wrote it, or wrote it again after a BLOCKED
+    # verdict. Ahead of the ADVERSARIAL_BLOCKED branch below on purpose: in
+    # router mode EXEC never writes a passing adversarial-review line, so that
+    # branch would re-run EXEC forever after a person revised a stopped plan.
+    RESUME_STEP="STEP_2_2"
+  elif [ "$PLAN_REVIEW" = "revise" ]; then
+    # Latest review BLOCKED the plan, under the cap, plan not yet revised:
+    # re-run EXEC from create-artifact with the findings file as input (the
+    # router adds the revise instructions; EXEC_FROM is forced below).
+    RESUME_STEP="STEP_2"
+    _PLAN_REVISE_RESUME=1
+    hb_gate "resume-point" "ok" "plan review BLOCKED — resuming at STEP_2 (revise from create-artifact)"
   elif {
     _adv_ln=$(grep -n '^[^|]*|META|gate-stop|fail|ADVERSARIAL_BLOCKED' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
     [ -n "$_adv_ln" ]
@@ -504,7 +534,15 @@ if [ -s "$LOG_FILE" ]; then
           case "$_z_phase" in
           APPRAISE) RESUME_STEP="STEP_1" ;;
           REPRODUCE) RESUME_STEP="STEP_1_5" ;;
-          EXEC) RESUME_STEP="STEP_2" ;;
+          EXEC)
+            # PHASE=EXEC is shared by STEP_2 and the router's plan review
+            # (STEP_2_2, STEP=plan-review): a review that died re-runs the
+            # review, never the phase that wrote the plan.
+            case "$_z_step" in
+            plan-review) RESUME_STEP="STEP_2_2" ;;
+            *) RESUME_STEP="STEP_2" ;;
+            esac
+            ;;
           GATE)
             # PHASE=GATE is shared by two dispatch-table steps: STEP_2_5/
             # STEP_3 (gate-check.sh, synchronous bash run inline by the
@@ -625,12 +663,13 @@ if [ -s "$LOG_FILE" ]; then
   # ever re-read.
   EXEC_FROM=$(grep '^[^|]*|EXEC|[^|]*|done|' "$LOG_FILE" 2>/dev/null |
     grep -v '|EXEC|exec|done|' |
+    grep -v '|EXEC|plan-review|' |
     tail -1 | awk -F'|' '{print $3}' || true)
 
   # An unresolved ADVERSARIAL_BLOCKED gate-stop (Level 1 above) always
   # resumes at create-artifact, overriding the generic scan above — see the
   # comment on that branch for why the generic result can't be trusted here.
-  if [ "${_ADV_BLOCKED_RESUME:-}" = "1" ]; then
+  if [ "${_ADV_BLOCKED_RESUME:-}" = "1" ] || [ "${_PLAN_REVISE_RESUME:-}" = "1" ]; then
     EXEC_FROM="create-artifact"
   fi
 
@@ -863,6 +902,9 @@ fi
 #   ITERATION         — count of PR review WARN-verdict (⚠️) entries in pipeline log
 #   RECONCILE_CYCLE   — count of distinct gate reconcile cycle#N numbers
 #   PR_FEEDBACK_CYCLE — count of pr-reconcile done entries
+#   PLAN_REVIEW       — off|review|revise|resolved|stopped (lib/plan-review.sh): the
+#                       router's independent plan review. `review` → STEP_2_2;
+#                       `revise` → STEP_2 with EXEC_FROM=create-artifact
 
 cat <<EOF
 DETECT_RESUME_RESULT
@@ -893,5 +935,6 @@ DETECT_RESUME_RESULT
   ITERATION:          ${ITERATION}
   RECONCILE_CYCLE:    ${RECONCILE_CYCLE}
   PR_FEEDBACK_CYCLE:  ${PR_FEEDBACK_CYCLE}
+  PLAN_REVIEW:        ${PLAN_REVIEW}
 END_DETECT_RESUME_RESULT
 EOF

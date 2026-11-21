@@ -472,6 +472,35 @@ test_dashboard_fields_only_in_new_run_mode() {
   return $ok
 }
 
+# Independent plan review (#667): the flag is read once and recorded. Off
+# writes nothing; the router (NEW_RUN=true) records `router`; fleetd's phase
+# dispatch (no NEW_RUN) records `inline`, because it does not run STEP_2_2.
+test_plan_review_marker_off_router_and_fleetd() {
+  _sandbox_new
+  local log
+  (unset TICKET_ROUTER_PLAN_REVIEW && _preamble TEST-PRE-30 NEW_RUN=true >/dev/null)
+  log="$_SANDBOX/logs/TEST-PRE-30-pipeline.log"
+  local off_n
+  off_n=$(grep -c '|META|plan-review|' "$log" || true)
+  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-31 NEW_RUN=true >/dev/null
+  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-31 NEW_RUN=true >/dev/null
+  local rlog="$_SANDBOX/logs/TEST-PRE-31-pipeline.log"
+  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-32 >/dev/null
+  # A later router run does not change a recorded decision.
+  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-32 NEW_RUN=true >/dev/null
+  local flog="$_SANDBOX/logs/TEST-PRE-32-pipeline.log"
+  [ "$off_n" -eq 0 ] &&
+    [ "$(grep -c '|META|plan-review|info|router$' "$rlog")" -eq 1 ] &&
+    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$rlog")" = router ] &&
+    [ "$(grep -c '|META|plan-review|info|' "$flog")" -eq 1 ] &&
+    grep -q '|META|plan-review|info|inline — fleetd phase dispatch does not run STEP_2_2' "$flog" &&
+    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$flog")" = inline ] &&
+    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$log")" = inline ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
 test_manual_mode_schema_line_precedes_branch_context() {
   _sandbox_new
   _preamble_raw "TICKET_ARG=TEST-PRE-24 --auto" NEW_RUN=true ANNOUNCE_START=true >/dev/null
@@ -595,6 +624,7 @@ _run "explicit args win over TICKET_ARG" test_explicit_args_win_over_ticket_arg
 _run "TICKET_ARG usage errors" test_ticket_arg_usage_errors
 _run "ANNOUNCE_START is written once" test_announce_start_is_written_once
 _run "dashboard fields only in NEW_RUN mode" test_dashboard_fields_only_in_new_run_mode
+_run "plan review marker: off, router, fleetd phase dispatch" test_plan_review_marker_off_router_and_fleetd
 _run "manual mode: schema line precedes branch context" test_manual_mode_schema_line_precedes_branch_context
 _run "detect-resume routes a manual preamble log like a legacy one" test_detect_resume_routes_a_manual_preamble_log_like_a_legacy_one
 _run "preflight: teams query failure has its own message" test_preflight_teams_query_failure_has_its_own_message

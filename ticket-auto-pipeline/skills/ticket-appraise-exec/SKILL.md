@@ -90,7 +90,7 @@ Branch on `{COMPLEXITY}` extracted from notes.md:
 
 ### Reference files (load condition)
 
-**If `{COMPLEXITY}` = simple**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/simple-fix-template.md` before Step 3-Simple writes `simple-fix.md`. **If `{COMPLEXITY}` = complex**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/adversarial-review.md` before Step 3.6 spawns the reviewer and `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/verification-plan.md` before Step 3.7 derives the plan, including on a `--from-step` resume (`create-artifact`, `verify-plan-derived`) that skips this step. Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never write `simple-fix.md`, the reviewer prompt or the verification plan from memory. A simple ticket reads neither complex file; a complex ticket does not read the simple-fix template.
+**If `{COMPLEXITY}` = simple**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/simple-fix-template.md` before Step 3-Simple writes `simple-fix.md`. **If `{COMPLEXITY}` = complex**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/adversarial-review.md` before Step 3.6 spawns the reviewer (not when Step 3.6 is skipped) and `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/verification-plan.md` before Step 3.7 derives the plan, including on a `--from-step` resume (`create-artifact`, `verify-plan-derived`) that skips this step. Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never write `simple-fix.md`, the reviewer prompt or the verification plan from memory. A simple ticket reads neither complex file; a complex ticket does not read the simple-fix template.
 
 A `--from-step` resume skips Step 1, so take `{COMPLEXITY}` from notes.md `## Complexity` with the Step 3.4 `get_complexity` call. After a context compaction, read the reference again before continuing the step it covers.
 
@@ -230,7 +230,7 @@ Map: clear → PASS, CONFLICT → WARN, ADJACENT → WARN, SUPERSEDES → PASS.
 
 ## Step 3.6 — Adversarial Review (complex tickets only)
 
-**Only run this step if `{COMPLEXITY}` = complex.** If simple, skip to Step 4.
+**Only run this step if `{COMPLEXITY}` = complex.** If simple, skip to Step 4. If `bash ~/.claude/skills/lib/plan-review.sh mode` prints `router`, skip to Step 3.7 without reading `references/adversarial-review.md`: the router reviews the plan next (STEP_2_2).
 
 **Round awareness (GitHub #203).** Before spawning, count how many consecutive prior rounds of this review came back BLOCKED for this ticket. The count is deterministic bash — never estimate it yourself:
 
@@ -242,9 +242,9 @@ echo "ADV_PRIOR_BLOCKS=${ADV_PRIOR_BLOCKS} ADV_ROUND=${ADV_ROUND}"
 bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning adversarial agent (round ${ADV_ROUND})"
 ```
 
-`ADV_PRIOR_BLOCKS` counts `META|gate-stop|fail|ADVERSARIAL_BLOCKED` lines since the last PASS/WARNINGS verdict; recovery notes between rounds do not reset it (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls, so note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
+`ADV_PRIOR_BLOCKS` counts `ADVERSARIAL_BLOCKED` gate-stops since the last PASS/WARNINGS verdict (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls: note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
 
-Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to find what's wrong, missing, or under-specified in the implementation plan — not to confirm it's correct.
+Spawn a `general-purpose` agent with an adversarial framing: it finds what's wrong, missing or under-specified in the plan, it does not confirm it.
 
 **⚠️ MANDATORY — read before spawning:** the `Task` call's return is not the end of this skill. Handle it per **"When the agent returns"**, then continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
 
@@ -254,7 +254,7 @@ Moved to `references/adversarial-review.md` (the reviewer prompt, plus the Appro
 
 Append its output verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
 
-**Then keep going — do not stop here.** Evaluate the verdict below and proceed: Steps 3.7, 3.8, 4, 5 and 6 still run in this session before the ticket is assigned, commented on and moved to Approve.
+**Then keep going — do not stop here.** Evaluate the verdict below and proceed: Steps 3.7, 3.8, 4, 5 and 6 still run in this session.
 
 **Record every verdict, BLOCKED included, before any gate-stop** (`done` line, then verifier result):
 
@@ -288,7 +288,7 @@ Fix the plan, then re-run /ticket-appraise-exec {TICKET-ID} --from-step create-a
 
 If `{ADV_ROUND}` ≥ 2, add this line to the message: `This plan has now been blocked {ADV_ROUND} times in a row. Before another detail pass, check whether the approach itself is the problem (see ### Approach review from round 3 on).` If the review contains `**Approach:** RECONSIDER`, quote its alternative in the message too.
 
-If WARNINGS or PASS, proceed to Step 3.7 — do NOT skip ahead to Step 4; Steps 3.7 and 3.8 both apply in this same complex-ticket branch and still have to run first.
+If WARNINGS or PASS, proceed to Step 3.7, not Step 4: Steps 3.7 and 3.8 still run first.
 
 ---
 

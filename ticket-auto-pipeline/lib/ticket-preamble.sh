@@ -537,6 +537,21 @@ ticket_preamble_run() {
     esac
   fi
 
+  # Independent plan review (GitHub #667, lib/plan-review.sh). The line is the
+  # per-ticket decision, written once: `router` when the manual router
+  # (NEW_RUN=true, which is also a ticket-level fleetd worker) will run
+  # STEP_2_2, `inline …` when the flag is on but this caller is fleetd's phase
+  # dispatch, which does not run that step, so ticket-appraise-exec keeps its
+  # inline Step 3.6. Flag off: no line, nothing changes.
+  if [ "${TICKET_ROUTER_PLAN_REVIEW:-false}" = "true" ] &&
+    ! grep -q '^[^|]*|META|plan-review|info|' "$LOG_FILE" 2>/dev/null; then
+    if [ "$NEW_RUN" = "true" ]; then
+      _plog "$LOG_FILE" "META" "plan-review" "info" "router"
+    else
+      _plog "$LOG_FILE" "META" "plan-review" "info" "inline — fleetd phase dispatch does not run STEP_2_2; the review stays in ticket-appraise-exec Step 3.6"
+    fi
+  fi
+
   # 0.55 — run identity. No --new by default: the manual router (NEW_RUN=true,
   # below) is what opens a new run once per process; this call site is the
   # fleetd re-entry path, invoked once per phase, so it must only rehydrate the open run

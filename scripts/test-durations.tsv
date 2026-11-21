@@ -117,6 +117,7 @@ bash fleet-controller/lib/tests/test-fleet-features.sh	3.6
 bash ticket-planner/lib/tests/test-planner-project-gate.sh	3.5
 bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh	3.4
 bash ticket-auto-pipeline/lib/tests/test-fast-path-threshold.sh	4.0
+bash ticket-auto-pipeline/lib/tests/test-plan-review.sh	3.9
 bash ticket-auto-pipeline/lib/tests/test-branch-resolve.sh	3.4
 bash ticket-planner/lib/tests/test-planner-state.sh	3.3
 bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh	3.2
@@ -242,6 +243,7 @@ bash ticket-planner/lib/tests/test-corpus-privacy.sh	0.4
 bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh	0.4
 bash ticket-planner/lib/tests/test-planner-crosscheck-bypass.sh	0.4
 python3 -m pytest fleet-controller/fleetd/tests/test_main.py -v	0.4
+python3 -m pytest fleet-controller/fleetd/tests/test_plan_review.py -v	0.4
 CLAUDE_SKILLS_LIB="{ROOT}/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/skills/ticket-flow/tests/phase2.sh	0.3
 bash fleet-controller/lib/tests/test-fleet-registry.sh	0.3
 bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh	0.3

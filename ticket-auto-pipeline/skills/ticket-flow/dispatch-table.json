@@ -97,6 +97,64 @@
       "description": "Exec: artifact creation. Gate-stops with EXEC_NO_ARTIFACT when no artifact is produced."
     },
     {
+      "step_id": "STEP_2_2",
+      "table_label": "`STEP_2_2`",
+      "table_action": "Independent plan review (`plan-review.sh`; see `references/plan-review.md`)",
+      "action": "agent",
+      "aliases": [],
+      "condition": "TICKET_ROUTER_PLAN_REVIEW=true (META|plan-review|info|router) and a complex ticket",
+      "phase_dispatch": "manual-pickup",
+      "revise_loop": {
+        "counter": "consecutive EXEC|adversarial-review|done|BLOCKED verdicts since the last pass or ADVERSARIAL_BLOCKED gate-stop",
+        "max_iterations": 2,
+        "gate_stop_code": "ADVERSARIAL_BLOCKED",
+        "checked": "post_dispatch",
+        "body": "plan review -> (on BLOCKED) STEP_2 with --from-step create-artifact and plan-review.md as input -> plan review",
+        "description": "Hard cap of 2 reviews (1 review + 1 revise + 1 re-review). Counted by lib/plan-review.sh from the pipeline log, not by fleetd's evaluate_loop: fleetd does not dispatch this step."
+      },
+      "spawn": {
+        "step": "plan-review",
+        "phase": "EXEC",
+        "skill": "/ticket-auto-pipeline:ticket-plan-review",
+        "from_step_var": null,
+        "extra_flags": null,
+        "next_phase": "GATE",
+        "description": "Independent read-only review of the plan artifact",
+        "instructions": "The contents of the file plan-review.sh prepare prints as PLAN_REVIEW_INSTRUCTIONS_FILE.",
+        "agent": "ticket-auto-pipeline:ticket-plan-review-agent",
+        "allowed_paths": [
+          "{TICKET_DIR}"
+        ]
+      },
+      "pre_dispatch": [
+        {
+          "kind": "bash",
+          "script": "plan-review.sh",
+          "args": [
+            "prepare",
+            "{TICKET_ID}",
+            "--log-file",
+            "{LOG_FILE}"
+          ],
+          "description": "PLAN_REVIEW_READY=skip (simple ticket, no plan, already reviewed) means no spawn: re-run state detection."
+        }
+      ],
+      "post_dispatch": [
+        {
+          "kind": "bash",
+          "script": "plan-review.sh",
+          "args": [
+            "done",
+            "{TICKET_ID}",
+            "--log-file",
+            "{LOG_FILE}"
+          ],
+          "description": "Reads plan-review.md, writes the verdict records Step 3.6 wrote inline (EXEC|adversarial-review|done, adversarial_review verifier-result), appends the findings to notes.md, closes the bracket and prints PLAN_REVIEW_DECISION=advance|retry|exhausted|invalid."
+        }
+      ],
+      "description": "Plan review: the independent adversarial review of the plan artifact, run by the router because a phase agent cannot spawn one (GitHub #667). Off unless the preamble recorded META|plan-review|info|router; then ticket-appraise-exec skips its inline Step 3.6. fleetd phase dispatch does not run it (phase_dispatch: manual-pickup): its preamble records inline instead, and a router-marked ticket it adopts is left at this step for the router."
+    },
+    {
       "step_id": "STEP_2_5",
       "table_label": "`STEP_2_5`",
       "table_action": "Run `bash gate-check.sh --mode entry`",
@@ -503,6 +561,13 @@
     }
   ],
   "prompt_manifests": {
+    "dor-semantic": {
+      "files": [
+        "plugin:agents/dor-semantic-agent.md",
+        "lib:dor-semantic.sh",
+        "plugin:docs/dor-semantic-schema.md"
+      ]
+    },
     "guidance-extractor": {
       "files": [
         "plugin:skills/guidance-extractor/SKILL.md",
@@ -559,6 +624,12 @@
         "home:pipeline-log-format.md",
         "plugin:docs/phase-result-schema.md",
         "plugin:skills/ticket-flow/SKILL.md"
+      ]
+    },
+    "ticket-plan-review": {
+      "files": [
+        "plugin:skills/ticket-plan-review/SKILL.md",
+        "plugin:agents/ticket-plan-review-agent.md"
       ]
     },
     "ticket-pr-iterate": {
@@ -618,13 +689,6 @@
         "plugin:skills/wiki-maintenance/references/adr-decisions.md",
         "plugin:agents/ticket-maintenance-agent.md",
         "home:pipeline-log-format.md"
-      ]
-    },
-    "dor-semantic": {
-      "files": [
-        "plugin:agents/dor-semantic-agent.md",
-        "lib:dor-semantic.sh",
-        "plugin:docs/dor-semantic-schema.md"
       ]
     }
   }
