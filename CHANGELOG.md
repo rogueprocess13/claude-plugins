@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.138.0 / ticket-planner 0.57.0 / fleet-controller 0.56.3 (2026-11-21) — all-`[unit]` tickets verify build-only; synthesised test-data specs declare a Verify Mode (#773)
+
+**An all-`[unit]` ticket no longer starts the stack.** With `VERIFY_AC_TAGS=true`, a local verify run of a ticket whose criteria are all `[unit]` proves every criterion with a test run verify starts itself, so the browser or live-backend setup was wasted.
+
+- `lib/verify-mode.sh` gains `--env local|uat` and `verify_mode_unit_override`. The CLI prints `VERIFY_MODE=build-only` and `VERIFY_MODE_OVERRIDE=all-unit` only when the flag is `true`, `--env` is exactly `local`, the mode is `browser` or `live-backend`, and `context.md` has at least one criterion, every one `[unit]`. Criteria are read by `verify-ac-tags.sh`'s `vat_list` (`_dor_v2_ac_items`), the reader Step 1i uses, so the `[unit]` proof is always loaded when the override fires.
+- One log line says why: `META|verify-mode-override|info|<declared|classified> shape=<shape> (mode=<mode>) overridden to mode=build-only: all <n> criteria are [unit], VERIFY_AC_TAGS=true, env=local`, then `load-context` with `mode=build-only`, so a `--from-step` resume keeps the mode.
+- Flag off, `--env uat`, no `--env`, a `[live]` or untagged criterion, or no criteria: output and log are unchanged. The library functions are unchanged, so gate-check's Check 2.6 profile is too.
+- `ticket-verify/SKILL.md` Step 1e passes `--env {env}` (the file shrinks by 14 bytes). `references/ac-tags.md` says an all-`[unit]` ticket runs in build-only mode, where Step 4c runs only the helper, and that `{branch}` comes from Step 1.6a3's rule in build-only mode too. The helper already created a missing verify worktree in build-only mode, so the proof needed no code change.
+- Test: `lib/tests/test-verify-mode.sh` (new section: the override, its log line, and every unchanged case).
+
+**ticket-planner 0.57.0: synthesised test-data specs declare `## Verify Mode`.** `planner_testdata_synth_render` writes `**Verify mode:** live-backend`: every criterion runs a `make` target against records held by the running services (the `files` channel imports through the app too), which is the path verify already took for these tickets through the heuristic (`api-only`, run as live-backend). Because the section makes the body carry `ticket-body-v2`, the spec also gets a non-empty `## Errors and Edge Cases` and every criterion is tagged `[live]` (repeated in its Verification Notes cell), so the readiness check reports no advisory code even with every `DOR_STRICT_*` switch on. Crosscheck still skips synth-marked specs. Tests: `test-planner-testdata-synth.sh`; fixture `crosscheck/testdata-synth-single`.
+
+fleet-controller 0.56.3: the `VERIFY_AC_TAGS` catalog entry mentions the build-only routing.
+
 ## 0.137.1 (2026-11-21) — the skill fingerprint covers the ADR gate text a phase follows (#667)
 
 Since 0.136.1 a phase agent follows the ADR gate inline from the shared preamble § 8. The gate's text lived in `skills/adr-gate/SKILL.md`, which no `prompt_manifests` entry listed, so a change to the gate never changed the fingerprint of the phases that run it.
