@@ -135,7 +135,7 @@ UAT_URL: https://staging.example.com
 
 `REPOS_ROOT` is where your source repos live. `UAT_URL` is the deployed environment the verify phase tests against.
 
-Also export `REPOS_ROOT` as an environment variable (for example in the `env` block of `~/.claude/settings.local.json`, next to `LINEAR_API_KEY`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its own phases, but the standalone `/ticket-approve` and `/ticket-reject` commands — and every other entry into the local manifest layer (`lib/manifest-read.sh`) — read only the environment. Without it they exit with "could not make … manifest-addressable", even though `/ticket-env-check` reports `REPOS_ROOT` as OK.
+Also export `REPOS_ROOT` as an environment variable (for example in the `env` block of `~/.claude/settings.local.json`, next to `LINEAR_API_KEY`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its own phases, but the standalone `approve.sh` and `reject.sh` scripts — and every other entry into the local manifest layer (`lib/manifest-read.sh`) — read only the environment. Without it they exit with "could not make … manifest-addressable", even though `/ticket-env-check` reports `REPOS_ROOT` as OK.
 
 ### 5. Validate before your first run
 
@@ -176,7 +176,7 @@ Optional — the pipeline works without it, just slower and less informed.
 /ticket-auto CRE-47
 ```
 
-**What happens:** the pipeline moves your ticket `Backlog → Todo`, investigates the codebase, scores complexity, and writes a plan artifact. It then **stops and waits for you** — by default nothing is implemented until you approve it. Answer any Open Questions in the Linear comment, then run `/ticket-approve CRE-47` and re-run `/ticket-auto CRE-47` to continue. Approval is a fact in the ticket's local manifest, not a Linear label: adding an `approved` label (or dragging the card) in Linear does nothing, because the Linear column and labels are display-only.
+**What happens:** the pipeline moves your ticket `Backlog → Todo`, investigates the codebase, scores complexity, and writes a plan artifact. It then **stops and waits for you** — by default nothing is implemented until you approve it. Answer any Open Questions in the Linear comment, then run `bash ~/.claude/skills/ticket-approve/approve.sh CRE-47` in your own terminal, from the tickets root, and re-run `/ticket-auto CRE-47` to continue. Approval is a fact in the ticket's local manifest, not a Linear label: adding an `approved` label (or dragging the card) in Linear does nothing, because the Linear column and labels are display-only.
 
 | Your decision | Command | Effect |
 |---|---|---|

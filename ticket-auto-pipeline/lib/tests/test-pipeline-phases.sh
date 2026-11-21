@@ -657,7 +657,7 @@ test_appraise_exec_comment_warns_on_needs_human_questions() {
     echo "Step 5 comment template does not mention [needs-human] gating"
     return 1
   }
-  grep -qi "before running \`/ticket-approve\`" <<<"$block" || {
+  grep -qi "before approving" <<<"$block" || {
     echo "Step 5 comment template does not warn to answer before approving"
     return 1
   }

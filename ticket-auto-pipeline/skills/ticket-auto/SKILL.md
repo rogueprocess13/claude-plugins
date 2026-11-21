@@ -227,7 +227,7 @@ Parse the `DETECT_RESUME_RESULT` block and set all routing variables:
 Report the schema mismatch with log vs expected version numbers. Stop here.
 
 **If `RESUME_STEP = GATE_STILL_HELD`:**
-Report that the ticket is still held and requires `/ticket-approve {TICKET_ID}`. Stop here.
+Report it is still held: a person runs `bash ~/.claude/skills/ticket-approve/approve.sh {TICKET_ID}` in a terminal. Stop.
 
 **If recovering (`RESUME_STEP ≠ STEP_1`):**
 ```bash
@@ -424,7 +424,7 @@ if [ $_gate_rc -eq 0 ]; then
   hb-wrap.sh gate "phase-transition" "ok" "GATE → IMPLEMENT"
 elif [ $_gate_rc -eq 1 ]; then
   # Held — fleet controller will detect, stop here
-  echo "Gate held for {TICKET_ID}. Check the appraisal comment in Linear for any Open Questions and answer them in a comment first — then run /ticket-approve {TICKET_ID}. Approving before answering will just trigger another gate-reconcile hold on next resume."
+  echo "Gate held for {TICKET_ID}. Answer the Open Questions in Linear first (approving first re-holds it), then run in your own terminal, from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh {TICKET_ID}"
   bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-held info "held"
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 0 "{LOG_FILE}" || true
   exit 0

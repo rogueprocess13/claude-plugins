@@ -47,7 +47,7 @@ LOCAL_URL: http://localhost:5173
 UAT_URL: https://staging.example.com
 ```
 
-`REPOS_ROOT` must **also** be set as an environment variable (e.g. in the `env` block of `~/.claude/settings.local.json`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its phases, but the standalone `/ticket-approve` / `/ticket-reject` commands and the local manifest layer (`lib/manifest-read.sh`) read only the environment and fail with "could not make … manifest-addressable" when it is missing — `/ticket-env-check` does not catch this.
+`REPOS_ROOT` must **also** be set as an environment variable (e.g. in the `env` block of `~/.claude/settings.local.json`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its phases, but the standalone `approve.sh` / `reject.sh` scripts and the local manifest layer (`lib/manifest-read.sh`) read only the environment and fail with "could not make … manifest-addressable" when it is missing — `/ticket-env-check` does not catch this.
 
 **4. Validate the full setup** from within Claude Code:
 
@@ -113,7 +113,7 @@ Optional:
 | `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` etc. | Model overrides |
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | Commit authorship |
 | `UAT_URL` | UAT environment URL for verification |
-| `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for `/ticket-approve`, `/ticket-reject` and anything else that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
+| `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for `approve.sh`, `reject.sh` and anything else that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
 | `TICKET_AUTONOMY` | Default autonomy mode — `manual` (default), `auto`, or `semi-auto` |
 | `TICKET_RECORD` | `true` records every ticket as if `--record` were passed (only warns when `RECORD_ALLOWED` is unset) |
 | `RECORD_DISABLE` | `true` turns recording off for a ticket whose log already has it on |
@@ -428,7 +428,7 @@ Skills plan, reason, and navigate code. `flow.sh` executes mutations with idempo
 | `fleet-detect.sh` | 6 detection engines (phase failures, stalls, zombies, loops, abandonment, flow failures). Aggregator `fleet_detect_all` outputs JSON. |
 | `fleet-intervene.sh` | Intervention executor: `fleet_kill_pipeline`, `fleet_restart_pipeline`, `fleet_can_restart`. flow.sh mutex-aware, `FLEET_DRY_RUN` guard. |
 | `fleet-dashboard.sh` | Dashboard renderer: `fleet_render_dashboard` (terminal) and `fleet_write_report` (markdown). |
-| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` checks live Linear state. `--mode planned` runs the planned-ticket body/readiness checks before APPRAISE (fail fast). Replaces inline LLM reasoning. |
+| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` checks live Linear state. `--mode implement` is ticket-implement Step 1's read-only approval guard: the entry gate's provenance rule, so a `policy` approval never starts a complex or manual-mode ticket. `--mode planned` runs the planned-ticket body/readiness checks before APPRAISE (fail fast). Replaces inline LLM reasoning. |
 | `outcome-label-check.sh` | Bash-only post-implement guard for Smooth/Rough/Hard outcome label. |
 | `detect-resume.sh` | Pipeline log state parser. Called directly as bash by the thin router — outputs 21 routing variables including counters (VERIFY_ATTEMPTS, VERIFY_LAST, ITERATION, RECONCILE_CYCLE, PR_FEEDBACK_CYCLE). |
 
@@ -555,7 +555,7 @@ When the pipeline halts with a gate-stop, check the pipeline log for the specifi
 | `EXEC_NO_ARTIFACT` | Appraise-exec produced no artifact file | Re-run `/ticket-appraise-exec <id>`. Check `notes.md` has a `## Complexity` section. |
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Artifact type doesn't match complexity score | Re-run `/ticket-appraise <id>` to re-evaluate complexity. |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the plan | Review `## Adversarial Review` in notes.md, fix the plan, re-run `/ticket-appraise-exec <id> --from-step create-artifact`. The detail names the round; from round 3 on, read the `### Approach review` section first — a `RECONSIDER` there means change the approach, not add detail. To accept the plan as is, run `adversarial-override.sh` (see [Human Decisions](#human-decisions)). |
-| `APPROVAL_REVOKED` | The manifest records no approval at re-approve time (approval was never granted, or was cleared by `re-claim`/`/ticket-reject`) | Run `/ticket-approve <id>` and then the command it prints, in your own terminal. |
+| `APPROVAL_REVOKED` | The manifest records no approval at re-approve time (approval was never granted, or was cleared by `re-claim`/`/ticket-reject`) | Run `bash ~/.claude/skills/ticket-approve/approve.sh <id>` in your own terminal, from the tickets root. |
 | `REGRESSION_RISK_UNACKNOWLEDGED` | ticket-implement found a regression risk that no person has acknowledged (`reason=unacknowledged`), whose content changed since it was acknowledged (`risk-changed`), an earlier recorded version that was never acknowledged while notes.md shows an acknowledged one (`earlier-risk`), a section removed from notes.md after it was recorded (`section-removed`), a section that could not be written to the manifest (`record-failed`), or one only hand-edited to `ACKNOWLEDGED` (`hand-edit`) | Review the section, then in a terminal in the tickets root: `bash ~/.claude/skills/lib/regression-ack.sh <id>` and type the risk id it asks for. For `record-failed`, fix the manifest file first (permissions, disk). Re-run `/ticket-auto <id>`. |
 | `REMEDIATION_BRIEF_TRUNCATED` | Remediation brief is incomplete or empty | Re-run `/ticket-appraise-exec <id>` with full remediation notes. |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review comment format couldn't be parsed | Check the PR review comment follows the expected verdict format. Re-run `/ticket-pr-review <id>`. |

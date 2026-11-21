@@ -566,7 +566,7 @@ fleet_notify_gate_held() {
   fi
 
   local text
-  text=$(printf ':raised_hand: *%s* needs your approval\nComplex ticket held at the Approve gate — appraise/exec are done, waiting on approval.\n\nApprove with `/ticket-approve %s`, then re-dispatch the epic.' \
+  text=$(printf ':raised_hand: *%s* needs your approval\nComplex ticket held at the Approve gate — appraise/exec are done, waiting on approval.\n\nApprove in your own terminal, from the tickets root:\n`bash ~/.claude/skills/ticket-approve/approve.sh %s`\nThen re-dispatch the epic.' \
     "$tid" "$tid")
 
   local out

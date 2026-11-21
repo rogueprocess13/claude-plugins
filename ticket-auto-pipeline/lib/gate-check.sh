@@ -153,6 +153,24 @@ _gate_manifest_approved() {
   fi
 }
 
+# _gate_approval_need <complexity> <autonomy> [open-needs-human-count]
+# The one statement of whose approval a ticket needs. Echoes `policy` when
+# the pipeline's own approval is enough: a simple ticket, in auto or
+# semi-auto mode, with no open [needs-human] question. Echoes `human` for
+# everything else, an unreadable complexity, autonomy or count included.
+# The entry gate (Checks 2.8b/2.8c/4/5a) and `--mode implement` both pass
+# the answer to _gate_manifest_approved, so the two cannot disagree.
+_gate_approval_need() {
+  local complexity="$1" autonomy="$2" open_human="${3:-0}"
+  [[ "$open_human" =~ ^[0-9]+$ ]] || open_human=1
+  if [ "$complexity" = "simple" ] && [ "$open_human" -eq 0 ] &&
+    { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
+    echo "policy"
+  else
+    echo "human"
+  fi
+}
+
 source "$SCRIPT_DIR/planned-ticket-check.sh"
 source "$SCRIPT_DIR/template-select.sh"
 source "$SCRIPT_DIR/planned-ticket-body-check.sh"
@@ -178,7 +196,7 @@ elif [ -f "$SCRIPT_DIR/dor-check.sh" ]; then
 fi
 
 usage() {
-  echo "Usage: $0 <TICKET-ID> <LOG-FILE> <HB-LOG-FILE> --mode <entry|reapprove|planned>" >&2
+  echo "Usage: $0 <TICKET-ID> <LOG-FILE> <HB-LOG-FILE> --mode <entry|reapprove|planned|implement>" >&2
   exit 1
 }
 
@@ -466,7 +484,7 @@ _gate_planned_checks() {
     # Decision 3) — and independently checks ticket_dispatch_blocked_by_flags.
     # The two conditions are evaluated separately, never folded into one
     # cached object: the flags half must stay live even when the cached
-    # `ready` object is stale, which is what lets /ticket-approve's
+    # `ready` object is stale, which is what lets approve.sh's
     # needs-info clear un-gate a ticket immediately (design.md Decision 3/8).
     local readiness_rc=0
     DOR_MISSING="[]"
@@ -955,11 +973,11 @@ _gate_entry() {
   # tracker-approval-by-script: manifest is the sole approval decision read
   # — no tracker fetch, no fallback. In auto and semi-auto modes, a local
   # approval fact means the human has explicitly signaled approval via
-  # /ticket-approve — don't hold complex tickets that have it. Only applies
+  # approve.sh — don't hold complex tickets that have it. Only applies
   # to non-manual modes (manual has its own check at Check 4).
   if [ "$complexity" = "complex" ] && { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
     local _c28b_verdict
-    _c28b_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
+    _c28b_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$(_gate_approval_need "$complexity" "$autonomy")")
     if [ "$_c28b_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8b"
     fi
@@ -980,7 +998,7 @@ _gate_entry() {
   # contradicting 2.8b's own comment ("manual has its own check at Check 4").
   if [ "$complexity" = "complex" ] && [ "$autonomy" = "manual" ]; then
     local _c28c_verdict
-    _c28c_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
+    _c28c_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$(_gate_approval_need "$complexity" "$autonomy")")
     if [ "$_c28c_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 2.8c"
     fi
@@ -1003,11 +1021,11 @@ _gate_entry() {
 
   # Check 4: Manual mode tickets are held UNLESS already approved locally.
   # If the manifest records approved=true and stage=Ready, the human has
-  # already approved via /ticket-approve — override the local autonomy
+  # already approved via approve.sh — override the local autonomy
   # setting and pass.
   if [ "$autonomy" = "manual" ]; then
     local _c4_verdict
-    _c4_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
+    _c4_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$(_gate_approval_need "$complexity" "$autonomy")")
     if [ "$_c4_verdict" = "hold-missing-manifest" ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at approval check 4"
     fi
@@ -1028,21 +1046,23 @@ _gate_entry() {
   if [ "$complexity" = "simple" ] && { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
     # Check 5a (seam audit Track 0.3): a policy approval never goes over an
     # open [needs-human] question in notes.md ## Open Questions. A human's
-    # /ticket-approve (manifest approval) is not held here — gate-reconcile
+    # approve.sh (manifest approval) is not held here — gate-reconcile
     # (STEP_3_5) decides on the questions after a human approval.
     local open_human=0
     if declare -f get_open_needs_human_count >/dev/null 2>&1; then
       open_human=$(get_open_needs_human_count "$gate_td" 2>/dev/null) || open_human=0
       [[ "$open_human" =~ ^[0-9]+$ ]] || open_human=0
     fi
-    if [ "$open_human" -gt 0 ] && [ "$(_gate_manifest_approved "$TICKET_ID" "Ready" human)" != "pass" ]; then
-      _plog "$LOG_FILE" "GATE" "gate" "fail" "held: open [needs-human] question(s) ($open_human) in notes.md ## Open Questions — answer them, then /ticket-approve"
+    local _c5a_need
+    _c5a_need=$(_gate_approval_need "$complexity" "$autonomy" "$open_human")
+    if [ "$_c5a_need" = "human" ] && [ "$(_gate_manifest_approved "$TICKET_ID" "Ready" "$_c5a_need")" != "pass" ]; then
+      _plog "$LOG_FILE" "GATE" "gate" "fail" "held: open [needs-human] question(s) ($open_human) in notes.md ## Open Questions — answer them, then run in your own terminal, from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
       hb_gate "entry-gate" "fail" "held: open needs-human questions" "{\"open\":\"$open_human\"}"
       _gate_emit_held "open-human-questions"
       return 1
     fi
     # One approval is one fact (GitHub #767): a ticket the manifest already
-    # records as approved at Ready (a human's /ticket-approve after an
+    # records as approved at Ready (a human's approve.sh after an
     # earlier hold, or this check on a run that died before IMPLEMENT) is
     # not approved again — that wrote a second `human-approved` record and
     # replaced a human provenance with `policy`.
@@ -1072,7 +1092,7 @@ _gate_reapprove() {
   # this comment used to describe (issue #362) no longer applies: there is
   # no fetch left to fail. APPROVAL_REVOKED (D6) keeps its name and
   # gate-stop semantics, now meaning "the manifest records no approval at
-  # reapprove time" — reachable only via re-claim or /ticket-reject.
+  # reapprove time" — reachable only via re-claim or reject.sh.
   local _reapprove_verdict
   _reapprove_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
   if [ "$_reapprove_verdict" = "hold-missing-manifest" ]; then
@@ -1094,7 +1114,7 @@ _gate_reapprove() {
     _plog "$LOG_FILE" "GATE" "reapprove" "done" ""
     hb_gate "reapprove-gate" "ok" "re-approval confirmed" "{\"prior_failures\":\"${verify_count:-0}\"}" || true
     # reapprove-mode is only ever entered because a human approved via
-    # /ticket-approve on a previously-held ticket — no automatic
+    # approve.sh on a previously-held ticket — no automatic
     # re-evaluation path exists in the current pipeline, so provenance is
     # always "human" here.
     _gate_emit_released "human"
@@ -1109,6 +1129,55 @@ _gate_reapprove() {
   hb_gate "reapprove-gate" "fail" "APPROVAL_REVOKED" "{\"reason\":\"$reason\"}"
   _write_gate_verdict BLOCK
   return 2
+}
+
+# ── Mode: implement ────────────────────────────────────────────────────────────
+# ticket-implement Step 1's approval guard. The entry gate's own rule
+# (_gate_approval_need + _gate_manifest_approved), read again where the
+# work starts, so an approval the entry gate would hold is refused here
+# too when /ticket-implement is invoked without the router. Read-only: no
+# log line, no heartbeat, no event, no flow.sh call.
+#
+# One addition: a ticket that needs a person's approval is also let
+# through on a `policy` approval when the log already carries a completed
+# implementation (IMPLEMENT|implement|done|). That is ticket-pr-iterate's
+# re-approval of a ticket whose first implementation needed, and had, its
+# own approval; implement-complete cleared that one, so the manifest can no
+# longer show it. It is the reapprove gate's case.
+#
+# Prints IMPLEMENT_AUTH=approved (exit 0) or IMPLEMENT_AUTH=none with a
+# REASON= line (exit 1). LOG-FILE `-`: TAP_LOG from the
+# environment, else the ticket's env file; no log reads as manual mode.
+_gate_implement() {
+  local complexity autonomy open_human=0 td="" need verdict
+  complexity=$(_get_complexity)
+  autonomy=$(_get_autonomy)
+  if command -v resolve_ticket_dir &>/dev/null; then
+    td=$(resolve_ticket_dir "$TICKET_ID" "." 2>/dev/null || true)
+  fi
+  if declare -f get_open_needs_human_count >/dev/null 2>&1; then
+    open_human=$(get_open_needs_human_count "${td:-.}" 2>/dev/null) || open_human=0
+    [[ "$open_human" =~ ^[0-9]+$ ]] || open_human=0
+  fi
+  need=$(_gate_approval_need "$complexity" "$autonomy" "$open_human")
+  verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$need")
+  if [ "$verdict" != "pass" ] && [ "$need" = "human" ] &&
+    grep -q '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null; then
+    verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
+  fi
+  if [ "$verdict" = "pass" ]; then
+    echo "IMPLEMENT_AUTH=approved"
+    return 0
+  fi
+  echo "IMPLEMENT_AUTH=none"
+  if [ "$verdict" = "hold-missing-manifest" ]; then
+    echo "REASON=no local manifest for $TICKET_ID"
+  elif [ "$need" = "human" ]; then
+    echo "REASON=needs a person's approval at stage Ready (complexity=${complexity:-unreadable}, autonomy=$autonomy, open needs-human questions=$open_human); a policy approval does not count. A person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
+  else
+    echo "REASON=the manifest records no approval at stage Ready"
+  fi
+  return 1
 }
 
 # ── Dispatch (only when executed directly, not when sourced for testing) ──────
@@ -1133,10 +1202,23 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   [ -z "$TICKET_ID" ] && usage
   [ -z "$LOG_FILE" ] && usage
   [ -z "$MODE" ] && usage
-  [[ "$MODE" =~ ^(entry|reapprove|planned)$ ]] || {
-    echo "Invalid mode: $MODE (expected entry, reapprove or planned)" >&2
+  [[ "$MODE" =~ ^(entry|reapprove|planned|implement)$ ]] || {
+    echo "Invalid mode: $MODE (expected entry, reapprove, planned or implement)" >&2
     exit 1
   }
+
+  if [ "$MODE" = "implement" ]; then
+    case "$LOG_FILE" in - | "{"*"}") LOG_FILE="${TAP_LOG:-}" ;; esac
+    if [ -z "$LOG_FILE" ] && [ -f "$SCRIPT_DIR/ticket-env.sh" ]; then
+      LOG_FILE=$(
+        unset LOG_FILE TAP_LOG
+        source "$SCRIPT_DIR/ticket-env.sh" "$TICKET_ID" >/dev/null 2>&1 || true
+        printf '%s' "${TAP_LOG:-${LOG_FILE:-}}"
+      ) || LOG_FILE=""
+    fi
+    _gate_implement
+    exit $?
+  fi
 
   hb_init
 

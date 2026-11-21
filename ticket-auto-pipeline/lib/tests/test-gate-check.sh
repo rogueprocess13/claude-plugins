@@ -2578,6 +2578,188 @@ test_check4_policy_approval_does_not_pass_manual() {
   _policy_approved_entry simple manual simple-fix simple-fix.md
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# --mode implement: ticket-implement Step 1's guard is the entry gate's rule
+# ═══════════════════════════════════════════════════════════════════════════════
+# A bare `approved` is not enough where the work starts: an agent could
+# policy-approve a complex ticket and invoke /ticket-implement directly,
+# skipping the router's entry gate.
+
+# _implement_auth <complexity> <autonomy> <provenance|none> <stage> [prior-implement]
+# Prints the mode's output; returns its exit code.
+_implement_auth() {
+  _setup
+  _scaffold_exec_done "$1" "$2" "simple-fix" "${_ws}/simple-fix.md"
+  [ "${5:-}" != "prior-implement" ] || _plog_raw "IMPLEMENT" "implement" "done" "Smooth"
+  local repos_root rc=0 out
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  [ "$3" = "none" ] || REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "$3" >/dev/null
+  [ -z "$4" ] || REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "$4" >/dev/null
+  local log_before
+  log_before=$(cat "$LOG_FILE")
+  out=$(REPOS_ROOT="$repos_root" _gate_implement) || rc=$?
+  # Read-only: no log line, no flow.sh call, no event.
+  [ "$log_before" = "$(cat "$LOG_FILE")" ] && [ ! -s "$_flow_log" ] && [ ! -s "${_ws}/emit-calls.log" ] || rc=99
+  rm -rf "$repos_root"
+  _teardown
+  echo "$out"
+  return "$rc"
+}
+_implement_refused() {
+  local out rc=0
+  out=$(_implement_auth "$@") || rc=$?
+  [ "$rc" -eq 1 ] && grep -qx 'IMPLEMENT_AUTH=none' <<<"$out" && grep -q '^REASON=' <<<"$out" || {
+    echo "implement $*: expected a refusal (exit 1, IMPLEMENT_AUTH=none), got rc=$rc out=$out"
+    return 1
+  }
+}
+_implement_allowed() {
+  local out rc=0
+  out=$(_implement_auth "$@") || rc=$?
+  [ "$rc" -eq 0 ] && [ "$out" = "IMPLEMENT_AUTH=approved" ] || {
+    echo "implement $*: expected IMPLEMENT_AUTH=approved (exit 0), got rc=$rc out=$out"
+    return 1
+  }
+}
+
+# The gap: complex + policy approval + Ready, no router.
+test_implement_policy_approval_refused_for_complex() {
+  _implement_refused complex auto policy Ready &&
+    _implement_refused complex semi-auto policy Ready &&
+    _implement_refused complex manual policy Ready
+}
+test_implement_policy_approval_refused_in_manual_mode() {
+  _implement_refused simple manual policy Ready
+}
+test_implement_refusal_names_the_terminal_command() {
+  local out
+  out=$(_implement_auth complex auto policy Ready) || true
+  grep -q "bash ~/.claude/skills/ticket-approve/approve.sh ${_tid:-CRE-47}" <<<"$out" &&
+    ! grep -qE '(^|[^s])/ticket-approve' <<<"$out"
+}
+test_implement_human_approval_passes_everywhere() {
+  _implement_allowed complex auto human Ready &&
+    _implement_allowed complex manual human Ready &&
+    _implement_allowed simple manual human Ready &&
+    _implement_allowed simple auto human Ready
+}
+# Simple auto-approved tickets are not stranded.
+test_implement_policy_approval_passes_simple_auto() {
+  _implement_allowed simple auto policy Ready &&
+    _implement_allowed simple semi-auto policy Ready
+}
+test_implement_unapproved_or_unstaged_refused() {
+  _implement_refused simple auto none Ready &&
+    _implement_refused complex auto none Ready &&
+    _implement_refused complex auto human Approve &&
+    _implement_refused simple auto policy ""
+}
+# ticket-pr-iterate re-approves with policy after a first implementation
+# that had its own approval (implement-complete cleared it): the router's
+# rework loop must still get through, as it does at the reapprove gate.
+test_implement_policy_rework_after_prior_implementation_passes() {
+  _implement_allowed complex auto policy Ready prior-implement &&
+    _implement_allowed simple manual policy Ready prior-implement &&
+    _implement_refused complex auto none Ready prior-implement
+}
+# An open [needs-human] question makes a simple auto ticket a person's too
+# (Check 5a), and an unreadable complexity is never read as simple.
+test_implement_open_question_and_unreadable_complexity_need_a_person() {
+  local out rc=0
+  out=$(
+    get_open_needs_human_count() { echo 1; }
+    _implement_auth simple auto policy Ready
+  ) || rc=$?
+  [ "$rc" -eq 1 ] || {
+    echo "open needs-human question + policy: expected refusal, got rc=$rc out=$out"
+    return 1
+  }
+  # _scaffold_exec_done defaults an empty complexity to simple, so the
+  # empty case itself is pinned by test_approval_need_rule.
+  _implement_refused unreadable auto policy Ready
+}
+# One rule: for every complexity/autonomy pair the entry gate and the
+# implement guard agree on a policy approval — where the entry gate does not
+# pass it, the implement guard refuses it, and the other way round.
+test_implement_agrees_with_entry_gate_on_policy_approvals() {
+  local _cx _au entry_rc impl_rc artifact type
+  for _cx in simple complex; do
+    for _au in auto semi-auto manual; do
+      type="simple-fix" artifact="simple-fix.md"
+      [ "$_cx" = "simple" ] || { type="openspec" artifact="openspec-change.md"; }
+      entry_rc=0
+      _policy_approved_entry "$_cx" "$_au" "$type" "$artifact" >/dev/null 2>&1 || entry_rc=$?
+      impl_rc=0
+      _implement_auth "$_cx" "$_au" policy Ready >/dev/null 2>&1 || impl_rc=$?
+      # _policy_approved_entry returns 0 when the entry gate HELD.
+      if [ "$entry_rc" -eq 0 ] && [ "$impl_rc" -ne 1 ]; then
+        echo "$_cx/$_au: entry gate holds a policy approval but implement returned $impl_rc"
+        return 1
+      fi
+      if [ "$entry_rc" -ne 0 ] && [ "$impl_rc" -ne 0 ]; then
+        echo "$_cx/$_au: entry gate passes a policy approval but implement returned $impl_rc"
+        return 1
+      fi
+    done
+  done
+}
+test_approval_need_rule() {
+  [ "$(_gate_approval_need simple auto 0)" = "policy" ] &&
+    [ "$(_gate_approval_need simple semi-auto)" = "policy" ] &&
+    [ "$(_gate_approval_need simple auto 2)" = "human" ] &&
+    [ "$(_gate_approval_need simple auto x)" = "human" ] &&
+    [ "$(_gate_approval_need simple manual 0)" = "human" ] &&
+    [ "$(_gate_approval_need complex auto 0)" = "human" ] &&
+    [ "$(_gate_approval_need "" auto 0)" = "human" ] &&
+    [ "$(_gate_approval_need simple "" 0)" = "human" ]
+}
+# The CLI ticket-implement Step 1 runs: `gate-check.sh <ID> - - --mode
+# implement`, as its own process, log found through TAP_LOG, no heartbeat.
+test_implement_mode_cli() {
+  _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  local repos_root rc=0 out td
+  repos_root=$(mktemp -d)
+  td="${_ws}/${_tid}--test"
+  printf '## Complexity\n**Score:** complex\n' >"$td/notes.md"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "policy" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+  out=$(cd "$_ws" && REPOS_ROOT="$repos_root" CLAUDE_SKILLS_LIB="$LIB_DIR" TAP_LOG="$LOG_FILE" \
+    bash "$LIB_DIR/gate-check.sh" "$_tid" - - --mode implement 2>&1) || rc=$?
+  local ok=0
+  [ "$rc" -eq 1 ] && grep -qx 'IMPLEMENT_AUTH=none' <<<"$out" || {
+    echo "cli, complex + policy: expected exit 1 IMPLEMENT_AUTH=none, got rc=$rc out=$out"
+    ok=1
+  }
+  [ ! -e "$HB_LOG_FILE" ] || {
+    echo "cli wrote a heartbeat log"
+    ok=1
+  }
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  rc=0
+  out=$(cd "$_ws" && REPOS_ROOT="$repos_root" CLAUDE_SKILLS_LIB="$LIB_DIR" TAP_LOG="$LOG_FILE" \
+    bash "$LIB_DIR/gate-check.sh" "$_tid" - - --mode implement 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] && [ "$out" = "IMPLEMENT_AUTH=approved" ] || {
+    echo "cli, complex + human: expected exit 0 IMPLEMENT_AUTH=approved, got rc=$rc out=$out"
+    ok=1
+  }
+  rm -rf "$repos_root"
+  _teardown
+  return $ok
+}
+# ticket-implement Step 1 calls the script and no longer reads `approved`
+# itself.
+test_implement_skill_step1_calls_gate_check() {
+  local skill="$LIB_DIR/../skills/ticket-implement/SKILL.md" block
+  block=$(sed -n '/^## Step 1 /,/^## Step 2/p' "$skill")
+  grep -qF 'bash ~/.claude/skills/lib/gate-check.sh "{TICKET-ID}" - - --mode implement' <<<"$block" &&
+    grep -q 'IMPLEMENT_AUTH=approved' <<<"$block" &&
+    ! grep -q 'get_ticket_manifest_field' <<<"$block" &&
+    ! grep -q '/ticket-approve' <<<"$block"
+}
+
 # 46. Check 2.8b: approved=true but no stage → two-factor check holds (D1)
 test_check28b_approved_without_stage_holds() {
   _setup
@@ -3549,6 +3731,18 @@ for fn in \
   test_check28b_policy_approval_does_not_pass_complex \
   test_check28c_policy_approval_does_not_pass_complex_manual \
   test_check4_policy_approval_does_not_pass_manual \
+  test_implement_policy_approval_refused_for_complex \
+  test_implement_policy_approval_refused_in_manual_mode \
+  test_implement_refusal_names_the_terminal_command \
+  test_implement_human_approval_passes_everywhere \
+  test_implement_policy_approval_passes_simple_auto \
+  test_implement_unapproved_or_unstaged_refused \
+  test_implement_policy_rework_after_prior_implementation_passes \
+  test_implement_open_question_and_unreadable_complexity_need_a_person \
+  test_implement_agrees_with_entry_gate_on_policy_approvals \
+  test_approval_need_rule \
+  test_implement_mode_cli \
+  test_implement_skill_step1_calls_gate_check \
   test_check28b_approved_without_stage_holds \
   test_check28c_approved_without_stage_holds \
   test_check4_approved_without_stage_holds \

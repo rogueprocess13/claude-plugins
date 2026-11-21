@@ -881,7 +881,7 @@
         "kind": "reject",
         "phase": "GATE",
         "loopY": 330,
-        "note": "/ticket-reject clears the manifest approval fact and sends the ticket back to Todo for re-appraisal."
+        "note": "reject.sh, run by a person in their own terminal, clears the manifest approval fact and sends the ticket back to Todo for re-appraisal."
       }
     },
     "implement-outcome": {
@@ -1017,7 +1017,7 @@
       "removes": ["needs-info"],
       "event": "needs-info-resolved",
       "diagram": {
-        "side": "clarification received (also cleared by /ticket-approve); resumes from the current state"
+        "side": "clarification received (also cleared by approve.sh); resumes from the current state"
       }
     },
     "needs-adr": {
@@ -1282,11 +1282,11 @@ const DATA = {
       steps: [
         { name: "gate-check",         desc: "Bash-only gate (gate-check.sh --mode entry). Five layered checks: (2.5) content quality score from critique — BLOCKED status or score <40 holds; (2.5a) ZERO_AC gate-stop if ticket has no ACs; (2.5b) BUG_NO_REPRO gate-stop if bug ticket lacks repro steps; (2.6) verification readiness — holds if 2+ of 4 prerequisites missing in plan artifact. No LLM involved." },
         { name: "complexity-routing", desc: "Tickets that clear all content checks: simple + auto|semi-auto → auto-approve immediately. complex OR manual mode → hold in Approve until a person runs approve.sh (or reject.sh) in their own terminal; /ticket-approve and /ticket-reject print the command. Autonomy resolved once at startup." },
-        { name: "gate-reconcile",     desc: "When a held ticket is approved with /ticket-approve, a gate-reconcile agent (STEP_3_5) fetches Linear comments, evaluates open questions, and either passes clean or re-holds with an amendment cycle." },
+        { name: "gate-reconcile",     desc: "When a person approves a held ticket (approve.sh in their own terminal), a gate-reconcile agent (STEP_3_5) fetches Linear comments, evaluates open questions, and either passes clean or re-holds with an amendment cycle." },
       ],
       gateText: {
         title: "Multi-layer content gate",
-        body: "Checks run in order before complexity routing: <code>CRITIQUE_BLOCKED</code> or score &lt;40 holds the ticket; <code>ZERO_AC</code> and <code>BUG_NO_REPRO</code> are hard stops; verification readiness (2+ prerequisites missing) holds. Only tickets that clear all structural checks proceed to complexity routing — <code>simple</code> auto-approves in auto mode, <code>complex</code> waits for a person to run <code>/ticket-approve</code>. Approval is a local manifest fact: an <code>approved</code> label added in Linear does nothing."
+        body: "Checks run in order before complexity routing: <code>CRITIQUE_BLOCKED</code> or score &lt;40 holds the ticket; <code>ZERO_AC</code> and <code>BUG_NO_REPRO</code> are hard stops; verification readiness (2+ prerequisites missing) holds. Only tickets that clear all structural checks proceed to complexity routing — <code>simple</code> auto-approves in auto mode, <code>complex</code> waits for a person to run <code>bash ~/.claude/skills/ticket-approve/approve.sh &lt;ID&gt;</code> in their own terminal, from the tickets root. Approval is a local manifest fact: an <code>approved</code> label added in Linear does nothing."
       },
       outcomes: [
         { verdict: "auto",  label: "simple",        desc: "Cleared all content gates + auto/semi-auto mode. gate-check.sh fires human-approve with provenance policy: manifest approved, Approve → Ready." },
@@ -1300,7 +1300,7 @@ const DATA = {
         { code: "CRITIQUE_SCORE_IMPLAUSIBLE", desc: "Score is inconsistent with BLOCKER count (e.g., score 80 with 2 BLOCKERs, max plausible 50) — indicates LLM scoring error." },
         { code: "ZERO_AC",                   desc: "Ticket has zero acceptance criteria — nothing verifiable exists, implementation has no success condition." },
         { code: "BUG_NO_REPRO",              desc: "Bug ticket has no reproduction steps — verifier cannot confirm the defect exists before implementation." },
-        { code: "APPROVAL_REVOKED",          desc: "The manifest records no approval at re-approve time (never granted, or cleared by re-claim or /ticket-reject). Fix: run /ticket-approve." },
+        { code: "APPROVAL_REVOKED",          desc: "The manifest records no approval at re-approve time (never granted, or cleared by re-claim or reject.sh). Fix: a person runs bash ~/.claude/skills/ticket-approve/approve.sh &lt;ID&gt; in their own terminal, from the tickets root." },
       ],
     },
 
