@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.133.0 (2026-11-21) — the approval actuator requires an interactive terminal
+## 0.134.0 (2026-11-21) — the approval actuator requires an interactive terminal
 
 A human approval is the fact the entry gate reads before a complex ticket is implemented. It is now recorded only by a person at a terminal, the same way the Regression Risk acknowledgement is (0.132.0).
 
@@ -30,6 +30,15 @@ A human approval is the fact the entry gate reads before a complex ticket is imp
 - **On upgrade.** Approvals already recorded with provenance `human` stay valid. A ticket held at the gate is approved with the command above instead of from inside a session. A complex or manual-mode ticket whose manifest carries a `policy` approval now holds at the entry gate until a person approves it. Scripts that called `flow.sh <ID> human-approve` without `--provenance policy` from an agent or a fleetd worker now get exit 15. The board projection runs from the shell the script runs in: without `LINEAR_API_KEY` there, the approval is recorded and the Linear card moves on the next outbox drain.
 - `fleet-controller` 0.55.2: test only. `test-fleet-detect.sh` drops the agent variables before it records a person's approval in its fixtures. fleetd has no approval endpoint and fires no `human-approve`; its gate-hold reconciliation re-runs the entry gate, so it follows the rule above with no code change.
 - Tests: `lib/tests/test-ticket-approve.sh` (approve and reject refused in an agent or worker session, with no terminal and on a wrong typed id; approval under a pseudo-terminal; `flow.sh` called directly; policy approval unaffected; the manifest writer), `test-gate-check.sh` and `test-detect-resume.sh` (a policy approval does not release a complex, manual-mode or held ticket). Existing tests that approve as a person run under a pseudo-terminal through `lib/tests/human-pty.sh`.
+## 0.133.0 (2026-11-21) — a project can set its own appraise fast-path confidence threshold (#774)
+
+The planner's confidence is a fixed formula that pays for evidence a new one-repo project does not have (several services, existing symbols, prior art). Its tickets top out near 0.85, so the appraise fast path, which needs 0.85, almost never fired there. The formula and the default are unchanged; a project can now lower the bar for itself on purpose.
+
+- **One field: `FAST_PATH_CONFIDENCE_THRESHOLD`.** Read from the environment first, then from the tickets root `CLAUDE.md` (`FAST_PATH_CONFIDENCE_THRESHOLD = 0.75`). The environment variable already existed; it was read with no validation and the `CLAUDE.md` field did not exist. Unset behaves exactly as before (0.85).
+- **Allowed: 0.60 to 1.00.** The formula gives 0.50 to a ticket with no evidence, and 0.60 is the lowest score that shows some. 0 is refused, because it would turn the check off. A value that is not a plain decimal in the range is ignored with a warning and 0.85 applies; an invalid environment value does not fall through to a lower `CLAUDE.md` value. **Behaviour change:** an environment value outside the range, which the old code used as given, is now ignored.
+- **One resolver, one comparison site.** `lib/fast-path-threshold.sh` (new) resolves and validates; `check_fast_path_eligible` (`lib/appraise-fast-path.sh`) is the only place the threshold is compared, and now resolves it at call time. Pre-approved tickets, the validator floor (`PLANNED_TICKET_MIN_CONFIDENCE`) and the planner's `PLANNER_CONFIDENCE_THRESHOLD` are untouched.
+- **A lowered bar is never silent.** Each comparison writes `META|fast-path-threshold` to the pipeline log (threshold, source, default, confidence, result; `warn` when lowered or when a value was ignored). `notes.md` names the threshold when it let a ticket through. `/ticket-env-check` prints a `FAST_PATH_CONFIDENCE_THRESHOLD` row in both modes: `warn` below the default or invalid, `info` above, nothing when unset; never a failure.
+- Tests: `lib/tests/test-fast-path-threshold.sh` (new).
 
 ## 0.132.2 (2026-11-21) — a ticket that adds new authentication always stops at the approve gate (#762)
 

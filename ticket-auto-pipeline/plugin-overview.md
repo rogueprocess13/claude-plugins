@@ -28,7 +28,7 @@ The orchestrator (`ticket-auto`) is a **thin stateless dispatch router** — it 
 | Step | Phase | Dispatches | Type |
 |------|-------|------------|------|
 | 0 | Prescan | `ticket-prescan-agent` | Named agent — auto-invoke before Step 1. Runs `prescan-check.sh` per repo; if stale/missing, spawns prescan to refresh `.ticket-auto/` docs. Non-blocking — failure/skip falls through to appraise Path B. |
-| 1 | Appraise | `ticket-appraise-agent` | Named agent — investigates ticket, scores complexity. Step 3a loads prescan docs (Tier 1: INDEX.md routing via `prescan-route.sh`, Tier 2: claude-mem corpus, Tier 3: wiki fallback). |
+| 1 | Appraise | `ticket-appraise-agent` | Named agent — investigates ticket, scores complexity. A planned ticket that is pre-approved, or whose confidence meets the fast-path threshold (`lib/fast-path-threshold.sh`: `FAST_PATH_CONFIDENCE_THRESHOLD` from the environment, else the tickets root `CLAUDE.md`, default `0.85`, allowed `0.60`–`1.00`), skips the sweep, prior-art search and investigation. Step 3a loads prescan docs (Tier 1: INDEX.md routing via `prescan-route.sh`, Tier 2: claude-mem corpus, Tier 3: wiki fallback). |
 | 1.5 | Reproduce | `ticket-appraise-agent` | Named agent — bug reproduction (bug tickets only) |
 | 2 | Exec | `ticket-appraise-agent` | Named agent — creates artifact, regression guard, adversarial review (complex), verification plan derivation (complex, Step 3.7), advisory verification-readiness score (Step 3.8, `verify-readiness.sh`) |
 | 2.5 | Gate | `bash gate-check.sh --mode entry` | **Bash only** — artifact existence, complexity coherence, verification readiness (reads derived plan + artifact fallback), autonomy routing |

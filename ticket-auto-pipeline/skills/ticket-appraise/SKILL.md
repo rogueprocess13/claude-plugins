@@ -77,7 +77,7 @@ This calls `get_issue` to fetch the ticket, checks for the `planned` label, vali
 | 1 | `false` | `not_planned` | No `planned` label. Proceed normally to Step 1.5. |
 | 1 | `false` | `malformed_block` | `planned` label present but Planner Context is missing or invalid. Log a warning and proceed normally — the planner enrichment is degraded but the ticket is still valid. |
 | 2 | `false` | `low_confidence_not_preapproved` | Confidence below threshold AND not pre-approved. Log a warning and proceed normally — this ticket needs full human review. |
-| 2 | `false` | `confidence_below_threshold` | Confidence below fast-path threshold (0.85). Proceed normally — the planner was uncertain. |
+| 2 | `false` | `confidence_below_threshold` | Confidence below the fast-path threshold. Proceed normally — the planner was uncertain. |
 
 ### 1.3c — Fast-path active: populate notes.md from Planner Context
 
