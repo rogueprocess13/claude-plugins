@@ -1390,7 +1390,8 @@ revised. A fresh Refinement sample would re-block on findings the gate resolved 
 demoted, so `planner_refinement_scan` carries the draft verdict over to each ticket that
 has no semantic verdict yet (`planner-draft-carryover.sh`):
 
-1. **Import.** The ticket's `body.md` (Linear's rendering, stored by
+1. **Import.** The ticket's `body.md` (Linear's rendering with its autolinks undone, or
+   the composed text when Linear changed a code literal; stored by
    `planner_ticketgen_record_baseline`) is compared with the draft after normalisation:
    the epic id, sibling ids and their Linear links are rewritten to draft tokens, the
    Planner Context `Generated` value to a fixed token, Linear's markdown re-rendering is
