@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.59.0 (2026-11-21) — planner-halt-recall (c): recall for the 8 blocking prose Crosscheck codes
+
+A measurement only: no check, code list or gate behaviour changes. M3's rule is that no
+code is demoted before its recall is measured; this release measures it and keeps the
+measurement repeatable.
+
+- **Held-out recall set.** `ticket-planner/lib/tests/corpus/s11-final … s15-final` hold
+  the scrubbed final plans of rehearsal iterations 11–15 (full specs and consensus.md),
+  and `corpus/recall/` the sandbox repo at its base plus 41 seeded defect operators and 3
+  seeded controls (`ops.tsv`, `steps.tsv`). Every operator names the finding of
+  iterations 01–10 it came from; the test fails on any other.
+- **`scripts/planner-halt-recall.sh`** applies each operator to each final plan, runs the
+  real check families on a scratch REPOS_ROOT with the part (a) unit counter, and writes
+  per-case results and a per-code recall table (Wilson 95% intervals; a case whose check
+  judged 0 units is `untested`, and recall is also given with untested counted as
+  missed). `--all` also records which other codes newly fire.
+- **`test-planner-halt-recall.sh`** pins every case's status and units in
+  `corpus/recall/results.tsv`, so a checker change that moves recall fails until the pin is
+  regenerated on purpose.
+- **Result.** Every code catches its canonical wording; most natural wordings from the
+  real plans are missed or untested. No code has recall 0, so none qualifies for
+  demotion under the M3 decision table. The two codes with false fires
+  (`RESOLUTION_NOT_PROPAGATED`, `CONTRACT_MISMATCH`) are recommended to stay blocking with
+  their false-fire causes fixed. The table and seven checker issues found on the way are in
+  the PR description.
+
 ## ticket-planner 0.58.1 (2026-11-21) — gate ledger rows for rehearsal iterations 12–16 (data only)
 
 - **`ticket-planner/gates/gate-ledger.tsv`** now covers dispatch rehearsal iterations

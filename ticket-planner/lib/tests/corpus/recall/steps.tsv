@@ -1,0 +1,58 @@
+op_id	action	sel	arg	text
+R1	consensus	-	-	### F90 — minor — Responses carry no request id — accepted\n\nEvery API response now carries an `X-Request-Id` header. Changes:\n\n- `{A}`: the app sets `X-Request-Id` on every response and the smoke test asserts it.\n- `{B}`: the client reads `X-Request-Id` and logs it next to each failed call.
+R1	insert	A	tc	Every response carries an `X-Request-Id` header, set by one middleware before the routes (Consensus F90).
+R2	consensus	-	-	### F91 — minor — `{A}` and `{B}` disagree on the `X-Request-Id` header — accepted\n\n- `{A}`: the app sets `X-Request-Id` on every response.\n- `{B}`: the client reads `X-Request-Id` and logs it next to each failed call.
+R2	insert	A	tc	Every response carries an `X-Request-Id` header, set by one middleware before the routes (Consensus F91).
+R3	consensus	-	-	- **M9 (accepted).** `{A}` and `{B}` both handle the `X-Request-Id` header: `{A}` sets it on every response and `{B}` logs it with each failed call.
+R3	insert	A	tc	Every response carries an `X-Request-Id` header, set by one middleware before the routes (Consensus M9).
+R5	consensus	-	-	- **m7 (accepted).** The Signals of `{A}`, `{B}` and `{C}` now list `envCheck` as a target symbol, because each of them runs it before its checks.
+R5	insert	A	tc	Runs `envCheck` before its checks (Consensus m7).
+R5	insert	B	tc	Runs `envCheck` before its checks (Consensus m7).
+P1	insert	A	tc	The app factory mirrors the existing `createServer` helper, so each test builds a fresh app.
+P2	insert	B	tc	Request validation reuses `validateBody` from the shared middleware.
+P3	insert	A	tc	Each handler reads the signed-in user following the `withSession` pattern.
+P4	insert	A	tc	Builds on the existing test runner: `runSuite()` in `backend/test/helpers.js` already resets the store before each test.
+P5	insert	B	tc	Extend the existing error builders with the 409 body: `conflictBody()` sits next to `notFoundBody()` in `backend/src/errors.js`.
+FR1	insert	A	tc	The `formatDate` helper lands in `{B}`; this ticket only calls it.
+FR2	insert	A	tc	Article dates use the `formatDate` helper delivered by {B}.
+FR3	insert	A	tc	For the `retryFetch` wrapper, see `{B}`.
+FR4	insert	A	tc	Takes the `useSession` hook and `sessionStore` from the {B} ticket.
+FR5	insert	A	tc	`toProfileJSON` (new in {B}) shapes the profile body.
+CM1	sibling	-	profile-api	`toProfileJSON` returns `username`, `bio` and `image`.
+CM1	insert	A	tc	`toProfileJSON` returns `handle` and `avatarUrl`.
+CM2	sibling	-	profile-api	`validationErrors` holds per-field messages under `errors`.
+CM2	insert	A	tc	`validationErrors` holds one top-level message under `errors`.
+CM3	sibling	-	profile-api	`GET /api/profiles/:username` returns `{"profile":{"username","bio","image"}}`.
+CM3	insert	A	tc	`GET /api/profiles/:username` returns `{"profile":{"handle","avatarUrl"}}`.
+CM4	sibling	-	profile-api	`toProfileJSON(user)` returns `username`, `bio` and `image`.
+CM4	insert	A	tc	`toProfileJSON(user)` returns `handle` and `avatarUrl`.
+CM5	sibling	-	session-api	`{SHARED}` takes `sessionId` and `scope` only.
+CMc	sibling	-	session-api	{SHARED_BLOCK}
+CC1	insert	SHARED_OWNER	tc	This ticket retires `{SHARED}`; callers move to `{SHARED_BARE}V2`.
+CC2	insert	SHARED_OWNER	tc	`{SHARED}` is removed once `{SHARED_BARE}V2` exists.
+CC3	insert	SHARED_OWNER	tc	Replace the `{SHARED}` calls with `{SHARED_BARE}V2`.
+CC4	insert	SHARED_OWNER	tc	`{SHARED}` is renamed to `{SHARED_BARE}V2`.
+CC5	insert	SHARED_OWNER	tc	The module no longer exports `{SHARED}`; `{SHARED_BARE}V2` takes its place.
+CCc	insert	SHARED_OWNER	tc	This ticket retires `{SHARED}`; {CONSUMERS} move to `{SHARED_BARE}V2`.
+B1	repo	-	app/backend/legacy/admin.js	router.put('/admin/members/:id', (req, res) => {\n  user.passwordHash = req.body.passwordHash;\n});
+B1	insert	A	tc	The `passwordHash` is derived from the password with bcrypt and never hand-set.
+B2	repo	-	app/backend/legacy/articles.js	router.put('/admin/articles/:slug', (req, res) => {\n  article.authorId = req.body.authorId;\n});
+B2	insert	B	tc	Only the signed-in author may change `authorId`; it is derived from the token.
+B3	repo	-	app/backend/legacy/admin.js	router.put('/admin/members/:id', (req, res) => {\n  user.passwordHash = req.body.passwordHash;\n});
+B3	insert	A	tc	The password hash is derived from the password with bcrypt and never hand-set.
+B4	repo	-	app/backend/legacy/admin.js	router.put('/admin/members/:id', (req, res) => {\n  Object.assign(user, req.body);\n});
+B4	insert	A	tc	The `passwordHash` is derived from the password with bcrypt and never hand-set.
+B5	repo	-	app/backend/legacy/server.js	app.post('/api/members', (req, res) => { members.push(req.body); res.json(req.body); });
+B5	insert	A	tc	Only the sign-up handler may add records to `members`.
+Bc	repo	-	app/backend/legacy/admin.js	router.put('/admin/members/:id', (req, res) => {\n  user.passwordHash = req.body.passwordHash;\n});
+Bc	insert	A	tc	The `passwordHash` is derived from the password with bcrypt and never hand-set; this ticket deletes the old admin route at backend/legacy/admin.js:2.
+S1	signals	A	B:full	-
+S2	signals	A	B:key	-
+S3	signals	A	B:counts	-
+S4	signals	A	B:rename	-
+AC1	insert	BEH	beh	When the store throws, the handler returns 503 with `{"errors":{"server":["unavailable"]}}`.
+AC2	insert	BEH	beh	A title longer than 300 characters responds with status 413.
+AC3	insert	BEH	beh	Any unexpected error falls back to a 500 response with the generic error body.
+AC4	insert	BEH	beh	An expired token on create returns 401 with the token error body.
+AC5	insert	FE	beh	On 401 from the API, the page clears the stored token and shows the sign-in page.
+AC6	drop-ac	ACCODE	-	-
