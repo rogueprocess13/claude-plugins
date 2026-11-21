@@ -66,7 +66,7 @@ ticket-auto-pipeline/skills/ticket-approve/SKILL.md	1318	25
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	8285	185
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
 # exception: router floor ~22-26 KB (spawn bracketing, Agent-tool instruction, dispatch table, verdict rules)
-ticket-auto-pipeline/skills/ticket-auto/SKILL.md	42143	766
+ticket-auto-pipeline/skills/ticket-auto/SKILL.md	42141	766
 ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4825	134
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
 ticket-auto-pipeline/skills/ticket-cancel/SKILL.md	2076	30
