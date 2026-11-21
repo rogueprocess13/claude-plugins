@@ -1,11 +1,11 @@
 ---
 name: ticket-approve
-description: Approves a Linear ticket held at the entry gate. The sole actuator for human approval — adding the `approved` label directly in the tracker UI does not approve a ticket. Use when the user says "/ticket-approve {ID}", "approve ticket {ID}", or "approve {ID}".
+description: Tells the user how to approve a Linear ticket held at the entry gate. Approval is a person's decision, so this skill never approves — it prints the command for the user to run in their own terminal. Use when the user says "/ticket-approve {ID}", "approve ticket {ID}", or "approve {ID}".
 ---
 
 # Ticket Approve
 
-Approves a gated ticket by writing the approval fact to its local manifest — never by adding a tracker label. Wraps `flow.sh <TID> human-approve --provenance human`.
+An approval is recorded only by `approve.sh`, run by a person at an interactive terminal. The script, `flow.sh` and the manifest writer refuse an agent or fleetd-worker session and a missing terminal. Do **not** run the script, `flow.sh human-approve` or a manifest write yourself, and do not look for a way round the refusal.
 
 ## Usage
 
@@ -15,17 +15,15 @@ Approves a gated ticket by writing the approval fact to its local manifest — n
 
 ## Execution
 
-This skill is a thin wrapper around `approve.sh`. Manifest bootstrap, the `flow.sh` mutation, and the read-back verification are all handled deterministically by the script — no LLM reasoning needed.
+Print this for the user, with the ticket id filled in, and stop:
 
-```bash
-bash ~/.claude/skills/ticket-approve/approve.sh "<TICKET-ID>"
+```
+Run this in your own terminal, from the tickets root:
+
+  bash ~/.claude/skills/ticket-approve/approve.sh <TICKET-ID>
+
+It shows the ticket and its stage and asks you to type the ticket id back.
+Then re-run /ticket-auto <TICKET-ID>.
 ```
 
-The script:
-1. Makes the ticket manifest-addressable (`ensure_ticket_manifest`; a hand-created ticket gets initiative `_adhoc`).
-2. Runs `flow.sh <TICKET-ID> human-approve --provenance human`, which moves the ticket to `Ready` and writes `approved: true`, `approval_provenance: human`, and `stage: Ready` to the manifest. Skipped (`already_approved=true`) when the manifest already says exactly that.
-3. Reads the three fields back from the manifest and prints them (`approved=`, `approval_provenance=`, `stage=`).
-4. Exits non-zero if the manifest does not show `approved=true` afterward — never report success on an unverified write.
-5. If the manifest's `flags` array carries `needs-info`, runs `flow.sh <TICKET-ID> needs-info-resolved` to clear it and prints `needs_info_cleared=true`/`false`. No-op when the flag isn't set. This un-gates a ticket held at Check 2.7e's `TICKET_NOT_READY` (`FLAG_NEEDS_INFO`) gate-stop immediately, since that check reads the flag live regardless of the cached readiness verdict.
-
-Report the printed `approved`/`approval_provenance`/`stage`/`needs_info_cleared` values to the user. On a non-zero exit, show the script's stderr — do not retry silently, since a repeated failure on the same ticket usually means the ticket isn't actually at the gate (wrong state) or the manifest is unreachable (`REPOS_ROOT` unset).
+Remind the user to read the plan and answer open questions in the appraisal comment first. On an error they report: exit 3 means `REPOS_ROOT` could not be resolved (export it, or run from the tickets root); exit 4 means the command did not run in an interactive terminal.

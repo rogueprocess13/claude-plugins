@@ -41,6 +41,13 @@ if [ -f "$LIB_DIR/events.sh" ]; then
 elif [ -f "$SCRIPT_DIR/../../lib/events.sh" ]; then
   source "$SCRIPT_DIR/../../lib/events.sh"
 fi
+# human-terminal.sh backs the person-only trigger check below. When it cannot
+# be found, those triggers are refused (never allowed).
+if [ -f "$LIB_DIR/human-terminal.sh" ]; then
+  source "$LIB_DIR/human-terminal.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/human-terminal.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/human-terminal.sh"
+fi
 # manifest-write.sh: the manifest is now the only state flow.sh reads and
 # writes. No longer optional — every transition depends on it.
 if [ -f "$LIB_DIR/manifest-write.sh" ]; then
@@ -59,11 +66,16 @@ usage() {
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
   echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
   echo "  --provenance human|policy   Who approved (human-approve/pr-iterate only; default human)" >&2
+  echo "      Provenance human, and the human-reject trigger, need a person at an" >&2
+  echo "      interactive terminal: refused (exit 15) in an agent or fleetd-worker" >&2
+  echo "      session and with no controlling terminal. Use /ticket-approve and" >&2
+  echo "      /ticket-reject, which print the command to run." >&2
   echo "" >&2
   echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
   echo "  11 verdict gate, 12 an earlier pending event could not be emitted," >&2
   echo "  13 REPOS_ROOT unset or log dir unresolvable (STATE_ROOT_STRICT=true)," >&2
-  echo "  14 ticket is cancelled (no trigger applies any more), 42 ticket in flight" >&2
+  echo "  14 ticket is cancelled (no trigger applies any more)," >&2
+  echo "  15 a person-only trigger without a person at a terminal, 42 ticket in flight" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -275,6 +287,44 @@ while IFS= read -r _req_key; do
     exit 1
   fi
 done < <(echo "$def" | jq -r '.requires_data[]? // empty')
+
+# ── Person-only triggers ────────────────────────────────────────────────────
+# An approval or a rejection recorded as a person's must come from a person.
+# human-approve and pr-iterate write the manifest's approval fact with the
+# given provenance; `human` (also the default, so that a caller who names no
+# provenance is never trusted more than one who does) and the human-reject
+# trigger are refused with exit 15 unless lib/human-terminal.sh finds no
+# agent or fleetd-worker session and a controlling terminal. The pipeline's
+# own approvals (gate-check.sh's auto-approve of a simple ticket,
+# ticket-pr-iterate) pass `--provenance policy` and are not affected; the
+# entry gate does not accept a policy approval for a complex or manual-mode
+# ticket. Checked before the lock and any write, in a dry run too. Nothing
+# is logged: the ticket's log may already end with its outcome.
+case "$TRIGGER" in
+human-approve | pr-iterate)
+  case "$PROVENANCE" in
+  human | policy) ;;
+  *)
+    echo "flow.sh: invalid --provenance '${PROVENANCE}' (expected human|policy)" >&2
+    exit 1
+    ;;
+  esac
+  ;;
+esac
+_person_only=false
+case "$TRIGGER" in
+human-reject) _person_only=true ;;
+human-approve | pr-iterate)
+  if [ "$PROVENANCE" = "human" ]; then _person_only=true; fi
+  ;;
+esac
+if $_person_only; then
+  if ! declare -f human_terminal_require >/dev/null 2>&1; then
+    echo "flow.sh: '${TRIGGER}' not applied for ${TICKET_ID} — lib/human-terminal.sh not found, so a person cannot be confirmed. Reinstall the plugin." >&2
+    exit 15
+  fi
+  human_terminal_require "flow.sh" "record a person's decision ('${TRIGGER}' for ${TICKET_ID})" || exit 15
+fi
 
 # ── Manifest root (GitHub #608) ─────────────────────────────────────────────
 # Every manifest read and write resolves REPOS_ROOT. Unset, the readers below

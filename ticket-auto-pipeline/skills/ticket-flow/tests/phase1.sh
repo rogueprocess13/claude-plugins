@@ -11,6 +11,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FLOW_SH="$SCRIPT_DIR/../flow.sh"
+# human-approve with provenance human is a person's trigger: those cases run
+# flow.sh under a pseudo-terminal (lib/tests/human-pty.sh).
+# shellcheck source=/dev/null
+source "$PLUGIN_DIR/lib/tests/human-pty.sh"
+human_pty_init
 DETECT_RESUME_SH="$SKILLS_DIR/ticket-detect-resume/detect-resume.sh"
 VALIDATE_SH="$SCRIPT_DIR/../validate-linear-config.sh"
 TICKET_DIR_SH="$PLUGIN_DIR/lib/ticket-dir.sh"
@@ -907,6 +912,17 @@ _flow_run() {
     "$FLOW_SH" "$tid" "$trigger" "$@"
 }
 
+_flow_run_person() {
+  # _flow_run, as a person at a terminal (no agent variables, a pty).
+  local tmpdir="$1" tid="$2" trigger="$3"
+  shift 3
+  FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none \
+    CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" LOG_FILE="$tmpdir/logs/${tid}-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+    human_pty x "$FLOW_SH" "$tid" "$trigger" "$@"
+}
+
 # ── test_flow_implement_outcome_logs_line ────────────────────────────────────
 # flow.sh's implement-outcome trigger must write the dedicated
 # IMPLEMENT|implement-outcome|info| line itself, so outcome-label-check.sh's
@@ -1067,7 +1083,7 @@ test_flow_human_approve_defaults_to_human_provenance() {
   manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-99)
   _flow_set_manifest_field "$manifest" '.stage = "Approve"'
 
-  _flow_run "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
+  _flow_run_person "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
   local rc=$?
 
   local provenance
@@ -1195,7 +1211,7 @@ test_flow_adhoc_ticket_gets_manifest_via_flow() {
   mkdir -p "$tmpdir/logs" "$tmpdir/repos"
   # Deliberately no manifest seeded — no index entry, no manifest.
 
-  _flow_run "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
+  _flow_run_person "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
   local rc=$?
 
   local init
@@ -1799,7 +1815,11 @@ test_flow_fence_non_participant_allowed() {
   _flow_fence_setup "$tmpdir" WIL-99 2
   (
     unset FLEET_GENERATION FLEET_WORKER_PID
-    _flow_run_fenced "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
+    FLEET_FENCE_ENFORCE=true FLEET_STATE_DIR="$tmpdir/state" FLEET_BOARD_DRIVERS=none \
+      CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" LOG_FILE="$tmpdir/logs/WIL-99-pipeline.log" \
+      TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+      FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+      human_pty x "$FLOW_SH" WIL-99 human-approve >/dev/null 2>&1
   ) || rc=$?
   local count
   count=$(grep -c '"event"' "$tmpdir/logs/WIL-99-outbox.jsonl" 2>/dev/null || echo 0)

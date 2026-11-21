@@ -65,6 +65,10 @@
 #   14   the ticket is cancelled — no trigger applies any more (GitHub #770).
 #        Not transient: do not retry. Nothing is written to the pipeline
 #        log, which already ends with the ticket's outcome line.
+#   15   a person-only trigger (human-reject, or human-approve / pr-iterate
+#        with provenance human) without a person at an interactive terminal.
+#        Not transient: an agent never retries it; a person runs
+#        ticket-approve/approve.sh or ticket-reject/reject.sh.
 #   42   another flow.sh run for this ticket holds the lock
 #   127  flow.sh could not be resolved (nothing was run)
 #   any other non-zero code is flow.sh's and is passed through as-is

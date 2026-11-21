@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.134.0 (2026-11-21) — the readiness check warns on the ticket-body-v2 rules, with a strict switch per rule (#773)
+## 0.135.0 (2026-11-21) — the readiness check warns on the ticket-body-v2 rules, with a strict switch per rule (#773)
 
 0.128.0 made the planner write `## Verify Mode`, `## Errors and Edge Cases`, tagged and grouped criteria and a Scope table that matches Technical Context, and check them at Crosscheck, before a ticket exists. The Definition-of-Ready check did not look at any of it, so a ticket written or edited by hand passed without them. It now reports the same rules on the ticket body. Nothing new blocks by default.
 
@@ -41,7 +41,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 - A copy of `dor-check.sh` without `dor-body-v2.sh` (a partial sync) runs none of the six codes and gives the verdict it gave before.
 - Golden fixture `business-framing/enabler-bom-java17.md` (a `live-backend` chore) gains the `## Errors and Edge Cases` section its own rule requires.
 - Tests: `lib/tests/test-dor-body-v2.sh` (new, 121 cases: each code warns by default, blocks under its own switch only, is silent on a legacy body, and a complete body is clean), `scripts/tests/test-e2e-preflight.sh` (advisory row, strict from the environment), `test-planner-body-template.sh` (parity).
-- Versions: `ticket-auto-pipeline` 0.134.0, `ticket-planner` 0.56.1 (test and fixture only), `fleet-controller` 0.55.2 (four `features.json` entries).
+- Versions: `ticket-auto-pipeline` 0.135.0, `ticket-planner` 0.56.1 (test and fixture only), `fleet-controller` 0.55.3 (four `features.json` entries).
+
+## 0.134.0 (2026-11-21) — the approval actuator requires an interactive terminal
+
+A human approval is the fact the entry gate reads before a complex ticket is implemented. It is now recorded only by a person at a terminal, the same way the Regression Risk acknowledgement is (0.132.0).
+
+- **`approve.sh` and `reject.sh` are operator scripts.** Run `bash ~/.claude/skills/ticket-approve/approve.sh <ID>` (or `ticket-reject/reject.sh <ID>`) in your own terminal, from the tickets root. The script shows the ticket and its stage on the controlling terminal and asks for the ticket id to be typed back; the answer is read from `/dev/tty`, never stdin. It refuses (exit 4) inside a Claude Code session or a fleetd worker (`CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID`, `FLEET_GENERATION`) and when there is no terminal. No flag or variable skips either check. A wrong answer records nothing (exit 6). `REPOS_ROOT` is read from the environment, else the ticket's env file, else `./CLAUDE.md`.
+- **`/ticket-approve` and `/ticket-reject` print the command.** They no longer run the script: a Claude Code Bash call has no terminal. Every message that says "run `/ticket-approve <ID>`" still works; the skill answers with the command to run.
+- **`flow.sh` applies the same check.** `human-reject`, and `human-approve` / `pr-iterate` with provenance `human` (also the default when `--provenance` is absent), exit 15 without a person at a terminal, before the lock and any write. `--provenance policy` is unchanged, so the auto-approval of a simple ticket in `auto`/`semi-auto` mode and ticket-pr-iterate's re-approval work as before. An unknown provenance is a usage error. `set_ticket_approval <ID> true human` refuses an agent or fleetd-worker context as well, and `manifest-backfill.sh` then reports the approval as not seeded.
+- **The gate asks whose approval it is.** `gate-check.sh --mode entry` lets a complex ticket (Checks 2.8b/2.8c), a manual-mode ticket (Check 4) and a ticket with open `[needs-human]` questions (Check 5a) through only on `approval_provenance: human`; a `policy` approval there is a hold. `detect-resume.sh` resumes a held ticket at gate-reconcile only on a human approval. `--mode reapprove` accepts either provenance, since it follows ticket-pr-iterate's own re-approval of a ticket that already cleared the entry gate.
+- **Shared helper.** `lib/human-terminal.sh` holds the session and terminal checks and the typed confirmation. `regression-ack.sh` is unchanged.
+- **Limits.** This stops an unattended agent run and one that only unsets the variables. It does not stop a process that allocates its own pseudo-terminal and types the id, or anything that writes the manifest file directly; closing that needs an operator-owned or signed store, which is not part of this change. ticket-implement's own authorization check still reads `approved` without its provenance; the entry gate and the held-ticket resume are where provenance is enforced.
+- **On upgrade.** Approvals already recorded with provenance `human` stay valid. A ticket held at the gate is approved with the command above instead of from inside a session. A complex or manual-mode ticket whose manifest carries a `policy` approval now holds at the entry gate until a person approves it. Scripts that called `flow.sh <ID> human-approve` without `--provenance policy` from an agent or a fleetd worker now get exit 15. The board projection runs from the shell the script runs in: without `LINEAR_API_KEY` there, the approval is recorded and the Linear card moves on the next outbox drain.
+- `fleet-controller` 0.55.2: test only. `test-fleet-detect.sh` drops the agent variables before it records a person's approval in its fixtures. fleetd has no approval endpoint and fires no `human-approve`; its gate-hold reconciliation re-runs the entry gate, so it follows the rule above with no code change.
+- Tests: `lib/tests/test-ticket-approve.sh` (approve and reject refused in an agent or worker session, with no terminal and on a wrong typed id; approval under a pseudo-terminal; `flow.sh` called directly; policy approval unaffected; the manifest writer), `test-gate-check.sh` and `test-detect-resume.sh` (a policy approval does not release a complex, manual-mode or held ticket). Existing tests that approve as a person run under a pseudo-terminal through `lib/tests/human-pty.sh`.
 
 ## 0.133.0 (2026-11-21) — a project can set its own appraise fast-path confidence threshold (#774)
 

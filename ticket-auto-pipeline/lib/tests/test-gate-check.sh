@@ -6,6 +6,12 @@
 # errors in this bash version when nounset is active.
 set -eo pipefail
 
+# These tests write approvals the way a person's approval is recorded
+# (provenance human), in-process. The writer refuses that in an agent or
+# fleetd-worker session, so the suite drops those variables: the environment
+# of a person, the same seam test-regression-risk.sh uses.
+unset CLAUDE_CODE_SESSION_ID FLEET_WORKER_PID FLEET_GENERATION
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -2534,6 +2540,44 @@ test_check28b_manifest_approved_and_staged_passes() {
   }
 }
 
+# A policy approval (the pipeline's own) never stands in for a person's:
+# a complex ticket in any mode, and a simple ticket in manual mode, hold.
+# _policy_approved_entry <complexity> <autonomy> <artifact type> <artifact>
+_policy_approved_entry() {
+  _setup
+  _scaffold_exec_done "$1" "$2" "$3" "${_ws}/$4"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+  local repos_root rc=0
+  repos_root=$(mktemp -d)
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "policy" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+  REPOS_ROOT="$repos_root" _gate_entry || rc=$?
+  local emit_calls
+  emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "$1/$2 with a policy approval: expected a hold (exit 1), got $rc"
+    return 1
+  }
+  ! grep -q 'gate-released' <<<"$emit_calls" || {
+    echo "$1/$2 with a policy approval: a gate-released event was emitted: $emit_calls"
+    return 1
+  }
+}
+test_check28b_policy_approval_does_not_pass_complex() {
+  _policy_approved_entry complex auto openspec openspec-change.md &&
+    _policy_approved_entry complex semi-auto openspec openspec-change.md
+}
+test_check28c_policy_approval_does_not_pass_complex_manual() {
+  _policy_approved_entry complex manual openspec openspec-change.md
+}
+test_check4_policy_approval_does_not_pass_manual() {
+  _policy_approved_entry simple manual simple-fix simple-fix.md
+}
+
 # 46. Check 2.8b: approved=true but no stage → two-factor check holds (D1)
 test_check28b_approved_without_stage_holds() {
   _setup
@@ -3502,6 +3546,9 @@ for fn in \
   test_check28c_manual_override_emits_released_human \
   test_check4_manual_override_emits_released_human \
   test_check28b_manifest_approved_and_staged_passes \
+  test_check28b_policy_approval_does_not_pass_complex \
+  test_check28c_policy_approval_does_not_pass_complex_manual \
+  test_check4_policy_approval_does_not_pass_manual \
   test_check28b_approved_without_stage_holds \
   test_check28c_approved_without_stage_holds \
   test_check4_approved_without_stage_holds \

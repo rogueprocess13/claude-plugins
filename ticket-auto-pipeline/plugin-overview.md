@@ -45,6 +45,7 @@ The orchestrator (`ticket-auto`) is a **thin stateless dispatch router** — it 
 |--------|-----------|---------|
 | Logging | `pipeline-log-format.md`, `pipeline-heartbeat-format.md`, `lib/heartbeat.sh` | Dual-stream progress + operational logging |
 | Bash gates | `lib/gate-check.sh`, `lib/outcome-label-check.sh` | Deterministic gate decisions (no Claude agent) — artifact, complexity, autonomy, outcome labels |
+| Human approval | `skills/ticket-approve/approve.sh`, `skills/ticket-reject/reject.sh`, `lib/human-terminal.sh` | Operator scripts a person runs in an interactive terminal (`/ticket-approve` and `/ticket-reject` only print the command). They refuse an agent or fleetd-worker session and a missing terminal, and ask for the ticket id to be typed back; `flow.sh` refuses a `human` approval or a `human-reject` the same way (exit 15). The entry gate accepts only `approval_provenance: human` for a complex, manual-mode or held ticket; the pipeline's own approvals are `policy`. Not a sandbox: a process with its own pseudo-terminal, or one that writes the manifest file, is not stopped |
 | Crash recovery | `lib/detect-resume.sh`, pipeline log | Direct bash invocation by router — reads last completed step, outputs routing variables |
 | Comment reconciliation | `ticket-gate-reconcile` | Isolated agent for post-gate-hold comment reconciliation |
 | Failure analysis | `ticket-retro`, retro templates | Post-mortem classification + fix proposals |

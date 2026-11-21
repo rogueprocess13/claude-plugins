@@ -163,7 +163,10 @@ for log_file in "$LOG_DIR"/*-pipeline.log; do
     set_ticket_stage "$tid" "$live_state" 2>/dev/null || true
   fi
   if [ "$live_approved" = "true" ]; then
-    set_ticket_approval "$tid" true human 2>/dev/null || true
+    # A person's approval is not seeded from an agent or fleetd-worker
+    # session (set_ticket_approval refuses it): say so instead of reporting
+    # an approval that was not written.
+    set_ticket_approval "$tid" true human 2>/dev/null || live_approved="true-not-seeded(run-in-a-terminal)"
   fi
   backfill_ticket_fields "$tid" "$live_type" "$live_init" "$live_blocked_by" "$live_flags" 2>/dev/null || true
 

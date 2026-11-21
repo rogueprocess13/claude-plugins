@@ -571,11 +571,17 @@ if [ "$RESUME_STEP" = "GATE_HELD" ]; then
   else
     GATE_HELD_APPROVED_RC=1
   fi
+  # A held ticket is released by a person's approval only
+  # (approval_provenance=human, written by /ticket-approve's script at a
+  # terminal). A policy approval never lifts a hold: this resume goes to
+  # gate-reconcile and then IMPLEMENT without re-running the entry gate.
   GATE_HELD_STAGE=""
+  GATE_HELD_PROVENANCE=""
   if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ]; then
     GATE_HELD_STAGE=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null) || true
+    GATE_HELD_PROVENANCE=$(get_ticket_manifest_field "$TICKET_ID" approval_provenance 2>/dev/null) || true
   fi
-  if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ] && [ "$GATE_HELD_STAGE" = "Ready" ]; then
+  if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ] && [ "$GATE_HELD_STAGE" = "Ready" ] && [ "$GATE_HELD_PROVENANCE" = "human" ]; then
     RESUME_STEP="STEP_3_5"
     hb_gate "resume-point" "ok" "gate was held but manifest records approval — resuming at STEP_3_5 (comment reconciliation)"
   else

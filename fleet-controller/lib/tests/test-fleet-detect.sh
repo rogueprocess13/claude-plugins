@@ -6,6 +6,12 @@
 # errors in this bash version when nounset is active.
 set -eo pipefail
 
+# The stalled-approved-children fixtures record a person's approval
+# (provenance human) in-process. ticket-auto-pipeline's manifest writer
+# refuses that in an agent or fleetd-worker session, so the suite drops those
+# variables: the environment of a person.
+unset CLAUDE_CODE_SESSION_ID FLEET_WORKER_PID FLEET_GENERATION
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
