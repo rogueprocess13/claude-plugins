@@ -309,6 +309,43 @@ printf '# Proposal\n\n## Business Outcomes\n\nReports list classified documents.
 assert_eq "a proposal with no auth wording needs no section" "$(planner_crosscheck_body "$INIT")" ""
 rm -f "${ART}/proposal.md"
 
+echo "--- 3a. the readiness check reports the same codes (dor-body-v2.sh) ---"
+# ticket-auto-pipeline's readiness check ports these rules to the ticket
+# body. Same input, same codes: a rule changed on one side only fails here.
+V2_DOR_CODES="VERIFY_MODE_INVALID EDGE_CASES_MISSING SCOPE_TC_MISMATCH AC_COUNT_HIGH AC_UNTAGGED AC_POST_MERGE_STATE"
+dor_variant() { # <type> <mode-line> <variants...> → sorted ticket-body-v2 codes
+  local type="$1" mode="$2" c out=""
+  shift 2
+  write_spec "${SPECS}/users-api.md" "$mode" "$@"
+  check_ticket_ready "BT-PARITY" --body "${SPECS}/users-api.md" --type "$type" --no-fetch >/dev/null 2>&1
+  for c in $V2_DOR_CODES; do
+    jq -e --arg c "$c" 'index($c) != null' <<<"$DOR_ADVISORY" >/dev/null 2>&1 && out+="${c}"$'\n'
+  done
+  printf '%s' "$out" | sort | tr '\n' ' ' | sed 's/ $//'
+}
+parity() { # <label> <type> <mode-line> <variants...>
+  local label="$1" type="$2" mode="$3"
+  shift 3
+  assert_eq "parity: ${label}" "$(dor_variant "$type" "$mode" "$@")" "$(run_variant "$mode" "$@")"
+}
+parity "a clean spec" feature "$OK_MODE"
+parity "no Verify Mode section" feature ""
+parity "a Verify Mode that names no shape" feature "**Verify mode:** manual"
+parity "feature without Errors and Edge Cases" feature "$OK_MODE" no-errors
+parity "api-only chore without Errors and Edge Cases" chore "$OK_MODE" chore no-errors
+parity "build-only chore" chore "**Verify mode:** build-only — the build is the check" chore no-errors
+parity "untagged criteria" feature "$OK_MODE" untagged
+parity "more criteria than the soft cap" feature "$OK_MODE" many-criteria
+parity "a criterion about the state after merge" feature "$OK_MODE" post-merge
+parity "a Technical Context file missing from Scope" feature "$OK_MODE" scope-missing
+parity "a Scope file Technical Context never names" feature "$OK_MODE" scope-extra
+parity "several rules broken at once" feature "" no-errors post-merge scope-missing
+assert_eq "the two soft caps are equal" "$DOR_V2_AC_SOFT_CAP" "$PLANNER_AC_SOFT_CAP"
+assert_eq "the two shape lists are equal" "$DOR_V2_VERIFY_MODE_SHAPES" "$PLANNER_VERIFY_MODE_SHAPES"
+assert_eq "the two file extension lists are equal" "$DOR_V2_FILE_EXTS" "$PLANNER_BODY_FILE_EXTS"
+assert_eq "the two not-a-file lists are equal" "$DOR_V2_NOT_FILES" "$PLANNER_BODY_NOT_FILES"
+assert_eq "the two post-merge patterns are equal" "$_DOR_V2_POST_MERGE_RE" "$_PLANNER_XCB_POST_MERGE_RE"
+
 echo "--- 3b. blocking and warn levels through planner_crosscheck_run ---"
 new_init "INIT-BODY-2"
 planner_body_contract_mark "$INIT"

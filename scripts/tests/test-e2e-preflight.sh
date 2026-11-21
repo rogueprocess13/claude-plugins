@@ -198,6 +198,48 @@ grep -q 'BLOCKED_WITHOUT_EDGE:WIL-2<-WIL-1' <<<"$codes" && ok "block without man
 grep -q 'NO_SUMMARY' <<<"$(cell "$out" INIT-9 dry-run 4)" && ok "missing summary line → NO_SUMMARY" ||
   nok "summary: $(cell "$out" INIT-9 dry-run 4)"
 
+# ── 7b. ticket-body-v2 codes (GitHub #773): advisory row, strict from the env ──
+[ "$(cell "$TMP_ROOT/out-pass" WIL-1 dor-advisory 3)" = 0 ] && ok "every child has a dor-advisory row, rc 0" ||
+  nok "dor-advisory row missing on the clean run"
+! grep -qE 'VERIFY_MODE_INVALID|EDGE_CASES_MISSING|AC_UNTAGGED|SCOPE_TC_MISMATCH' "$TMP_ROOT/out-pass/preflight.tsv" &&
+  ok "a body that does not carry ticket-body-v2 reports none of its codes" || nok "v2 code on a legacy body"
+
+# v2_fixture <name> — WIL-1's body carries the contract with untagged criteria.
+v2_fixture() {
+  local rr p
+  rr=$(fixture "$1")
+  p=$(REPOS_ROOT="$rr" bash -c "source '$TAP_LIB/manifest-read.sh'; get_ticket_manifest_path WIL-1")
+  {
+    cat "$FIX/22-sourced-contract.md"
+    printf '\n## Verify Mode\n\n**Verify mode:** browser — a person uploads a file on a page.\n'
+    printf '\n## Errors and Edge Cases\n\n- **Failure** — a 5xx response shows "Upload failed".\n'
+  } >"$(dirname "$p")/body.md"
+  cp "$(dirname "$p")/body.md" "$rr/linear/WIL-1.md"
+  echo "$rr"
+}
+out="$TMP_ROOT/out-v2"
+unset DOR_STRICT_VERIFY_MODE DOR_STRICT_EDGE_CASES DOR_STRICT_AC_SHAPE DOR_STRICT_SCOPE_FILES
+rr=$(v2_fixture v2)
+run "$rr" "$out" --skip-critique
+[ "$RC" -eq 0 ] && [ "$(cell "$out" WIL-1 dor 3)" = 0 ] && [ -z "$(cell "$out" WIL-1 dor 4)" ] &&
+  ok "untagged criteria on a v2 body: dor row still passes, exit 0" ||
+  nok "v2 advisory run: rc=$RC dor=$(cell "$out" WIL-1 dor 3):$(cell "$out" WIL-1 dor 4)"
+[ "$(cell "$out" WIL-1 dor-advisory 3)" = 0 ] && grep -q 'AC_UNTAGGED' <<<"$(cell "$out" WIL-1 dor-advisory 4)" &&
+  ok "the dor-advisory row names AC_UNTAGGED" || nok "dor-advisory: $(cell "$out" WIL-1 dor-advisory 4)"
+[ -z "$(cell "$out" WIL-2 dor-advisory 4)" ] && ok "the legacy sibling's dor-advisory row is empty" ||
+  nok "WIL-2 dor-advisory: $(cell "$out" WIL-2 dor-advisory 4)"
+
+out="$TMP_ROOT/out-v2-strict"
+rr=$(v2_fixture v2strict)
+DOR_STRICT_AC_SHAPE=true run "$rr" "$out" --skip-critique
+[ "$RC" -eq 1 ] && grep -q 'AC_UNTAGGED' <<<"$(cell "$out" WIL-1 dor 4)" &&
+  ok "DOR_STRICT_AC_SHAPE=true in the environment → dor row AC_UNTAGGED, exit 1" ||
+  nok "v2 strict run: rc=$RC dor=$(cell "$out" WIL-1 dor 4)"
+! grep -q 'AC_UNTAGGED' <<<"$(cell "$out" WIL-1 dor-advisory 4)" && ok "a promoted code leaves the advisory row" ||
+  nok "AC_UNTAGGED still advisory under strict"
+[ "$(cell "$out" WIL-2 dor 3)" = 0 ] && ok "the switch does not touch the legacy sibling" ||
+  nok "WIL-2 dor under strict: $(cell "$out" WIL-2 dor 4)"
+
 # ── 8. usage / environment → exit 2 ──────────────────────────────────────────
 REPOS_ROOT="$(fixture usage)" bash "$PF" INIT-404 --out "$TMP_ROOT/out-404" >/dev/null 2>"$TMP_ROOT/err404"
 rc=$?

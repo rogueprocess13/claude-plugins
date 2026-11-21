@@ -76,8 +76,14 @@ or neither.
 | `VPLAN_UNVERIFIABLE` | No table row marked verifiable: no row's Verifiable-column cell is `✓`, `✔`, `Y` or `Yes` (other cells are never read; a table with no Verifiable column counts as none marked) | `DOR_STRICT_VPLAN` |
 | `AC_IMPLEMENTATION_ONLY` | Every unique AC line describes implementation activity with no observable outcome | `DOR_STRICT_AC_IMPL` |
 | `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` | No Verification Plan and no AC line carries a concrete expected value/result | `DOR_STRICT_VERIFICATION` |
+| `VERIFY_MODE_INVALID` | ticket-body-v2 body only (see below). No `## Verify Mode` section, or its first line is not `**Verify mode:** <shape>` with one of the five shapes | `DOR_STRICT_VERIFY_MODE` |
+| `EDGE_CASES_MISSING` | ticket-body-v2 body only. A feature or improvement, or a ticket whose verify mode is `api-only` or `live-backend`, has no non-empty `## Errors and Edge Cases` section | `DOR_STRICT_EDGE_CASES` |
+| `AC_UNTAGGED` | ticket-body-v2 body only. At least one acceptance criterion does not start with `[unit]` or `[live]` | `DOR_STRICT_AC_SHAPE` |
+| `AC_COUNT_HIGH` | ticket-body-v2 body only. More than 20 acceptance criteria | `DOR_STRICT_AC_SHAPE` |
+| `AC_POST_MERGE_STATE` | ticket-body-v2 body only. A criterion refers to a state after merge or to a base branch | `DOR_STRICT_AC_SHAPE` |
+| `SCOPE_TC_MISMATCH` | ticket-body-v2 body only, and only when it has a `## Technical Context` section. A file Technical Context names is not in the Scope table, or a Scope file is neither named there nor marked `(read-only)` | `DOR_STRICT_SCOPE_FILES` |
 
-All five strict flags default `false`, preserving default behaviour on every host, with one
+All nine strict flags in this table default `false`, preserving default behaviour on every host, with one
 exception: on a body that carries the Source contract, an unset `DOR_STRICT_TEST_DATA` counts as
 `true` for `TEST_DATA_MISSING`/`TEST_DATA_UNSEEDED` (see below).
 `DOR_STRICT_TEST_DATA_SOURCE` is the one switch that defaults `true`; it only affects
@@ -87,6 +93,44 @@ it does not affect the `satisfied-by-ac` self-verifying escape hatch below, and 
 `DOR_STRICT_VERIFICATION`: a host can enforce the "something self-verifying exists" floor
 immediately while still observing planner-written Verification Plan tables advisory-only until it
 trusts their quality on real tickets.
+
+### ticket-body-v2 codes (GitHub #773)
+
+`lib/dor-body-v2.sh` applies the planner's ticket-body rules to the ticket body. The planner's
+Crosscheck already checks them on a spec before a ticket exists
+(`ticket-planner/lib/planner-crosscheck-body.sh`); this check also covers a ticket written or
+edited by hand. The code names and the rules are the same on both sides, and
+`ticket-planner/lib/tests/test-planner-body-template.sh` fails when they differ.
+
+**Which bodies are judged.** A body carries the contract when it has a `## Verify Mode` heading,
+a `## Errors and Edge Cases` heading, or at least one acceptance criterion that starts with
+`[unit]` or `[live]` (headings inside a fenced block do not count). The planner's `ticket-body-v2`
+marker is a line of the initiative's state log, not of the body, and this check reads the body
+alone, so the body's own content decides, as it does for the test-data Source contract. On any
+other body all six codes are recorded `inapplicable`, with every switch on or off.
+
+**Severity.** All six codes are advisory by default: they are listed in `DOR_ADVISORY` and the
+ticket stays ready. Each becomes a hard code under its own switch:
+
+| Switch | Promotes |
+|---|---|
+| `DOR_STRICT_VERIFY_MODE=true` | `VERIFY_MODE_INVALID` |
+| `DOR_STRICT_EDGE_CASES=true` | `EDGE_CASES_MISSING` |
+| `DOR_STRICT_AC_SHAPE=true` | `AC_UNTAGGED`, `AC_COUNT_HIGH`, `AC_POST_MERGE_STATE` |
+| `DOR_STRICT_SCOPE_FILES=true` | `SCOPE_TC_MISMATCH` |
+
+Set a switch in the environment of every process that computes readiness on the host (the planner
+session, `fleetd`, ticket-auto): the verdict is cached in the manifest and recomputed when the
+body changes, and both must use the same value. The planner's Refinement and
+`scripts/e2e-preflight.sh` force only `DOR_STRICT_TEST_DATA` and `DOR_STRICT_VPLAN`; they read
+these four from the environment like any other caller. `e2e-preflight.sh` writes the codes that
+warned to a `dor-advisory` row per ticket (always rc 0), which is the record a rehearsal needs
+before a code is made hard by default. A hard code can be waived per ticket with
+`dor-check.sh --waive`, like any other.
+
+`AC_UNTAGGED`, `AC_COUNT_HIGH`, `AC_POST_MERGE_STATE` and `SCOPE_TC_MISMATCH` are pattern matches
+over prose. The security and identity decisions of #773 live in proposal.md and the epic, not in
+a ticket body, so this check has no code for them.
 
 ### `TEST_DATA_MISSING` / `TEST_DATA_UNSEEDED` on a contract body (planner-test-data-derivation)
 

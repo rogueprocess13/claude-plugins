@@ -16,7 +16,15 @@
 #   --skip-critique  write critique rows as `skip`; verdict becomes PARTIAL
 #
 # Rows (<out>/preflight.tsv, TID<TAB>check<TAB>rc<TAB>codes):
-#   per child: manifest, body, gate-planned, dor, critique
+#   per child: manifest, body, gate-planned, dor, dor-advisory, critique
+#
+# The dor row is strict the way the planner's Refinement is
+# (DOR_STRICT_TEST_DATA / DOR_STRICT_VPLAN forced on). Every other
+# DOR_STRICT_* switch, the four ticket-body-v2 ones included (GitHub #773:
+# DOR_STRICT_VERIFY_MODE, DOR_STRICT_EDGE_CASES, DOR_STRICT_AC_SHAPE,
+# DOR_STRICT_SCOPE_FILES), is read from the caller's environment, as
+# Refinement reads it. The dor-advisory row lists the codes that warned; it
+# is always rc 0.
 #   epic (TID = <INIT>): dispatch-flag, dry-run, blocked-edges
 #
 # Libs: every check runs this checkout's ticket-auto-pipeline/lib, never the
@@ -119,7 +127,9 @@ check_dor() {
     rc=0
     DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true \
       check_ticket_ready "$tid" --body "$body" --type "$type" --no-fetch >/dev/null 2>&1 || rc=$?
-    printf '%s\t%s\n' "$rc" "$(jq -r 'join(",")' <<<"${DOR_MISSING:-[]}" 2>/dev/null)"
+    # `|`-separated: a tab is IFS whitespace, so an empty field would vanish.
+    printf '%s|%s|%s\n' "$rc" "$(jq -r 'join(",")' <<<"${DOR_MISSING:-[]}" 2>/dev/null)" \
+      "$(jq -r 'join(",")' <<<"${DOR_ADVISORY:-[]}" 2>/dev/null)"
   )
 }
 
@@ -188,7 +198,11 @@ for tid in $CHILDREN; do
   fi
   emit "$tid" gate-planned "$(check_gate_planned "$tid")"
   if [ -s "$body" ]; then
-    emit "$tid" dor "$(check_dor "$tid" "$type" "$body")"
+    # Advisory codes never fail the run: the dor-advisory row is always rc 0.
+    # They are what a rehearsal records before a code is promoted (#773).
+    IFS='|' read -r dor_rc dor_missing dor_advisory < <(check_dor "$tid" "$type" "$body")
+    row "$tid" dor "$dor_rc" "$dor_missing"
+    row "$tid" dor-advisory 0 "$dor_advisory"
   else
     row "$tid" dor 1 BODY_MD_MISSING
   fi

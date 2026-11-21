@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.134.0 (2026-11-21) — the readiness check warns on the ticket-body-v2 rules, with a strict switch per rule (#773)
+
+0.128.0 made the planner write `## Verify Mode`, `## Errors and Edge Cases`, tagged and grouped criteria and a Scope table that matches Technical Context, and check them at Crosscheck, before a ticket exists. The Definition-of-Ready check did not look at any of it, so a ticket written or edited by hand passed without them. It now reports the same rules on the ticket body. Nothing new blocks by default.
+
+- **Six codes, all advisory by default** (`lib/dor-body-v2.sh`, new, called by `check_ticket_ready`). They are listed in `DOR_ADVISORY`; the ticket stays ready.
+
+  | Code | Fires when | Switch that makes it blocking |
+  |---|---|---|
+  | `VERIFY_MODE_INVALID` | no `## Verify Mode` section, or its first line is not `**Verify mode:** <shape>` with one of the five shapes | `DOR_STRICT_VERIFY_MODE` |
+  | `EDGE_CASES_MISSING` | a feature or improvement, or an `api-only` / `live-backend` ticket, has no non-empty `## Errors and Edge Cases` | `DOR_STRICT_EDGE_CASES` |
+  | `AC_UNTAGGED` | a criterion does not start with `[unit]` or `[live]` | `DOR_STRICT_AC_SHAPE` |
+  | `AC_COUNT_HIGH` | more than 20 criteria (criteria not grouped) | `DOR_STRICT_AC_SHAPE` |
+  | `AC_POST_MERGE_STATE` | a criterion refers to a state after merge or to a base branch | `DOR_STRICT_AC_SHAPE` |
+  | `SCOPE_TC_MISMATCH` | the Scope table and `## Technical Context` name different files (not judged without a Technical Context section) | `DOR_STRICT_SCOPE_FILES` |
+
+- **Only a body that carries the contract is judged.** That is a body with a `## Verify Mode` heading, a `## Errors and Edge Cases` heading, or at least one criterion that starts with `[unit]` or `[live]`. The planner's `ticket-body-v2` marker is a line of the initiative's state log and the readiness check reads the body alone, so the body's own content decides (the test-data Source contract is detected the same way). On every other body the six codes are recorded `inapplicable`, with the switches on or off: an older ticket gets the verdict it had.
+- **How to turn strict on.** Set the switch to `true` in the environment of every process that computes readiness on the host (the planner session, `fleetd`, ticket-auto), for example `DOR_STRICT_VERIFY_MODE=true DOR_STRICT_EDGE_CASES=true`. Unset or `false` is advisory. A blocking code can be waived per ticket with `dor-check.sh --waive <TID> <CODE> "<reason>"`. All four switches are in `/fleet-controller:fleet-features`.
+- **Not promoted.** No code is blocking by default, and the planner's Refinement still forces only `DOR_STRICT_TEST_DATA` and `DOR_STRICT_VPLAN`. Promotion waits for a dispatch rehearsal.
+- **`scripts/e2e-preflight.sh`** treats the new switches as Refinement does: it does not force them and reads them from the caller's environment (`DOR_STRICT_AC_SHAPE=true scripts/e2e-preflight.sh <INIT>` fails the `dor` row on an untagged criterion). **Output change:** each child gets one more row, `dor-advisory`, always rc 0, listing the codes that warned. That row is what a rehearsal records before a code is promoted.
+- **Same rules on both sides.** The readers are a port of the planner's (this plugin does not depend on ticket-planner). `test-planner-body-template.sh` section 3a runs both over the same specs and fails when the codes or the constants differ.
+- **Not covered:** `SECURITY_DECISIONS_MISSING`. The security and identity decisions live in proposal.md and the epic, not in a ticket body, so they stay with Crosscheck. `ticket-verify` still does not read the `[unit]` / `[live]` tags (#773 stays open for that).
+- A copy of `dor-check.sh` without `dor-body-v2.sh` (a partial sync) runs none of the six codes and gives the verdict it gave before.
+- Golden fixture `business-framing/enabler-bom-java17.md` (a `live-backend` chore) gains the `## Errors and Edge Cases` section its own rule requires.
+- Tests: `lib/tests/test-dor-body-v2.sh` (new, 121 cases: each code warns by default, blocks under its own switch only, is silent on a legacy body, and a complete body is clean), `scripts/tests/test-e2e-preflight.sh` (advisory row, strict from the environment), `test-planner-body-template.sh` (parity).
+- Versions: `ticket-auto-pipeline` 0.134.0, `ticket-planner` 0.56.1 (test and fixture only), `fleet-controller` 0.55.2 (four `features.json` entries).
+
 ## 0.133.0 (2026-11-21) — a project can set its own appraise fast-path confidence threshold (#774)
 
 The planner's confidence is a fixed formula that pays for evidence a new one-repo project does not have (several services, existing symbols, prior art). Its tickets top out near 0.85, so the appraise fast path, which needs 0.85, almost never fired there. The formula and the default are unchanged; a project can now lower the bar for itself on purpose.
