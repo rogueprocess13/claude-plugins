@@ -302,12 +302,12 @@ REQUEST
 ```
 
 A phase agent holds no Skill tool, so never invoke `/adr-gate`: run the gate inline. If
-you composed a request file, before acting on the decision, read the gate's instructions,
-the `adr-gate` skill's `SKILL.md`: run
-`bash ~/.claude/skills/lib/skill-ref.sh adr-gate SKILL.md`, then Read the printed path in
-full and follow it yourself, with `--request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT"
---log-file "$TAP_LOG"` as its input. If `skill-ref.sh` exits non-zero, run
-`bash ~/.claude/skills/lib/plog.sh META reference-missing fail "adr-gate/SKILL.md"` and
+you composed a request file, before acting on the decision, read the gate's rules,
+`references/gate.md`: run
+`bash ~/.claude/skills/lib/skill-ref.sh adr-gate references/gate.md`, then Read the
+printed path in full and follow it, with `--request-file "$_adr_gate_req" --wiki-root
+"$WIKI_ROOT" --log-file "$TAP_LOG"` as input. If `skill-ref.sh` exits non-zero, run
+`bash ~/.claude/skills/lib/plog.sh META reference-missing fail "adr-gate/gate.md"` and
 stop: never classify from memory. Classify by that file's rules alone, not by what suits
 your plan. If you hold no Write or Read tool, use Bash instead: `cat` to read, a heredoc
 to write the ADR body file.

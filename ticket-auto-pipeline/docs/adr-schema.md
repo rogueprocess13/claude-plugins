@@ -3,7 +3,7 @@
 **Schema-Version: 1**
 **Defined by:** `openspec/changes/adr-governance-gate/specs/adr-store/spec.md`, `specs/adr-governance/spec.md`
 **Store / validator:** `lib/adr-store.sh`, `lib/adr-check.sh`
-**Written by:** `skills/adr-gate/SKILL.md`, `skills/wiki-maintenance/SKILL.md` (promotion path)
+**Written by:** `skills/adr-gate/references/gate.md`, `skills/wiki-maintenance/SKILL.md` (promotion path)
 
 ## Overview
 

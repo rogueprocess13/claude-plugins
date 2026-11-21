@@ -872,8 +872,8 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|assumption|info|No archived-record gui
 
 ### ADR-gate entries (adr-governance-gate)
 
-Every invocation of the reusable ADR gate (`skills/adr-gate/SKILL.md`, any phase, via
-the § 8 preamble instruction), regardless of verdict. Written by
+Every invocation of the reusable ADR gate (`skills/adr-gate/references/gate.md`, any phase, via
+preamble § 8), regardless of verdict. Written by
 `lib/adr-gate-parse.sh`, which self-parses the gate's own `=== ADR_GATE_RESULT ===`
 block at the end of the gate's own run — this makes park rate measurable from the first
 invocation, not only once a calling phase separately routes on the result. The MSG is a

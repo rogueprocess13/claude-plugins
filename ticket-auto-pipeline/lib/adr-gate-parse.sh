@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # adr-gate-parse.sh — deterministic parser for the `=== ADR_GATE_RESULT ===`
-# block skills/adr-gate/SKILL.md appends as the last content of its return.
+# block skills/adr-gate/references/gate.md appends as the last content of its return.
 #
 # Adapted from human-hold-parse.sh (docs/adr-gate-schema.md § Tolerant
 # transport, strict contract mirrors human-hold-schema.md's framing exactly).
