@@ -44,6 +44,15 @@ elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-review.sh" ]; then
   source "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-review.sh"
 fi
 
+# plan-binding.sh — a person's approval releases a held ticket only for the
+# plan it was given for (GATE_HELD below). Same two-location lookup; without
+# it no held ticket is released (fail closed).
+if [ -f "$LIB_DIR/plan-binding.sh" ]; then
+  source "$LIB_DIR/plan-binding.sh"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-binding.sh" ]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/../../lib/plan-binding.sh"
+fi
+
 CURRENT_SCHEMA_VERSION=1
 
 # Trailing META subtypes that never invalidate a completed run when they
@@ -619,7 +628,27 @@ if [ "$RESUME_STEP" = "GATE_HELD" ]; then
     GATE_HELD_STAGE=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null) || true
     GATE_HELD_PROVENANCE=$(get_ticket_manifest_field "$TICKET_ID" approval_provenance 2>/dev/null) || true
   fi
+  # ...and only for the plan the person approved (lib/plan-binding.sh):
+  # an approved file edited, shortened or removed, a new file in the change
+  # dir, or an approval recorded before plan binding keeps the hold.
+  GATE_HELD_PLAN="unchecked"
   if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ] && [ "$GATE_HELD_STAGE" = "Ready" ] && [ "$GATE_HELD_PROVENANCE" = "human" ]; then
+    if declare -f plan_binding_check >/dev/null 2>&1 && plan_binding_check "$TICKET_ID" --log-file "$LOG_FILE" >/dev/null 2>&1; then
+      GATE_HELD_PLAN="match"
+    else
+      GATE_HELD_PLAN="changed"
+      if declare -f plan_binding_hold_message >/dev/null 2>&1; then
+        # Once per distinct message: a held ticket is resumed again and again.
+        plan_binding_check "$TICKET_ID" --log-file "$LOG_FILE" >/dev/null 2>&1 || true
+        _gh_plan_msg=$(plan_binding_hold_message "$TICKET_ID")
+        grep -qF -- "|META|plan-binding|warn|$_gh_plan_msg" "$LOG_FILE" 2>/dev/null ||
+          _plog "$LOG_FILE" "META" "plan-binding" "warn" "$_gh_plan_msg"
+      else
+        _plog "$LOG_FILE" "META" "plan-binding" "warn" "PLAN_CHANGED_SINCE_APPROVAL — lib/plan-binding.sh not found; reinstall the plugin, then run approve.sh again"
+      fi
+    fi
+  fi
+  if [ "$GATE_HELD_PLAN" = "match" ]; then
     RESUME_STEP="STEP_3_5"
     hb_gate "resume-point" "ok" "gate was held but manifest records approval — resuming at STEP_3_5 (comment reconciliation)"
   else
@@ -627,7 +656,11 @@ if [ "$RESUME_STEP" = "GATE_HELD" ]; then
     if [ "$GATE_HELD_APPROVED_RC" -ne 0 ]; then
       _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at resume"
     fi
-    hb_gate "resume-point" "fail" "gate still held — requires approval"
+    if [ "$GATE_HELD_PLAN" = "changed" ]; then
+      hb_gate "resume-point" "fail" "gate still held — PLAN_CHANGED_SINCE_APPROVAL: run approve.sh again"
+    else
+      hb_gate "resume-point" "fail" "gate still held — requires approval"
+    fi
   fi
 fi
 

@@ -3403,15 +3403,18 @@ def _find_unreleased_human_hold(state_dir, tid):
     return last_valid_record
 
 
-#: The 3 `_gate_emit_held` reasons (`ticket-auto-pipeline/lib/gate-check.sh`)
-#: that represent "waiting on an approval decision" — the other 5 call sites
+#: The `_gate_emit_held` reasons (`ticket-auto-pipeline/lib/gate-check.sh`)
+#: that represent "waiting on an approval decision" — the other call sites
 #: (`linear-fetch-failed`, `critique-score-below-threshold`,
 #: `verification-prerequisites-missing`, `critique-cross-validation-failed`)
 #: are content/fetch holds that resolve by a gate re-run, not an approval,
 #: and are out of scope for `_gate_hold_intake_pass` (tracker-inbound-
-#: approval, design.md Non-Goals).
+#: approval, design.md Non-Goals). `plan-changed-since-approval` (a person's
+#: approval whose plan changed, lib/plan-binding.sh) is released only by a
+#: person running approve.sh again, so it is an approval hold too.
 _GATE_HOLD_APPROVAL_REASONS = frozenset(
-    {'complex-ticket', 'manual-mode', 'default-fallback'})
+    {'complex-ticket', 'manual-mode', 'default-fallback',
+     'plan-changed-since-approval'})
 
 
 def _find_unreleased_gate_hold(state_dir, tid):
@@ -5782,8 +5785,9 @@ class Supervisor:
         today produces a pipeline-log `held:` line and a `gate-held` outbox
         event but never a `hold_kind='gate'` store row.
 
-        Scoped to the 3 approval-type `gate-held` reasons
-        (`complex-ticket`/`manual-mode`/`default-fallback`) via
+        Scoped to the approval-type `gate-held` reasons
+        (`complex-ticket`/`manual-mode`/`default-fallback`/
+        `plan-changed-since-approval`) via
         `_find_unreleased_gate_hold` — the other 5 `_gate_emit_held` call
         sites are content/fetch holds that resolve by a subsequent gate
         re-run, not an approval decision, and get no row from this pass

@@ -38,7 +38,9 @@ _fail() {
 _root=""
 _setup() {
   _root=$(mktemp -d)
-  mkdir -p "$_root/logs" "$_root/repos"
+  mkdir -p "$_root/logs" "$_root/repos" "$_root/${TID}--test"
+  # A person approves a specific plan (lib/plan-binding.sh).
+  printf '# Fix\n- [ ] change it\n' >"$_root/${TID}--test/simple-fix.md"
 }
 _teardown() { rm -rf "$_root"; }
 
@@ -56,7 +58,7 @@ _flow() { _run bash "$FLOW_SH_REAL" "$TID" "$@" >/dev/null 2>&1; }
 # A person's decision needs a person: a terminal, and the id typed back
 # (lib/tests/human-pty.sh).
 _flow_person() { _run python3 "$HUMAN_PTY_DIR/pty_run.py" x bash "$FLOW_SH_REAL" "$TID" "$@" >/dev/null 2>&1; }
-_approve() { _run python3 "$HUMAN_PTY_DIR/pty_run.py" "$TID" bash "$APPROVE_SH" "$TID" 2>&1; }
+_approve() { (cd "$_root" && _run python3 "$HUMAN_PTY_DIR/pty_run.py" "$TID" bash "$APPROVE_SH" "$TID" 2>&1); }
 _claim() { _run bash "$CLAIM_SH" "$TID" --complexity "$1" 2>&1; }
 # The router's pre-spawn claim (dispatch-table.json STEP_1 pre_dispatch).
 _router_claim() { _flow appraise-start --data complexity=simple; }

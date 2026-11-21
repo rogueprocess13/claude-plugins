@@ -406,10 +406,47 @@ set_ticket_approval() {
       echo "manifest-write: an approval with provenance human is a person's — refused in an agent or fleetd-worker context" >&2
       return 4
     fi
-    _manifest_update "$manifest_path" '.approved = true | .approval_provenance = $p' --arg p "$provenance"
+    # Every new approval starts with no plan binding: approve.sh records the
+    # plan a person approved right after this write (set_ticket_approved_plan),
+    # and a policy approval is never bound.
+    _manifest_update "$manifest_path" '.approved = true | .approval_provenance = $p | del(.approved_plan)' --arg p "$provenance"
   else
-    _manifest_update "$manifest_path" 'del(.approved, .approval_provenance)'
+    _manifest_update "$manifest_path" 'del(.approved, .approval_provenance, .approved_plan)'
   fi
+}
+
+# set_ticket_approved_plan <TID> <record_json>
+# Records the plan a person approved (lib/plan-binding.sh's record, plus
+# recorded_at) as `approved_plan`. Written only by approve.sh, right after
+# flow.sh recorded the human approval. Refused (exit 4) in an agent or
+# fleetd-worker context, like a human approval; exit 3 for a record that is
+# not the expected shape; exit 5 when the manifest does not hold a human
+# approval to bind (checked under the lock, in the same write). Cleared with
+# the approval by set_ticket_approval.
+set_ticket_approved_plan() {
+  local tid="$1" record="$2"
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${FLEET_WORKER_PID:-}" ] || [ -n "${FLEET_GENERATION:-}" ]; then
+    echo "manifest-write: a plan binding records a person's approval — refused in an agent or fleetd-worker context" >&2
+    return 4
+  fi
+  jq -e 'type == "object" and (.type == "simple-fix" or .type == "openspec")
+    and (.id | type == "string" and test("^[0-9a-f]{64}$"))
+    and (.files | type == "array" and length > 0)' >/dev/null 2>&1 <<<"$record" || {
+    echo "manifest-write: invalid approved_plan record" >&2
+    return 3
+  }
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+  local at
+  at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  jq -e '.approved == true and .approval_provenance == "human"' "$manifest_path" >/dev/null 2>&1 || {
+    echo "manifest-write: $tid holds no human approval to bind a plan to" >&2
+    return 5
+  }
+  _manifest_update "$manifest_path" \
+    'if .approved == true and .approval_provenance == "human" then .approved_plan = ($r + {recorded_at: $at}) else error("no human approval") end' \
+    --argjson r "$record" --arg at "$at"
 }
 
 # set_ticket_regression_risk <TID> <risk_sha256> <body> <plain: true|false>

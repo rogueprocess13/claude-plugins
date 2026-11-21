@@ -68,6 +68,14 @@ _seed_manifest() {
   local content='{"type":"bug","initiative":"'"$init"'","blocked_by":[],"dispatch":false}'
   [ -n "$extra" ] && content=$(echo "$content" | jq -c ". + $extra")
   echo "$content" >"$repos_root/.ticket-auto/initiatives/$init/tickets/$tid/planner/manifest.json"
+  _seed_plan "$(dirname "$repos_root")" "$tid"
+}
+
+# _seed_plan <tickets-root> <tid> — the ticket's plan, simple-fix.md in its
+# ticket dir: a person approves a specific plan (lib/plan-binding.sh).
+_seed_plan() {
+  mkdir -p "$1/$2--test"
+  [ -f "$1/$2--test/simple-fix.md" ] || printf '# Fix\n- [ ] change it\n' >"$1/$2--test/simple-fix.md"
 }
 
 # ── approve: planned ticket ──────────────────────────────────────────────────
@@ -81,7 +89,7 @@ test_approve_planned_ticket() {
   _seed_manifest "$tmpdir/repos" WIL-1
 
   local out rc=0
-  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
 
@@ -108,11 +116,12 @@ test_approve_adhoc_ticket() {
   local marker="$tmpdir/mutated.marker"
   _stub_lib_dir "$tmpdir/lib" "$marker" state-approve Approve state-ready Ready '[]' '[{"id":"lbl-approved","name":"approved"}]'
   # Deliberately no _seed_manifest call.
+  _seed_plan "$tmpdir" WIL-1
 
   local rc=0
-  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+  (cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
-    human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >/dev/null 2>&1 || rc=$?
+    human_pty WIL-1 bash "$APPROVE_SH" WIL-1) >/dev/null 2>&1 || rc=$?
 
   local init manifest approved
   init=$(cat "$tmpdir/repos/.ticket-auto/initiatives/_index/WIL-1.initiative" 2>/dev/null)
@@ -137,7 +146,7 @@ test_reject_clears_approval() {
   _seed_manifest "$tmpdir/repos" WIL-1 INIT-1 '{"approved":true,"approval_provenance":"human","stage":"Ready"}'
 
   local out rc=0
-  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty WIL-1 bash "$REJECT_SH" WIL-1 2>&1) || rc=$?
 
@@ -171,9 +180,10 @@ test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs" "$tmpdir/repos"
+  _seed_plan "$tmpdir" NOPE-1
 
   local rc=0 out
-  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty NOPE-1 bash "$APPROVE_SH" NOPE-1 2>&1) || rc=$?
   local manifest="$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/NOPE-1/planner/manifest.json"
@@ -199,7 +209,7 @@ test_approve_clears_needs_info_flag() {
   _seed_manifest "$tmpdir/repos" WIL-1 INIT-1 '{"flags":["needs-info"]}'
 
   local out rc=0
-  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
 
@@ -226,7 +236,7 @@ test_approve_noop_when_needs_info_absent() {
   _seed_manifest "$tmpdir/repos" WIL-1
 
   local out rc=0
-  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
   rm -rf "$tmpdir"
@@ -256,12 +266,13 @@ _mk_ticket() {
   _seed_manifest "$t/repos" WIL-1 INIT-1 "${1:-{\"stage\":\"Approve\"\}}"
   echo "$t"
 }
+# _tenv <tmp> <cmd...> — cmd from the tmp tickets root, in the test env.
 _tenv() {
   local t="$1"
   shift
-  FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none CLAUDE_SKILLS_LIB="$LIB_DIR" \
+  (cd "$t" && FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none CLAUDE_SKILLS_LIB="$LIB_DIR" \
     LOG_FILE="$t/logs/WIL-1-pipeline.log" FLEET_PIPELINE_LOG_DIR="$t/logs" \
-    TICKET_FLOW_LOCK_DIR="$t/logs" REPOS_ROOT="$t/repos" FLOW_SH="$FLOW_SH_REAL" "$@"
+    TICKET_FLOW_LOCK_DIR="$t/logs" REPOS_ROOT="$t/repos" FLOW_SH="$FLOW_SH_REAL" "$@")
 }
 _mf() { jq -r --arg f "$2" '.[$f] // empty' "$1/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null; }
 _events() {
@@ -452,6 +463,151 @@ test_writer_refuses_human_provenance_for_agents() {
     _fail "set_ticket_approval: provenance refusal wrong (rc=$rc)"
 }
 
+# ── plan binding (lib/plan-binding.sh) ───────────────────────────────────────
+
+_plan_file() { echo "$1/WIL-1--test/simple-fix.md"; }
+_bound_id() { jq -r '.approved_plan.id // empty' "$1/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null; }
+
+test_approve_records_plan_binding() {
+  local t out rc=0 files
+  t=$(_mk_ticket)
+  out=$(_tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  files=$(jq -c '.approved_plan | [.type, (.files | map(.path))]' \
+    "$t/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null)
+  local id
+  id=$(_bound_id "$t")
+  if [ "$rc" -eq 0 ] && [ "$files" = '["simple-fix",["simple-fix.md"]]' ] && [[ "$id" =~ ^[0-9a-f]{64}$ ]] &&
+    grep -q "Plan: simple-fix ${id:0:12} in .*WIL-1--test, 1 file(s):" <<<"$out" &&
+    grep -q '  simple-fix.md (' <<<"$out" && grep -q "plan_id=${id:0:12}" <<<"$out"; then
+    _pass "approve.sh: shows the plan's short id and files, records approved_plan with the approval"
+  else
+    _fail "approve.sh: plan binding not recorded or not shown (rc=$rc files=$files out=$out)"
+  fi
+  rm -rf "$t"
+}
+
+test_approve_refused_without_plan() {
+  local t rc=0
+  t=$(_mk_ticket)
+  rm -rf "$t/WIL-1--test"
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >"$t/out" 2>&1 || rc=$?
+  if [ "$rc" -eq 7 ] && _untouched "$t" && grep -q 'no plan artifact found' "$t/out" &&
+    ! grep -q 'anything else aborts' "$t/out"; then
+    _pass "approve.sh: no plan artifact is a refusal (exit 7), nothing asked or recorded"
+  else
+    _fail "approve.sh: approving with no plan must be refused (rc=$rc out=$(cat "$t/out"))"
+  fi
+  rm -rf "$t"
+}
+
+test_approve_refused_for_symlinked_plan() {
+  local t rc=0
+  t=$(_mk_ticket)
+  cp "$(_plan_file "$t")" "$t/copy.md"
+  rm "$(_plan_file "$t")"
+  ln -s "$t/copy.md" "$(_plan_file "$t")"
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >"$t/out" 2>&1 || rc=$?
+  if [ "$rc" -eq 7 ] && _untouched "$t" && grep -q 'not a regular file' "$t/out"; then
+    _pass "approve.sh: a symlinked plan file is refused (exit 7), nothing recorded"
+  else
+    _fail "approve.sh: a symlinked plan must be refused (rc=$rc out=$(cat "$t/out"))"
+  fi
+  rm -rf "$t"
+}
+
+test_approve_refused_for_non_plain_plan_file_name() {
+  local t rc=0
+  t=$(_mk_ticket)
+  rm -rf "$t/WIL-1--test"
+  mkdir -p "$t/openspec/changes/wil-1-fix"
+  printf -- '- [ ] task\n' >"$t/openspec/changes/wil-1-fix/tasks.md"
+  printf 'x\n' >"$t/openspec/changes/wil-1-fix/"$'evil\033[2Jname.md'
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >"$t/out" 2>&1 || rc=$?
+  if [ "$rc" -eq 7 ] && _untouched "$t" && grep -q 'not plain text' "$t/out" && ! grep -q 'evil' "$t/out"; then
+    _pass "approve.sh: a plan file name that is not plain text is refused, never printed"
+  else
+    _fail "approve.sh: a non-plain plan file name must be refused (rc=$rc out=$(cat -v "$t/out"))"
+  fi
+  rm -rf "$t"
+}
+
+# GitHub #767's shortcut fires nothing only while the recorded binding is the
+# plan as it stands; a plan that changed, even by appended bytes, is approved
+# again and re-bound.
+test_approve_reapprove_rebinds_changed_plan() {
+  local t out rc=0 id1 id2 ok=true
+  t=$(_mk_ticket)
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >/dev/null 2>&1 || ok=false
+  id1=$(_bound_id "$t")
+  # Unchanged: already approved, nothing asked, no second event.
+  out=$(_tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  { [ "$rc" -eq 0 ] && grep -q 'already_approved=true' <<<"$out" && ! grep -q 'anything else aborts' <<<"$out" &&
+    [ "$(_events "$t" human-approved)" = "1" ] && [ "$(_bound_id "$t")" = "$id1" ]; } || {
+    ok=false
+    echo "  unchanged: rc=$rc out=$out"
+  }
+  # Ticking a checkbox is not a change either.
+  sed -i 's/- \[ \] change it/- [x] change it/' "$(_plan_file "$t")"
+  rc=0
+  out=$(_tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  { [ "$rc" -eq 0 ] && grep -q 'already_approved=true' <<<"$out"; } || {
+    ok=false
+    echo "  ticked: rc=$rc out=$out"
+  }
+  # Appended bytes: a real approval again, new binding.
+  printf '\n## Amendment #1\nanswer\n' >>"$(_plan_file "$t")"
+  rc=0
+  out=$(_tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  id2=$(_bound_id "$t")
+  { [ "$rc" -eq 0 ] && grep -q 'already_approved=false' <<<"$out" && grep -q 'anything else aborts' <<<"$out" &&
+    [ "$(_events "$t" human-approved)" = "2" ] && [ -n "$id2" ] && [ "$id2" != "$id1" ]; } || {
+    ok=false
+    echo "  appended: rc=$rc id1=$id1 id2=$id2 out=$out"
+  }
+  # An approval from before plan binding (no record) is approved again.
+  jq 'del(.approved_plan)' "$t/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" >"$t/m" &&
+    mv "$t/m" "$t/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json"
+  rc=0
+  out=$(_tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  { [ "$rc" -eq 0 ] && grep -q 'already_approved=false' <<<"$out" && [ "$(_bound_id "$t")" = "$id2" ]; } || {
+    ok=false
+    echo "  legacy: rc=$rc out=$out"
+  }
+  rm -rf "$t"
+  $ok && _pass "approve.sh: the already-approved shortcut holds only for the exact bound plan; a changed or unbound plan is approved again and re-bound" ||
+    _fail "approve.sh: re-approval does not follow the plan binding"
+}
+
+test_reject_clears_plan_binding() {
+  local t rc=0
+  t=$(_mk_ticket)
+  _tenv "$t" human_pty WIL-1 bash "$APPROVE_SH" WIL-1 >/dev/null 2>&1 || rc=$?
+  [ -n "$(_bound_id "$t")" ] || rc=99
+  _tenv "$t" human_pty WIL-1 bash "$REJECT_SH" WIL-1 >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ] && [ -z "$(_bound_id "$t")" ] && [ -z "$(_mf "$t" approved)" ]; then
+    _pass "reject.sh: clears approved_plan with the approval"
+  else
+    _fail "reject.sh: approved_plan must be cleared with the approval (rc=$rc bound=$(_bound_id "$t"))"
+  fi
+  rm -rf "$t"
+}
+
+test_binding_writer_refuses_agents_and_unapproved() {
+  local t rc=0 ok=true rec='{"type":"simple-fix","id":"'"$(printf 'a%.0s' {1..64})"'","files":[{"path":"simple-fix.md","size":1,"sha256":"'"$(printf 'b%.0s' {1..64})"'"}]}'
+  t=$(_mk_ticket)
+  REPOS_ROOT="$t/repos" human_env env CLAUDE_CODE_SESSION_ID=abc bash -c \
+    "source '$LIB_DIR/manifest-write.sh'; set_ticket_approved_plan WIL-1 '$rec'" 2>/dev/null || rc=$?
+  [ "$rc" -eq 4 ] || ok=false
+  rc=0
+  REPOS_ROOT="$t/repos" human_env bash -c \
+    "source '$LIB_DIR/manifest-write.sh'; set_ticket_approved_plan WIL-1 '$rec'" 2>/dev/null || rc=$?
+  [ "$rc" -eq 5 ] || ok=false
+  [ -z "$(_bound_id "$t")" ] || ok=false
+  rm -rf "$t"
+  $ok && _pass "set_ticket_approved_plan: refused in an agent context (4) and with no human approval (5)" ||
+    _fail "set_ticket_approved_plan: refusals wrong"
+}
+
 # ── operator text names the terminal command ────────────────────────────────
 # /ticket-approve and /ticket-reject only print a command, so a message that
 # tells a person to "run /ticket-approve <ID>" sends them on a detour. The
@@ -521,6 +677,13 @@ test_flow_direct_human_triggers_refused_for_agents
 test_flow_policy_approval_unaffected
 test_flow_invalid_provenance_is_usage_error
 test_writer_refuses_human_provenance_for_agents
+test_approve_records_plan_binding
+test_approve_refused_without_plan
+test_approve_refused_for_non_plain_plan_file_name
+test_approve_refused_for_symlinked_plan
+test_approve_reapprove_rebinds_changed_plan
+test_reject_clears_plan_binding
+test_binding_writer_refuses_agents_and_unapproved
 test_operator_text_names_terminal_command
 
 echo "---"
