@@ -79,6 +79,11 @@ PLANNER_CROSSCHECK_PROP_STOPWORDS=(
   "reaches" "reach" "ticket" "tickets" "spec" "specs" "page" "same" "also"
   "only" "both" "other" "others" "sibling" "siblings" "still" "never" "ever"
   "which" "have" "has" "been" "being" "here" "there" "when" "then" "than"
+  # Disposition and severity words (F94): a Consensus heading carries them,
+  # no spec ever does, so as a term they make any share "missing".
+  "accept" "accepted" "accepts" "reject" "rejected" "rejects" "defer"
+  "deferred" "defers" "clarified" "partially" "partly" "critical" "high"
+  "medium" "major" "minor" "blocker" "blocking" "nit" "nits" "low" "info"
 )
 
 # Fraction of extracted terms that must be present in a target file for the
@@ -189,14 +194,51 @@ _planner_crosscheck_strip_slugs() {
 
 # ── Check 1/2: Consensus resolution propagation ──────────────────────────────
 
-# Split consensus.md into "finding blocks" (blank-line-separated paragraphs)
-# and keep only blocks that read as an accepted disposition.
+# Split consensus.md into "finding blocks" and keep only blocks that read as
+# an accepted disposition.
+#
+# A finding heading (`### F3 — minor — <title> — accepted`, any `##`–`######`
+# heading whose first token is a finding id such as F3, G1 or PO-2) opens a
+# block that runs to the next heading: the heading, its paragraphs and its
+# list are one finding. Its disposition is the last of accepted / rejected /
+# deferred the heading names, so a body that mentions a rejected option does
+# not hide an accepted finding and a deferred one is never checked; a heading
+# with no disposition word falls back to the paragraph rule over the whole
+# section. Splitting such a section on blank lines made the heading its own
+# block, whose only term for the second slug was the disposition word (F94,
+# iteration 16), and left the body that names the specs with no "accepted"
+# at all, so the native format judged nothing (recall operator R1).
+#
+# Text outside a finding section keeps the old rule: blank-line paragraphs
+# that say "accepted" and not reject/defer (the list-item formats of
+# iterations 01–03).
 # Usage: _planner_crosscheck_accepted_blocks <consensus_file>
 # Output: blocks separated by a NUL byte (blocks may contain embedded newlines).
 _planner_crosscheck_accepted_blocks() {
   local consensus_file="$1"
-  awk 'BEGIN{RS=""; ORS="\0"} tolower($0) ~ /accepted/ && tolower($0) !~ /reject|defer/ {print}' \
-    "$consensus_file" 2>/dev/null
+  awk '
+    BEGIN { ORS = "\0" }
+    function para_ok(t,   l) { l = tolower(t); return l ~ /accepted/ && l !~ /reject|defer/ }
+    function lastpos(h, w,   p, q) { p = 0; while ((q = index(substr(h, p + 1), w)) > 0) p += q; return p }
+    function flush_para() { if (para != "" && para_ok(para)) print para; para = "" }
+    function flush_sec(   h, a, r, d) {
+      if (!insec) return
+      h = tolower(head)
+      a = lastpos(h, "accept"); r = lastpos(h, "reject"); d = lastpos(h, "defer")
+      if (a + r + d == 0) { if (para_ok(sec)) print sec }
+      else if (a > r && a > d) print sec
+      insec = 0; sec = ""; head = ""
+    }
+    /^##+[ \t]+[A-Za-z]+-?[0-9]+([^0-9A-Za-z]|$)/ {
+      flush_para(); flush_sec()
+      insec = 1; head = $0; sec = $0; next
+    }
+    /^#/ { flush_sec(); para = (para == "") ? $0 : para "\n" $0; next }
+    insec { sec = sec "\n" $0; next }
+    /^[ \t]*$/ { flush_para(); next }
+    { para = (para == "") ? $0 : para "\n" $0 }
+    END { flush_para(); flush_sec() }
+  ' "$consensus_file" 2>/dev/null
 }
 
 # Attribute a block's text to the ticket slugs it names. A Consensus block
@@ -207,7 +249,11 @@ _planner_crosscheck_accepted_blocks() {
 # rehearsal F25: 3 false RESOLUTION_NOT_PROPAGATED findings).
 #
 # Units are list items (a "-", "*", "+" or "N." line plus its continuation
-# lines); text before the first item is one more unit. Within a unit, a slug
+# lines), paragraphs (a blank line ends a unit) and heading lines; text
+# before the first item of a paragraph is one more unit. Paragraph and
+# heading units matter for a native `### F<n>` section, the one block kind
+# with blank lines inside: its heading and its intro paragraph are not the
+# lead of the first slug the body names. Within a unit, a slug
 # mention or a run of mentions joined only by commas/"and"/"or" ("a, b and c")
 # forms a group. The text after a group, up to the next group, belongs to
 # every slug in it; the unit's lead (text before its first group) also goes to
@@ -216,14 +262,15 @@ _planner_crosscheck_accepted_blocks() {
 # bullet holding the resolution) is printed as a block-wide "free" line, the
 # last fallback for a slug whose own share carries no terms. Mentions are
 # matched literally on token boundaries, with surrounding backticks removed
-# with them.
+# with them; a mention inside a longer code span (`specs/a.md`) is not a
+# mention.
 # Usage: printf '%s\n' "$block" | _planner_crosscheck_prop_segments <slug1> [<slug2> ...]
 # Output: "<slug>\tseg\t<text>", "<slug>\tlead\t<unit lead>" and
 # "\tfree\t<unit text>" lines.
 _planner_crosscheck_prop_segments() {
   PROP_SLUGS="$*" awk '
     function isword(c) { return c ~ /[A-Za-z0-9_-]/ }
-    function emit(u,   ns, sl, i, s, off, p, a, b, n, st, en, nm, j, k, t, g, gs, ge, gm, gap, lead, seg, ms, mm, endp) {
+    function emit(u,   ns, sl, i, s, off, p, a, b, n, st, en, nm, j, k, t, g, gs, ge, gm, gap, lead, seg, ms, mm, endp, bt, exact) {
       if (u == "") return
       ns = split(ENVIRON["PROP_SLUGS"], sl, " ")
       n = 0
@@ -236,7 +283,12 @@ _planner_crosscheck_prop_segments() {
           off = b
           if (a > 1 && isword(substr(u, a - 1, 1))) continue
           if (b < length(u) && isword(substr(u, b + 1, 1))) continue
-          if (a > 1 && b < length(u) && substr(u, a - 1, 1) == "`" && substr(u, b + 1, 1) == "`") { a--; b++ }
+          exact = (a > 1 && b < length(u) && substr(u, a - 1, 1) == "`" && substr(u, b + 1, 1) == "`")
+          # Inside a longer code span (`specs/a.md`, `a-test-data`) it is
+          # a path or a name, not the spec being handed a piece.
+          bt = substr(u, 1, a - 1)
+          if (!exact && gsub(/`/, "", bt) % 2 == 1) continue
+          if (exact) { a--; b++ }
           n++; st[n] = a; en[n] = b; nm[n] = s
         }
       }
@@ -270,10 +322,33 @@ _planner_crosscheck_prop_segments() {
       }
     }
     { gsub(/\t/, " ") }
+    /^[ \t]*$/ { emit(cur); cur = ""; next }
+    /^#/ { emit(cur); emit($0); cur = ""; next }
     /^[ \t]*([-*+]|[0-9]+\.)[ \t]/ { emit(cur); cur = $0; next }
     { cur = (cur == "") ? $0 : cur " " $0 }
     END { emit(cur) }
   '
+}
+
+# The slugs a native `### F<n>` section hands a piece of the resolution to:
+# those that open a list item ("- `api`: …", "- **`api`:** …", "1. api — …").
+# The native format's prose names specs in every role — as a dependency
+# ("now blocked by `a`"), as where something was removed from ("gone from
+# both the proposal and `a`"), as a statement of fact ("`a` and `b` already
+# build …") — and judged as recipients those gave 8 false findings on the
+# iteration 11–16 finals (planner-halt-recall F94 fix), against 0 true. A
+# per-spec list item is the one shape that says "this spec gets this".
+# Usage: _planner_crosscheck_prop_item_slugs <block> <slug>...
+# Output: one slug per line, in argument order.
+_planner_crosscheck_prop_item_slugs() {
+  local block="$1"
+  shift
+  local slug lead_re
+  for slug in "$@"; do
+    lead_re="^[[:space:]]*([-*+]|[0-9]+\.)[[:space:]]+(\*\*)?\`?${slug}\`?(\*\*)?[[:space:]]*(\*\*)?(:|—|–| - |\()"
+    grep -qE -- "$lead_re" <<<"$block" && echo "$slug"
+  done
+  return 0
 }
 
 # Check every accepted consensus finding that names 2+ known tickets for
@@ -297,6 +372,11 @@ planner_crosscheck_consensus_propagation() {
 
     local -a named_slugs
     mapfile -t named_slugs < <(_planner_crosscheck_slugs_in_text "$block" "${known_slugs[@]}")
+    # A native finding section is judged only on the specs it hands a piece
+    # to in its own list item; see _planner_crosscheck_prop_item_slugs.
+    case "$block" in
+    '#'*) mapfile -t named_slugs < <(_planner_crosscheck_prop_item_slugs "$block" "${named_slugs[@]}") ;;
+    esac
     [ "${#named_slugs[@]}" -ge 2 ] || continue
 
     local -A seg_text=() lead_text=()
@@ -332,7 +412,9 @@ planner_crosscheck_consensus_propagation() {
         if [ "$backticked_only" -eq 1 ]; then
           case "$share" in *'`'*'`'*) ;; *) continue ;; esac
         fi
-        mapfile -t terms < <(_planner_crosscheck_prop_terms "$share")
+        # A span naming a markdown heading (`## Technical Context`) or a spec
+        # file (`specs/a.md`) says where an edit went, not what it holds.
+        mapfile -t terms < <(_planner_crosscheck_prop_terms "$share" | grep -vE '^#|(^|/)specs/')
         [ "${#terms[@]}" -gt 0 ] && break
       done
       [ "${#terms[@]}" -eq 0 ] && continue

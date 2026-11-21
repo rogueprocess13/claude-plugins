@@ -17,6 +17,39 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.60.0 (2026-11-21) — planner-halt-recall: fix the Crosscheck false fires part (c) found
+
+No code is demoted and `PLANNER_CROSSCHECK_WARN_CODES` is unchanged: the checker bugs
+behind the false fires are fixed instead, and recall is re-measured (no code drops).
+
+- **`RESOLUTION_NOT_PROPAGATED` (F94, bug 6).** A native `### F<n> — … — accepted`
+  Consensus section is now one block, heading to the next heading, instead of
+  blank-line paragraphs; its disposition is the last accepted / rejected / deferred word
+  of the heading. Such a section is judged only on the specs that open one of its list
+  items (`- \`api\`: …`): judging every prose mention ("now blocked by `a`", "gone from
+  `a`", "`a` and `b` already build …") gave 8 false findings on the iteration 11–16
+  finals and 0 true. Disposition and severity words (accepted, minor, critical, …) are
+  never terms; a slug inside a longer code span (`specs/a.md`) is not a mention; a
+  heading-name or spec-path span is not a term. Iteration 16's halt no longer fires.
+- **`PRECEDENT_NOT_FOUND` (bugs 1 + 2, together).** REPOS_ROOT's `.grill/` (grill-me's
+  answers quote the brief) is excluded from the precedent search and from the contracts
+  repo-definition search, and an identifier a spec of the same plan creates — marked
+  `(new …)`, or in the code-span run right after exports / defines / adds / creates /
+  introduces / declares / new — counts as resolved. Fixing only the first would have
+  turned iteration 13's in-plan `users` into a new halt.
+- **`CONTRACT_MISMATCH` (bug 4).** A spec pair is disjoint only when neither paragraph
+  shares a term with anything the other initiative says about the structure, so a
+  consumer spec's call-site paragraph is no longer compared with a sibling's definition
+  on its own.
+- **Recall re-measured** (`corpus/recall/results.tsv` regenerated). RESOLUTION 15/20 →
+  20/20 caught (R1, the native format, was untested on all 5 plans), untested 5 → 0;
+  PRECEDENT control false fires 1 → 0; CONTRACT_MISMATCH seeded-control false fires 3/5
+  → 0/5 and collateral 4 → 0. Every other cell is unchanged.
+- **Ledger.** The iteration 16 F94 row is `fixed=yes live=no`, so it leaves the G4
+  candidate list (`test-planner-gate-ledger.sh` pins three).
+- **Tests.** New `lib/tests/test-planner-crosscheck-false-fires.sh` (Makefile): each
+  false-fire case failed before the fix, each recall guard passes before and after.
+
 ## ticket-planner 0.59.0 (2026-11-21) — planner-halt-recall (c): recall for the 8 blocking prose Crosscheck codes
 
 A measurement only: no check, code list or gate behaviour changes. M3's rule is that no
