@@ -409,13 +409,14 @@
     {
       "name": "VERIFY_QA_PERSONA",
       "plugin": "ticket-auto-pipeline",
-      "default": "false",
+      "default": "bug",
       "on_value": "true",
+      "values": ["bug", "true", "false"],
       "category": "feature",
-      "summary": "ticket-verify loads the qa-engineer persona (Playwright or API-testing specializer by verification mode) and adds up to 3 supporting checks per acceptance criterion, 12 in total; findings no criterion covers are reported as observations and never change the verdict.",
+      "summary": "bug (default): on for bug tickets only (ticket-type.sh: manifest type, else a bug label); true: every ticket; false: off. When on, ticket-verify loads the qa-engineer persona (Playwright or API-testing specializer by verification mode) and adds up to 3 supporting checks per acceptance criterion, 12 in total; findings no criterion covers are reported as observations and never change the verdict.",
       "requires": [],
       "recommend": "situational",
-      "why": "Opt-in until one ticket per verification mode has been compared with a run from before: a wider plan takes longer, and a supporting check that shows a criterion is not met adds FAILs.",
+      "why": "Negative, alternate-route and regression checks matter most where a fix was tested on one path, so bug tickets get them by default while the META qa-supporting counts show whether they catch anything; true widens it to features, at the cost of a longer plan and FAILs a supporting check finds against a criterion.",
       "docs": "ticket-auto-pipeline/docs/skills/ticket-verify.md"
     },
     {

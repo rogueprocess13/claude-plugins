@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.142.0 (2026-11-22) — the VERIFY QA persona is on for bug tickets by default
+
+`VERIFY_QA_PERSONA` shipped off (#748) and so never got the live run its rollout waited on. It now takes three values: `bug` (the new default), `true` (every ticket, the old opt-in) and `false` (off).
+
+- **`lib/qa-persona-wanted.sh <TID> [<context.md>]`** prints `true` or `false`. With `bug` it is `true` only when `ticket-type.sh` derives the type `bug` (the local manifest `type`, else a whole `bug` label). Any other value counts as `bug`, with one `META|qa-persona|warn` line. `ticket-verify` Step 1g calls it instead of reading the flag, so the decision stays in bash; SKILL.md does not grow.
+- Bug fixes are where a fix is most often tested on one path only, so the persona's negative-path, edge-value and regression checks pay off there first. Its verdict rule is unchanged: a supporting check fails a ticket only when the criterion's own wording covers it; anything else is an observation. The `META|qa-supporting` counts on each run show whether to widen it to features (`true`).
+- `features.json` lists the three values; docs updated. Amends the unarchived openspec change `verify-qa-persona` (task group 5).
+
 ## 0.141.0 (2026-11-21) — stitched videos show tokens, elapsed time and active agents
 
 A `--record` video showed what the pipeline did, but not what it cost or how long it took: every frame lasts 1.5–2 s, so a 6-hour run and a 6-minute run looked the same. The pipeline log already held the numbers.

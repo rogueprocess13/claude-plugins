@@ -1,6 +1,6 @@
-# ticket-verify — QA persona (`VERIFY_QA_PERSONA=true`)
+# ticket-verify — QA persona (`VERIFY_QA_PERSONA`)
 
-Read only when Step 1g's condition holds. With the flag off none of this applies: no persona, no supporting checks, no Observations section. The persona widens the plan; it never widens the verdict. PASS or FAIL still follows the ticket's acceptance criteria only.
+Read only when Step 1g's helper prints `true`. Otherwise none of this applies: no persona, no supporting checks, no Observations section. The persona widens the plan; it never widens the verdict. PASS or FAIL still follows the ticket's acceptance criteria only.
 
 ## Contents
 

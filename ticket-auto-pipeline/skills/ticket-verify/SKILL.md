@@ -173,7 +173,7 @@ If that prints nothing, run Steps 1b, 1c and 1e first. After a context compactio
 
 ### 1g — QA persona (load condition)
 
-Run `echo "VERIFY_QA_PERSONA=${VERIFY_QA_PERSONA:-false}"`. **If it prints `true`**, before Step 2, and before re-entering Step 4b, 4c or 4c-live on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/qa-persona.md`, then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/qa-persona.md"` and stop. Otherwise skip it: no persona, no supporting checks, no Observations section.
+Run `bash ~/.claude/skills/lib/qa-persona-wanted.sh {TICKET-ID} "{ticket-dir}/context.md"`. **If it prints `true`**, before Step 2, and before re-entering Step 4b, 4c or 4c-live on a `--from-step` resume, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/qa-persona.md`, then Read the printed path in full, then continue. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/qa-persona.md"` and stop. Otherwise: no persona, no supporting checks, no Observations section.
 
 ### 1h — Recording (load condition)
 

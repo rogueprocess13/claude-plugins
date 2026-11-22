@@ -319,9 +319,13 @@ test_verify_qa_persona_behind_flag_in_step_1g() {
     echo "  ticket-verify has no Step 1g"
     return 1
   }
-  # shellcheck disable=SC2016 # the literal default expression, not an expansion
-  grep -qF '${VERIFY_QA_PERSONA:-false}' <<<"$sec" || {
-    echo "  Step 1g does not read VERIFY_QA_PERSONA with a false default"
+  # The decision is the helper's (bug default), never the agent's.
+  grep -qF 'bash ~/.claude/skills/lib/qa-persona-wanted.sh {TICKET-ID}' <<<"$sec" || {
+    echo "  Step 1g does not decide through qa-persona-wanted.sh"
+    return 1
+  }
+  ! grep -qF 'VERIFY_QA_PERSONA:-' <<<"$sec" || {
+    echo "  Step 1g still reads VERIFY_QA_PERSONA itself"
     return 1
   }
   line=$(grep -F 'references/qa-persona.md' <<<"$sec" | grep -F 'skill-ref.sh' | head -1)
