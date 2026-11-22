@@ -2116,6 +2116,10 @@ per criterion, ≤ 12 total); PASS/FAIL stays on the acceptance criteria, extra 
 - [ ] 3. Dexter side (4.1–4.2): same pin bump as A; dexboard `personas.py` handles for
       `qa/playwright-web` and `qa/api-testing`; run view shows the verify persona from `META persona-select`.
 - [ ] 4. Small follow-up: `architect.md` and `product-owner.md` `used-by` lists disagree with the selector.
+- [x] 5. Default changed 2026-11-22, #813 (f47e7a49, 0.142.0): `VERIFY_QA_PERSONA` is `bug` (on for bug
+      tickets only, via `lib/qa-persona-wanted.sh` + `ticket-type.sh`), `true` (every ticket) or `false`.
+      Item 2's live check now needs only one real bug ticket under the default (task 5.5). Widen to
+      features only if `META|qa-supporting` counts show the checks catch real issues.
 
 After the live checks: archive both changes (`openspec/changes/<name>/handoff.md` has the details).
 
@@ -2483,6 +2487,31 @@ backfill seeds tracker-label approvals as `policy`, operator text names `approve
 - [ ] Old issue body revisions (#761–#774, one #667 comment) still show internal ticket ids in the public
       edit history. GitHub has no API for it: delete in the web UI ("edited" dropdown).
 
+## Step 24 — QA beyond the happy path: negative tests and other routes on bug fixes — proposed 2026-11-22, not started
+
+Why: VERIFY proves the acceptance criteria on the happy path. A human QA person also tries bad input,
+the same page reached by another route, and the old bug coming back. Web research (2026-11-22) agreed:
+an agent can do this if it is separate from the one that wrote the fix, reads only, writes down what
+it expects before it looks, and is gated by risk; and a regression test only counts if it fails on the
+code before the fix. Builds on Step 20 B (QA persona, on for bugs since #813). Bugs first, same as #813.
+
+- [ ] 1. **Pre-fix-fails gate (deterministic, bash).** For a bug ticket, run the new or changed
+      regression test against the base commit (fix reverted) and require it to fail, then pass on the
+      branch. A test that passes on both proves nothing: hold or fail the ticket. Cheapest item, no
+      model involved; do it first.
+- [ ] 2. **Independent QA phase (read-only agent).** After VERIFY passes on a bug ticket: a fresh agent
+      that did not see the implementation writes a short checklist first (negative inputs, alternate
+      routes to the same page/action, permissions, re-open of the original bug), then runs it. Findings
+      go to Observations plus `META|qa-supporting`; never changes PASS/FAIL until counts show its
+      findings are real. Gated by risk (ticket type `bug`, later complexity). Same guard as Step 20 B:
+      no mocking, no URL navigation, no new pass criteria. Needs `nav-hints` for the alternate routes.
+- [ ] 3. **Browser regression pack, browser-only bugs.** When a bug can only be seen in the browser,
+      keep its Playwright check as a committed regression test in the app repo; quarantine flaky ones
+      instead of retrying them green. Not for bugs a unit or API test already covers.
+
+Measure before widening: per-ticket count of QA findings that turned into real defects vs noise, and
+added run time. Each item is its own openspec change.
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -2532,6 +2561,10 @@ backfill seeds tracker-label approvals as `policy`, operator text names `approve
 13. **Step 21 replaces the Step 16/19 rehearsal loop once agreed.** It runs before Steps 1–15
    and 20's live checks that touch the planner, so the measurement baseline is not moved mid-programme.
    Its M0–M1 change no pipeline code and can start at once; Step 20's live checks wait until after M4.
+
+14. **Step 24 is quality improvement, not harm reduction**, so it queues behind Step 21 and the Step 20
+   B live check (the bug-default QA persona must show value first). Item 1 is deterministic and
+   self-contained, so it can go earlier if the operator wants. The operator decides the final slot.
 
 ### Parallel track
 
