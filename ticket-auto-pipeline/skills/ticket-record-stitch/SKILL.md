@@ -5,34 +5,27 @@ description: Builds a video from the recordings of one or more tickets that ran 
 
 # Ticket Record Stitch
 
-Turns the frames a recording run saved under each ticket's `artifacts/recordings/` into one MP4. A thin wrapper around `lib/record-stitch.sh`: the script picks the frames, checks them and runs `ffmpeg`. It is not a pipeline phase, so there is no pipeline preamble, no log line and no tracker write.
+Turns the frames saved under each ticket's `artifacts/recordings/` into one MP4. A thin wrapper around `lib/record-stitch.sh`, which picks and checks the frames and runs `ffmpeg`. Not a pipeline phase: no preamble, no log line, no tracker write.
 
 ## Usage
 
 ```
-/ticket-record-stitch <TICKET-ID>... [--out FILE] [--order given]
-/ticket-record-stitch --clip <TICKET-ID>
+/ticket-record-stitch <TICKET-ID>... [--out FILE] [--order given] [--anim] [--no-overlay]
+/ticket-record-stitch --clip <TICKET-ID> [--anim] [--no-overlay]
 ```
 
 ## Execution
 
-Run from the tickets root (the directory `/ticket-auto` runs from). Pass the ticket IDs exactly as the user gave them; never look for frame files yourself.
-
-Video over one or more tickets (the default):
+Run from the tickets root. Pass the IDs and options as given; never look for frame files yourself.
 
 ```bash
-bash ~/.claude/skills/lib/record-stitch.sh video [--out FILE] [--order given] <TICKET-ID>...
+bash ~/.claude/skills/lib/record-stitch.sh video [--anim] [--no-overlay] [--out FILE] [--order given] <TICKET-ID>...
+bash ~/.claude/skills/lib/record-stitch.sh clip [--anim] [--no-overlay] <TICKET-ID>   # --clip
 ```
 
-One ticket's verification clip only (`--clip`):
+It prints the output path: `./recording-<ID>.mp4` (or `--out`) for `video`, `<ticket dir>/artifacts/recordings/<ID>-verify.mp4` for `clip`. Tickets come in first-frame order unless `--order given`; re-running replaces only the output. Frames show tokens, elapsed time and active agents from the pipeline log; `--no-overlay` leaves them out, `--anim` adds a pixel-art coder.
 
-```bash
-bash ~/.claude/skills/lib/record-stitch.sh clip <TICKET-ID>
-```
-
-The script resolves each ticket's directory under `REPOS_ROOT` and prints the output path on stdout: `./recording-<ID>.mp4` (or `--out`) for `video`, `<ticket dir>/artifacts/recordings/<ID>-verify.mp4` for `clip`. Tickets are shown in the order of their first frame; `--order given` keeps the order typed. Re-running replaces only the output file.
-
-Report the printed path. On a non-zero exit report the script's stderr and stop; do not retry and do not build a video another way:
+Report the printed path. On a non-zero exit report stderr and stop; do not retry or build a video another way:
 
 | Exit | Meaning |
 |------|---------|

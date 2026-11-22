@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.141.0 (2026-11-21) — stitched videos show tokens, elapsed time and active agents
+
+A `--record` video showed what the pipeline did, but not what it cost or how long it took: every frame lasts 1.5–2 s, so a 6-hour run and a 6-minute run looked the same. The pipeline log already held the numbers.
+
+- **Overlay (on by default).** `record-stitch.sh plan` reads each ticket's pipeline log (read only) and adds one `#overlay <elapsed_s> <tokens_total> <tokens_out> <agents> <tier>` comment line after every frame. `render` draws three lines at the top right: `tokens 4.38M  out 23.2K`, `HH:MM:SS` since the ticket started, and `agents N`. Values are "latest known" at the frame's time. Tokens are phase agents' tokens as logged (`META|tokens`), not run cost. Agents count across every ticket in the video, so parallel runs show. An `ffmpeg` without `drawtext` writes the video without text and one note. A malformed `#overlay` line is exit 3.
+- **`--anim`.** A 192×192 original pixel-art coder loops in the bottom-left corner: idle (3 fps) with no agent, normal (8 fps), fast (16 fps) with two or more agents or output tokens at `RECORD_ANIM_FAST_TPS` per second (default 10). Each frame becomes its own segment, joined with `-c copy`; total duration is unchanged. The frames are drawn from ASCII grids in `lib/record-assets/coder.grid` by a stdlib-only generator; a test keeps the committed PNGs in step with the grid. The SessionStart sync now copies `lib/record-assets/*.png` to `~/.claude/skills/lib/record-assets/`.
+- **`--no-overlay`** keeps the old output; `plan --no-overlay` is byte-identical to the previous plan. `/ticket-record-stitch` passes both options through.
+
 ## ticket-planner 0.60.0 (2026-11-21) — planner-halt-recall: fix the Crosscheck false fires part (c) found
 
 No code is demoted and `PLANNER_CROSSCHECK_WARN_CODES` is unchanged: the checker bugs

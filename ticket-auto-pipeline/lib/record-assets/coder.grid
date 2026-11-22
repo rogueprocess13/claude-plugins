@@ -1,0 +1,481 @@
+# coder.grid - pixel-art sprite for the record-stitch overlay (openspec
+# change record-stitch-overlay, D8). Original art. gen-coder-sprite.py turns
+# it into coder-work-01..08.png and coder-idle-01..04.png (192x192 RGBA).
+#
+# Format:
+#   - Lines starting with '#' and blank lines between blocks are ignored.
+#   - "palette <char> #rrggbb" declares one opaque colour per character.
+#     All palette lines come before the first frame. '.' is reserved for
+#     transparent and is never declared.
+#   - "frame <work|idle>-NN" starts a frame; exactly 32 rows of exactly 32
+#     palette characters follow, with no blank or comment lines inside.
+#   - Exactly work-01..work-08 then idle-01..idle-04, in that order.
+#
+# After editing, regenerate and commit the PNGs:
+#   python3 ticket-auto-pipeline/lib/record-assets/gen-coder-sprite.py
+# (test-record-assets.sh fails while the PNGs and this file disagree.)
+
+# outline
+palette O #0b0d10
+# hair
+palette H #6b3f22
+# hair highlight
+palette h #93603a
+# skin
+palette S #f2c08a
+# skin shade
+palette s #c98e5c
+# eye
+palette E #1a1d22
+# hoodie
+palette C #2fa4a9
+# hoodie shade
+palette c #1d7478
+# sleeve highlight
+palette A #6fd3d6
+# trousers
+palette P #3b4766
+# shoes
+palette W #d0d4da
+# chair
+palette R #5a6070
+# chair shade
+palette r #353a45
+# desk top
+palette D #d19a5b
+# desk front
+palette d #9a6534
+# desk leg
+palette L #6e4523
+# monitor frame
+palette M #8a93a3
+# monitor stand
+palette m #4a515e
+# screen
+palette G #10243a
+# screen glow edge
+palette g #1d4a6e
+# code green
+palette 1 #7ee787
+# code blue
+palette 2 #79c0ff
+# code orange
+palette 3 #ffa657
+# code pink
+palette 4 #ff7b9c
+# cursor
+palette X #f0f6fc
+# keyboard
+palette K #5c6470
+# key
+palette k #aab3c0
+# mug
+palette U #e05d5d
+
+frame work-01
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G3XGGGMO
+OO..OSSSSsO.....OMgGGGGGGGGGGGMO
+rROOccsssO......OMgGGGGGGGGGGGMO
+rRO.OCCCCCO.....OMgGGGGGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOOOssO..OmmO.OUUUO
+rROcCCCCCCOOOSSSOOOOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-02
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1XGGGGGMO
+rROOccsssO......OMgGGGGGGGGGGGMO
+rRO.OCCCCCO.....OMgGGGGGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOOOOOOOOOOOmmOOOOOO.
+rROcCCCCCOCCAcSSSOO...OmmO.OUUUO
+rROcCCCCCCOOOOOOsssOOOOmmOOOUUUU
+rROcccccccOOKkKkKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-03
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111XGGMO
+rROOccsssO......OMgGGGGGGGGGGGMO
+rRO.OCCCCCO.....OMgGGGGGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOOOssO..OmmO.OUUUO
+rROcCCCCCCOOOSSSOOOOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-04
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2XGGGGMO
+rRO.OCCCCCO.....OMgGGGGGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-05
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222XGMO
+rRO.OCCCCCO.....OMgGGGGGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOOOOOOOOOOOmmOOOOOO.
+rROcCCCCCOCCAcSSSOO...OmmO.OUUUO
+rROcCCCCCCOOOOOOsssOOOOmmOOOUUUU
+rROcccccccOOKkKkKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-06
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111XGGGGGGGMO
+rROOCCCCCCCO....OMgGGGGGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOOOssO..OmmO.OUUUO
+rROcCCCCCCOOOSSSOOOOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-07
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg333XGGGGGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOOOOOOOOOOOmmOOOOOO.
+rROcCCCCCOCCAcSSSssO..OmmO.OUUUO
+rROcCCCCCCOOOOOOsOOOOOOmmOOOUUUU
+rROcccccccOOKkKkKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame work-08
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg3333G11XGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame idle-01
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg3333G11XGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame idle-02
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg3333G11XGGGMO
+rROcCCOAAACO....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame idle-03
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSsSSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg3333G11GGGGMO
+rROcCCOAAACO....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO
+
+frame idle-04
+................................
+................................
+................................
+.....OOOOO......................
+....OHHHHHO......OOOOOOOOOOOOOO.
+...OHHhhhHHO....OMMMMMMMMMMMMMMO
+...OHHHHSSSO....OMggggggggggggMO
+...OHHSSSSSO....OMg444G2222GGGMO
+...OHHsSSESSO...OMgGG11111GGGGMO
+...OHSSSSSSO....OMgGG222G333GGMO
+OO..OSSSSsO.....OMgGGGG1111GGGMO
+rROOccsssO......OMgGG44G2222GGMO
+rRO.OCCCCCO.....OMg111GGGGGGGGMO
+rROOCCCCCCCO....OMg3333G11GGGGMO
+rROcCCOAAAO.....OMgGGGGGGGGGGGMO
+rROcCCCOCCAO....OMMMMMMMMMMMMMMO
+rROcCCCCOCCAOO...OOOOOOmmOOOOOO.
+rROcCCCCCOCCAcOO.OO...OmmO.OUUUO
+rROcCCCCCCOOOSSSOssOOOOmmOOOUUUU
+rROcccccccOOKkKsKkKkmmmmmmmmUUUO
+rROPPPPPPPPPDDDDDDDDDDDDDDDDDDDD
+rROPPPPPPPPPdddddddddddddddddddd
+ORRRRRRRRRRPPOOOOOOOOOOOOOOOOLLO
+OrrrrrrrrrrPPO..............OLLO
+.OOOOrrOOOOPPO..............OLLO
+....OrrO..OPPO..............OLLO
+....OrrO..OPPO..............OLLO
+..OOOrrOOOOPPO..............OLLO
+.ORRRRRRRROPPOO.............OLLO
+.OrrOOOOrrOWWWWO............OLLO
+..OO....OOWWWWWO............OLLO
+..........OOOOO.............OLLO

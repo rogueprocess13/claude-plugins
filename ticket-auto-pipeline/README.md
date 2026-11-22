@@ -188,7 +188,7 @@ Restart Claude Code after adding MCP servers.
 | `/ticket-pr-review <id>` | PR code review pass |
 | `/ticket-pr-iterate <id>` | Iteration on PR feedback |
 | `/ticket-prescan [path]` | Build durable agent-knowledge docs for a repo |
-| `/ticket-record-stitch <id>... [--out FILE]` | Build a video from the recordings of tickets that ran with `--record` (needs `ffmpeg`). `--clip <id>` builds one ticket's verification clip. |
+| `/ticket-record-stitch <id>... [--out FILE]` | Build a video from the recordings of tickets that ran with `--record` (needs `ffmpeg`). `--clip <id>` builds one ticket's verification clip. `--anim` adds a pixel-art coder; `--no-overlay` drops the token/time/agent text. |
 
 ### Human Decisions
 
@@ -323,6 +323,11 @@ Recording is noted once in the ticket's pipeline log, so a resume without `--rec
 | `/ticket-record-stitch <id>... [--out FILE] [--order given]` | `./recording-<id>.mp4` (`./recording-<id>-plus<N>.mp4` for several tickets): per ticket a title card, then its board and app frames in time order. Only the latest VERIFY attempt is shown. Tickets come in the order of their first frame; `--order given` keeps the order typed |
 | `/ticket-record-stitch --clip <id>` | `<ticket dir>/artifacts/recordings/<id>-verify.mp4`: the latest VERIFY attempt's app frames only |
 
+Both take `--no-overlay` and `--anim`:
+
+- **Overlay** (on unless `--no-overlay`): the top right of every frame shows `tokens <total>  out <output>`, the wall-clock time since the ticket started (`HH:MM:SS`, gate holds included) and `agents <n>`. All three come from the ticket's pipeline log, read only, as known at that frame's time, so they step rather than move smoothly. The token counter shows **phase agents' tokens as logged** (`META|tokens` lines), not the cost of the run: the router's own session, bash-only steps and the planner are not in it. `agents` counts the phase agents running at that moment in every ticket of the video, so tickets that ran in parallel show it. A ticket with no pipeline log gets no overlay; an `ffmpeg` without `drawtext` writes the video without text and says so once.
+- **`--anim`**: a small, original pixel-art coder loops in the bottom-left corner. It breathes and blinks when no agent is running, types at normal speed with one, and fast with two or more or when output tokens arrive at `RECORD_ANIM_FAST_TPS` per second or more. Each frame is rendered as its own short segment, so this is slower.
+
 The stitch needs `ffmpeg` (with `libx264`). So does `make test` in this repository: the render tests fail, not skip, without `ffmpeg` and `ffprobe`.
 
 ### Settings
@@ -333,6 +338,7 @@ The stitch needs `ffmpeg` (with `libx264`). So does `make test` in this reposito
 | `RECORD_SHOT_DEBUG` | (unset) | `1` prints the browser's error text when you run `recorder.sh login` or `check` by hand. Never the session |
 | `RECORD_DISABLE` | (unset) | `true` turns recording off for a ticket whose log has it on |
 | `RECORD_STITCH_TIMEOUT` | 300 | Seconds one stitch render may take |
+| `RECORD_ANIM_FAST_TPS` | 10 | Output tokens per wall-clock second at which `--anim` types fast. A non-negative integer; anything else means 10, with a note |
 
 ### When a board frame is missing
 

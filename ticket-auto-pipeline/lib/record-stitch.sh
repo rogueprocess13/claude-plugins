@@ -21,6 +21,17 @@
 # `#title <seconds> <TID> <title>` stands for one title card at that place.
 # A plan with no `file` line is empty.
 #
+# Overlay (openspec change record-stitch-overlay): unless --no-overlay, every
+# frame's `file` line is followed by
+#   #overlay <elapsed_s> <tokens_total> <tokens_out> <agents> <idle|normal|fast>
+# computed from the ticket's {TID}-pipeline.log (lib/log-dir.sh; read only),
+# counting log lines at or before the frame's ts, to the second: seconds since
+# the ticket's first log line, the sum of its META|tokens in+out+cache and of
+# out, agent intervals open across every ticket named, and the animation tier
+# (RECORD_ANIM_FAST_TPS output tokens/s, default 10). A ticket without a log
+# gets none. render draws the text at the top right; with --anim it also
+# loops the lib/record-assets/ coder sprite at the bottom left.
+#
 # What the planner lets in (nothing here is the caller's or an agent's choice):
 #   - entries with status "ok" only; lines that do not parse are skipped
 #   - an app entry only when its env is allowed by the *current* RECORD_ALLOWED
@@ -37,12 +48,12 @@
 #   - order: ts, then manifest line order. Output is the same on every run
 #
 # Usage:
-#   record-stitch.sh plan clip <TID>
-#   record-stitch.sh plan video [--order time|given] <TID>...
-#   record-stitch.sh render <plan file | -> <out.mp4>
-#   record-stitch.sh clip <TID>
+#   record-stitch.sh plan clip [--no-overlay] <TID>
+#   record-stitch.sh plan video [--no-overlay] [--order time|given] <TID>...
+#   record-stitch.sh render [--anim] <plan file | -> <out.mp4>
+#   record-stitch.sh clip [--no-overlay] [--anim] <TID>
 #       → <ticket dir>/artifacts/recordings/<TID>-verify.mp4
-#   record-stitch.sh video [--order time|given] [--out FILE] <TID>...
+#   record-stitch.sh video [--no-overlay] [--anim] [--order time|given] [--out FILE] <TID>...
 #       → FILE, default ./recording-<TID>.mp4 (./recording-<TID>-plus<N>.mp4)
 #
 # clip: the latest VERIFY attempt's app frames, 1.5 s each.
@@ -56,7 +67,8 @@
 # Exit codes:
 #   0  done (plan: also for an empty plan)
 #   2  usage, or a ticket id that is not one (nothing on stdout)
-#   3  nothing to render: empty plan, or a plan line that is not allowed
+#   3  nothing to render: empty plan, a plan line that is not allowed, a
+#      malformed #overlay line, or (--anim) a missing sprite PNG
 #   4  ffmpeg is not installed
 #   5  ffmpeg failed or timed out (RECORD_STITCH_TIMEOUT seconds for one
 #      render, default 300)
@@ -75,6 +87,8 @@ declare -f record_field >/dev/null 2>&1 ||
   source "$_RS_LIB_DIR/record.sh"
 declare -f resolve_ticket_dir >/dev/null 2>&1 ||
   source "$_RS_LIB_DIR/ticket-dir.sh"
+declare -f ticket_log_dir >/dev/null 2>&1 ||
+  source "$_RS_LIB_DIR/log-dir.sh"
 
 _RS_TID_RE='^[A-Za-z][A-Za-z0-9]*-[0-9]+$'
 _RS_FILE_RE='^(verify-a[0-9]+-[0-9]{3}|board-[0-9]+-[a-z0-9-]+)\.png$'
@@ -84,16 +98,18 @@ _RS_TITLE_SECS=2
 _RS_BG=1b1f24
 _RS_W=1280
 _RS_H=800
+_RS_FAST_TPS_DEFAULT=10
+_RS_ASSET_DIR="$_RS_LIB_DIR/record-assets"
 
 _rs_err() { echo "record-stitch: $*" >&2; }
 
 _rs_usage() {
   cat >&2 <<'EOF'
-Usage: record-stitch.sh plan clip <TID>
-       record-stitch.sh plan video [--order time|given] <TID>...
-       record-stitch.sh render <plan file | -> <out.mp4>
-       record-stitch.sh clip <TID>
-       record-stitch.sh video [--order time|given] [--out FILE] <TID>...
+Usage: record-stitch.sh plan clip [--no-overlay] <TID>
+       record-stitch.sh plan video [--no-overlay] [--order time|given] <TID>...
+       record-stitch.sh render [--anim] <plan file | -> <out.mp4>
+       record-stitch.sh clip [--no-overlay] [--anim] <TID>
+       record-stitch.sh video [--no-overlay] [--anim] [--order time|given] [--out FILE] <TID>...
 EOF
 }
 
@@ -184,6 +200,7 @@ _rs_ticket_lines() {
     [ -n "$path" ] || continue
     [ -n "$first" ] || first="$ts"
     body+="file $(_rs_quote "$path")"$'\n'
+    body+="#ovts $tid $ts"$'\n'
     if [ "$source" = "board" ]; then
       body+="duration $_RS_BOARD_SECS"$'\n'
     else
@@ -214,33 +231,163 @@ _rs_check_ids() {
   done
 }
 
-# record_stitch_plan clip <TID> | video [--order time|given] <TID>...
+# _rs_fast_tps — RECORD_ANIM_FAST_TPS when it is a non-negative integer, else
+# the default with one note on stderr.
+_rs_fast_tps() {
+  local v="${RECORD_ANIM_FAST_TPS:-}"
+  if [ -z "$v" ]; then
+    printf '%s\n' "$_RS_FAST_TPS_DEFAULT"
+  elif [[ "$v" =~ ^[0-9]{1,9}$ ]]; then
+    printf '%s\n' "$((10#$v))"
+  else
+    _rs_err "RECORD_ANIM_FAST_TPS='$v' is not a non-negative integer; using $_RS_FAST_TPS_DEFAULT"
+    printf '%s\n' "$_RS_FAST_TPS_DEFAULT"
+  fi
+}
+
+# _rs_overlay_fill <true|false> <TID>... — reads a plan carrying internal
+# `#ovts <TID> <ts>` markers (one after every frame's `file` line) on stdin and
+# prints it with each marker replaced by its `#overlay` line (design D1–D5),
+# or dropped when overlay is off, the ticket has no pipeline log, or the
+# frame's ts does not parse. Reads the pipeline logs only.
+_rs_overlay_fill() {
+  local overlay="$1" plan dir tid log seen=" " tps
+  shift
+  plan=$(
+    cat
+    printf x
+  )
+  plan="${plan%x}"
+  if [ "$overlay" != "true" ]; then
+    printf '%s' "$plan" | sed '/^#ovts /d'
+    return 0
+  fi
+  tps=$(_rs_fast_tps)
+  dir=$(REPOS_ROOT="$(record_field REPOS_ROOT)" ticket_log_dir 2>/dev/null) || dir=""
+  {
+    if [ -n "$dir" ]; then
+      for tid in "$@"; do
+        case "$seen" in *" $tid "*) continue ;; esac
+        seen+="$tid "
+        log="$dir/$tid-pipeline.log"
+        if [ -f "$log" ] && [ -r "$log" ]; then
+          awk -v t="$tid" '{ print t "\t" $0 }' "$log" 2>/dev/null || true
+        fi
+      done
+    fi
+  } | jq -R -s -j --rawfile plan <(printf '%s' "$plan") --argjson tps "$tps" '
+    def isots: test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}");
+    def epoch: try ((.[0:19] + "Z") | fromdateiso8601) catch null;
+    def msg: .f[4:] | join("|");
+    # Frame ts (ISO-8601 with optional fraction, or epoch milliseconds) ->
+    # {s: whole seconds, ms: milliseconds}, or null.
+    def frame_time:
+      if test("^[0-9]+$") then (tonumber) as $m | {s: (($m / 1000) | floor), ms: $m}
+      elif isots then
+        (epoch) as $s
+        | if $s == null then null
+          else ((capture("^.{19}\\.(?<f>[0-9]+)").f // "0") + "00")[0:3] as $f
+            | {s: $s, ms: ($s * 1000 + ($f | tonumber))} end
+      else null end;
+
+    [ split("\n")[] | select(length > 0)
+      | index("\t") as $i | select($i != null)
+      | {tid: .[0:$i], f: (.[$i + 1:] | split("|"))}
+      | select(.f[0] | isots)
+      | .t = (.f[0] | epoch) | select(.t != null) ] as $rows
+    | ($rows | group_by(.tid)
+       | map({key: .[0].tid, value: (
+           . as $r
+           | ([$r[] | select((.f[1] == "META" and .f[2] == "schema") | not)][0].t) as $start
+           | ([$r[].t] | max) as $end
+           | {start: $start,
+              tokens: [ $r[] | select(.f[1] == "META" and .f[2] == "tokens")
+                        | (msg | capture("^[^:|/]+:(?<i>[0-9]+)/(?<o>[0-9]+)/(?<c>[0-9]+)(\\|elapsed_ms=[0-9]+)?$")) as $m
+                        | select($m != null)
+                        | {t, total: (($m.i | tonumber) + ($m.o | tonumber) + ($m.c | tonumber)),
+                           out: ($m.o | tonumber)} ],
+              iv: (reduce $r[] as $x ({open: {}, iv: []};
+                     ($x.f[1] + "|" + ($x.f[2] // "")) as $k
+                     | if $x.f[3] == "waiting" and ($x | msg | startswith("Agent launched")) then
+                         (if .open[$k] != null then .iv += [[.open[$k], $x.t]] else . end)
+                         | .open[$k] = $x.t
+                       elif ($x.f[3] == "done" or $x.f[3] == "fail") and .open[$k] != null then
+                         .iv += [[.open[$k], $x.t]] | .open |= del(.[$k])
+                       else . end)
+                   | .iv + [.open[] | [., $end]])}
+           | select(.start != null))})
+       | from_entries) as $T
+    | ([$T[].iv[]]) as $ivs
+    | reduce ($plan | split("\n"))[] as $l ({out: [], prev: {}};
+        if ($l | startswith("#ovts ")) then
+          ($l | split(" ")) as $p
+          | $p[1] as $tid
+          | ($p[2:] | join(" ") | frame_time) as $ft
+          | if $T[$tid] == null or $ft == null then .
+            else $T[$tid] as $tk
+              | ([$tk.tokens[] | select(.t <= $ft.s)]) as $seen
+              | ([$seen[].total] | add // 0) as $total
+              | ([$seen[].out] | add // 0) as $tout
+              | ([$ivs[] | select(.[0] <= $ft.s and $ft.s < .[1])] | length) as $ag
+              | (([$ft.s - $tk.start, 0] | max)) as $el
+              | .prev[$tid] as $pv
+              | (if $pv == null then false
+                 else ($tout - $pv.out) as $d
+                   | (($ft.ms - $pv.ms) / 1000) as $dt
+                   | if $dt <= 0 then $d > 0 else ($d >= $tps * $dt) end end) as $hot
+              | (if $ag == 0 then "idle"
+                 elif $ag >= 2 or $hot or ($pv == null and $tps == 0) then "fast"
+                 else "normal" end) as $tier
+              | .out += ["#overlay \($el) \($total) \($tout) \($ag) \($tier)"]
+              | .prev[$tid] = {ms: $ft.ms, out: $tout}
+            end
+        else .out += [$l] end)
+    | .out | join("\n")
+  '
+}
+
+# record_stitch_plan clip [--no-overlay] <TID>
+#                  | video [--no-overlay] [--order time|given] <TID>...
 record_stitch_plan() {
-  local mode="${1:-}" order="time"
+  local mode="${1:-}" order="time" overlay=true
   shift || true
   case "$mode" in
-  clip)
-    [ $# -eq 1 ] || {
-      _rs_usage
-      return 2
-    }
-    ;;
-  video)
-    if [ "${1:-}" = "--order" ]; then
-      order="${2:-}"
-      shift 2 || true
-    fi
-    case "$order" in time | given) ;; *)
-      _rs_usage
-      return 2
-      ;;
-    esac
-    ;;
+  clip | video) ;;
   *)
     _rs_usage
     return 2
     ;;
   esac
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --no-overlay)
+      overlay=false
+      shift
+      ;;
+    --order)
+      if [ "$mode" != "video" ] || [ $# -lt 2 ]; then
+        _rs_usage
+        return 2
+      fi
+      order="$2"
+      shift 2
+      ;;
+    --*)
+      _rs_usage
+      return 2
+      ;;
+    *) break ;;
+    esac
+  done
+  case "$order" in time | given) ;; *)
+    _rs_usage
+    return 2
+    ;;
+  esac
+  if [ "$mode" = "clip" ] && [ $# -ne 1 ]; then
+    _rs_usage
+    return 2
+  fi
   _rs_check_ids "$@" || return 2
 
   local allowed tid seen=" " i=0 lines first work
@@ -269,7 +416,7 @@ record_stitch_plan() {
   [ -n "$work" ] || return 0
   printf '%s' "$work" | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | while IFS=$'\t' read -r _ _ lines; do
     printf '%s' "$lines" | base64 -d
-  done
+  done | _rs_overlay_fill "$overlay" "$@"
   return 0
 }
 
@@ -322,8 +469,76 @@ _rs_card() {
   )
 }
 
-# record_stitch_render <plan file | -> <out.mp4>
+# _rs_fmt_num <n> — 3 significant figures with K/M/B; below 1000 the integer.
+_rs_fmt_num() {
+  awk -v n="$1" 'BEGIN {
+    if (n < 1000) { printf "%d", n; exit }
+    split("K M B", u, " ")
+    for (k = 1; k <= 3; k++) {
+      v = n / (1000 ^ k)
+      if (v >= 99.95) s = sprintf("%.0f", v)
+      else if (v >= 9.995) s = sprintf("%.1f", v)
+      else s = sprintf("%.2f", v)
+      if (s + 0 < 1000 || k == 3) { printf "%s%s", s, u[k]; exit }
+    }
+  }'
+}
+
+# _rs_fmt_time <seconds> — HH:MM:SS, hours allowed past 99.
+_rs_fmt_time() {
+  awk -v s="$1" 'BEGIN { printf "%02d:%02d:%02d", int(s / 3600), int(s % 3600 / 60), s % 60 }'
+}
+
+# _rs_overlay_text <png> <elapsed_s> <tokens_total> <tokens_out> <agents>
+# Draws the three overlay lines (design D6) onto a normalised frame in place.
+# Values reach drawtext through textfile= in the PNG's own directory, never
+# inside the filter string. Returns 1, the frame untouched, when drawtext fails.
+_rs_overlay_text() {
+  local png="$1" dir base
+  dir=$(dirname -- "$png")
+  base=$(basename -- "$png")
+  (
+    cd "$dir" || exit 1
+    printf 'tokens %s  out %s' "$(_rs_fmt_num "$3")" "$(_rs_fmt_num "$4")" >"$base.ov1.txt"
+    _rs_fmt_time "$2" >"$base.ov2.txt"
+    printf 'agents %s' "$5" >"$base.ov3.txt"
+    local box="fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=6:x=w-text_w-24"
+    _rs_ffmpeg -i "$base" \
+      -vf "drawtext=textfile=$base.ov1.txt:fontsize=30:$box:y=20,drawtext=textfile=$base.ov2.txt:fontsize=26:$box:y=58,drawtext=textfile=$base.ov3.txt:fontsize=26:$box:y=92,format=rgb24" \
+      -frames:v 1 "ov-$base" >/dev/null 2>&1 && [ -s "ov-$base" ] &&
+      mv -f -- "ov-$base" "$base" && exit 0
+    rm -f -- "ov-$base"
+    exit 1
+  )
+}
+
+_RS_SPRITES="coder-work-01 coder-work-02 coder-work-03 coder-work-04 coder-work-05 coder-work-06 coder-work-07 coder-work-08 coder-idle-01 coder-idle-02 coder-idle-03 coder-idle-04"
+
+# _rs_anim_segment <still png> <frames> <tier> <out.mp4> — one segment: the
+# still for <frames> frames at 25 fps with the coder loop at the bottom left,
+# at the tier's rate (design D7, D8).
+_rs_anim_segment() {
+  local still="$1" frames="$2" tier="$3" seg="$4" kind=work fps=8
+  case "$tier" in
+  idle)
+    kind=idle
+    fps=3
+    ;;
+  fast) fps=16 ;;
+  esac
+  _rs_ffmpeg -loop 1 -framerate 25 -i "$still" \
+    -loop 1 -framerate "$fps" -i "$_RS_ASSET_DIR/coder-$kind-%02d.png" \
+    -filter_complex "[1:v]fps=25[s];[0:v][s]overlay=24:H-h-24,format=yuv420p" \
+    -frames:v "$frames" -r 25 -c:v libx264 -an -f mp4 "$seg" >/dev/null 2>&1 && [ -s "$seg" ]
+}
+
+# record_stitch_render [--anim] <plan file | -> <out.mp4>
 record_stitch_render() {
+  local anim=false
+  if [ "${1:-}" = "--anim" ]; then
+    anim=true
+    shift
+  fi
   local plan_src="${1:-}" out="${2:-}"
   if [ -z "$plan_src" ] || [ -z "$out" ] || [ $# -ne 2 ]; then
     _rs_usage
@@ -341,6 +556,22 @@ record_stitch_render() {
   if ! grep -q '^file ' <<<"$plan"; then
     _rs_err "nothing to render: the plan has no frames"
     return 3
+  fi
+  local bad_ov
+  bad_ov=$(grep '^#overlay' <<<"$plan" |
+    grep -vE '^#overlay [0-9]{1,15} [0-9]{1,15} [0-9]{1,15} [0-9]{1,6} (idle|normal|fast)$' || true)
+  if [ -n "$bad_ov" ]; then
+    _rs_err "bad overlay line in the plan; nothing rendered"
+    return 3
+  fi
+  if [ "$anim" = "true" ]; then
+    local sprite
+    for sprite in $_RS_SPRITES; do
+      if [ ! -f "$_RS_ASSET_DIR/$sprite.png" ]; then
+        _rs_err "sprite missing: $_RS_ASSET_DIR/$sprite.png; no video written"
+        return 3
+      fi
+    done
   fi
   if ! command -v ffmpeg >/dev/null 2>&1; then
     _rs_err "ffmpeg is not installed; no video written"
@@ -365,6 +596,9 @@ record_stitch_render() {
   # plan's durations (-t).
   local line path last="" n=0 secs tid title card list="$tmp/list.ffconcat"
   local _RS_DEADLINE=$((SECONDS + ${RECORD_STITCH_TIMEOUT:-300}))
+  # One entry per card or frame, for the overlay and the --anim path.
+  local seg_png=() seg_dur=() seg_tier=() seg_kind=() seg_ov=() k dt_off=false
+  local ov_el ov_tot ov_out ov_ag ov_tier
   echo "ffconcat version 1.0" >"$list"
   while IFS= read -r line; do
     case "$line" in
@@ -384,6 +618,11 @@ record_stitch_render() {
       fi
       last="file '$card'"
       printf '%s\nduration %s\n' "$last" "$secs" >>"$list"
+      seg_png+=("$card")
+      seg_dur+=("$secs")
+      seg_tier+=(idle)
+      seg_kind+=(card)
+      seg_ov+=(false)
       ;;
     "file '"*"'")
       path="${line#file \'}"
@@ -403,6 +642,26 @@ record_stitch_render() {
       fi
       last="file '$card'"
       printf '%s\n' "$last" >>"$list"
+      seg_png+=("$card")
+      seg_dur+=("")
+      seg_tier+=(idle)
+      seg_kind+=(frame)
+      seg_ov+=(false)
+      ;;
+    "#overlay "*)
+      k=$((${#seg_png[@]} - 1))
+      if [ "$k" -lt 0 ] || [ "${seg_kind[$k]}" != "frame" ] || [ "${seg_ov[$k]}" = "true" ]; then
+        _rs_err "overlay line without a frame before it; nothing rendered"
+        rc=3
+        break
+      fi
+      read -r _ ov_el ov_tot ov_out ov_ag ov_tier <<<"$line"
+      seg_ov[k]=true
+      seg_tier[k]="$ov_tier"
+      if [ "$dt_off" = "false" ] && ! _rs_overlay_text "${seg_png[$k]}" "$ov_el" "$ov_tot" "$ov_out" "$ov_ag"; then
+        _rs_err "drawtext unavailable; overlay skipped"
+        dt_off=true
+      fi
       ;;
     "duration "*)
       if ! [[ "${line#duration }" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
@@ -411,6 +670,8 @@ record_stitch_render() {
         break
       fi
       printf '%s\n' "$line" >>"$list"
+      k=$((${#seg_png[@]} - 1))
+      [ "$k" -ge 0 ] && seg_dur[k]="${line#duration }"
       ;;
     "ffconcat version 1.0" | "" | "#"*) ;;
     *)
@@ -425,9 +686,29 @@ record_stitch_render() {
     printf '%s\n' "$last" >>"$list"
     local part="$tmp/out.mp4" total
     total=$(awk '$1 == "duration" { t += $2 } END { printf "%.3f", t }' "$list")
-    _rs_ffmpeg -f concat -safe 0 -i "$list" \
-      -vf "fps=25,format=yuv420p" -t "$total" \
-      -c:v libx264 -an -movflags +faststart -f mp4 "$part" >"$tmp/ffmpeg.log" 2>&1 || rc=5
+    if [ "$anim" = "true" ]; then
+      # One segment per card or frame. Frame counts come from the running
+      # sum, so the total stays the sum of the plan's durations.
+      local cum=0 nf segs="$tmp/segs.ffconcat"
+      echo "ffconcat version 1.0" >"$segs"
+      for k in "${!seg_png[@]}"; do
+        [ -n "${seg_dur[$k]}" ] || continue
+        read -r nf cum < <(awk -v c="$cum" -v d="${seg_dur[$k]}" \
+          'BEGIN { e = c + d; printf "%d %s\n", int(e * 25 + 0.5) - int(c * 25 + 0.5), e }')
+        [ "$nf" -ge 1 ] || continue
+        if ! _rs_anim_segment "${seg_png[$k]}" "$nf" "${seg_tier[$k]}" "$tmp/seg-$k.mp4"; then
+          rc=5
+          break
+        fi
+        printf "file '%s'\n" "$tmp/seg-$k.mp4" >>"$segs"
+      done
+      [ "$rc" -eq 0 ] && { _rs_ffmpeg -f concat -safe 0 -i "$segs" -c copy \
+        -movflags +faststart -f mp4 "$part" >"$tmp/ffmpeg.log" 2>&1 || rc=5; }
+    else
+      _rs_ffmpeg -f concat -safe 0 -i "$list" \
+        -vf "fps=25,format=yuv420p" -t "$total" \
+        -c:v libx264 -an -movflags +faststart -f mp4 "$part" >"$tmp/ffmpeg.log" 2>&1 || rc=5
+    fi
     if [ "$rc" -eq 0 ] && [ ! -s "$part" ]; then
       rc=5
     fi
@@ -443,31 +724,48 @@ record_stitch_render() {
   return "$rc"
 }
 
-# record_stitch_clip <TID>
+# record_stitch_clip [--no-overlay] [--anim] <TID>
 record_stitch_clip() {
+  local popts=() ropts=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --no-overlay) popts+=(--no-overlay) ;;
+    --anim) ropts+=(--anim) ;;
+    *) break ;;
+    esac
+    shift
+  done
   if [ $# -ne 1 ]; then
     _rs_usage
     return 2
   fi
   _rs_check_ids "$1" || return 2
   local tid="$1" plan tdir out rc=0
-  plan=$(record_stitch_plan clip "$tid") || return $?
+  plan=$(record_stitch_plan clip "${popts[@]}" "$tid") || return $?
   tdir=$(_rs_ticket_dir "$tid")
   if [ -z "$tdir" ] || ! grep -q '^file ' <<<"$plan"; then
     _rs_err "nothing to render for $tid"
     return 3
   fi
   out="$tdir/artifacts/recordings/$tid-verify.mp4"
-  record_stitch_render - "$out" <<<"$plan" || rc=$?
+  record_stitch_render "${ropts[@]}" - "$out" <<<"$plan" || rc=$?
   [ "$rc" -eq 0 ] && printf '%s\n' "$out"
   return "$rc"
 }
 
-# record_stitch_video [--order time|given] [--out FILE] <TID>...
+# record_stitch_video [--no-overlay] [--anim] [--order time|given] [--out FILE] <TID>...
 record_stitch_video() {
-  local order="time" out="" tids=()
+  local order="time" out="" tids=() popts=() ropts=()
   while [ $# -gt 0 ]; do
     case "$1" in
+    --no-overlay)
+      popts+=(--no-overlay)
+      shift
+      ;;
+    --anim)
+      ropts+=(--anim)
+      shift
+      ;;
     --order | --out)
       if [ $# -lt 2 ]; then
         _rs_usage
@@ -475,6 +773,10 @@ record_stitch_video() {
       fi
       if [ "$1" = "--order" ]; then order="$2"; else out="$2"; fi
       shift 2
+      ;;
+    --*)
+      _rs_usage
+      return 2
       ;;
     *)
       tids+=("$1")
@@ -489,8 +791,8 @@ record_stitch_video() {
     out+=".mp4"
   fi
   local plan rc=0
-  plan=$(record_stitch_plan video --order "$order" "${tids[@]}") || return $?
-  record_stitch_render - "$out" <<<"$plan" || rc=$?
+  plan=$(record_stitch_plan video "${popts[@]}" --order "$order" "${tids[@]}") || return $?
+  record_stitch_render "${ropts[@]}" - "$out" <<<"$plan" || rc=$?
   [ "$rc" -eq 0 ] && printf '%s\n' "$out"
   return "$rc"
 }

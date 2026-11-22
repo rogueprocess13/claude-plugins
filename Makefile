@@ -82,6 +82,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-record.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-record-reference.sh
 	bash ticket-auto-pipeline/lib/tests/test-record-stitch.sh
+	bash ticket-auto-pipeline/lib/tests/test-record-assets.sh
 	bash ticket-auto-pipeline/lib/tests/test-recorder-driver.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
