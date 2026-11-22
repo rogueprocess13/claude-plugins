@@ -420,6 +420,22 @@
       "docs": "ticket-auto-pipeline/docs/skills/ticket-verify.md"
     },
     {
+      "name": "PRE_FIX_FAILS",
+      "plugin": "ticket-auto-pipeline",
+      "default": "warn",
+      "on_value": "warn",
+      "values": [
+        "warn",
+        "off"
+      ],
+      "category": "feature",
+      "summary": "warn (default): on a bug ticket (ticket-type.sh), ticket-implement names the regression test(s) after a clean code review and lib/pre-fix-fails.sh runs them on the merge base plus only the ticket's test files and again on the fix, judging from JUnit XML: proved, proved-weak (errors or does not build before the fix), unproven <reason> or skipped. One META|pre-fix-fails line per repo; never blocks. off: not run.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "A regression test that passes on the old code proves nothing; this records how often that happens before anything enforces it. Costs two runs of the named tests (Maven and pytest run only those; other runners the whole command), bounded by PRE_FIX_FAILS_TIMEOUT.",
+      "docs": "ticket-auto-pipeline/docs/skills/ticket-implement.md"
+    },
+    {
       "name": "VERIFY_AC_TAGS",
       "plugin": "ticket-auto-pipeline",
       "default": "false",

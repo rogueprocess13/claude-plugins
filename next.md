@@ -2499,6 +2499,11 @@ code before the fix. Builds on Step 20 B (QA persona, on for bugs since #813). B
       regression test against the base commit (fix reverted) and require it to fail, then pass on the
       branch. A test that passes on both proves nothing: hold or fail the ticket. Cheapest item, no
       model involved; do it first.
+      **Built 2026-11-22 (0.143.0, openspec `pre-fix-fails-gate`), increment 1 = measure only:**
+      `lib/pre-fix-fails.sh`, ticket-implement `references/pre-fix-fails.md`, flag `PRE_FIX_FAILS`
+      (`warn` default, `off`). Verdicts `proved` / `proved-weak` / `unproven <reason>` / `skipped` in a
+      `META|pre-fix-fails` line; never blocks. Next: one live bug ticket (4.1), then ~10 tickets of
+      counts before an enforce change (4.2).
 - [ ] 2. **Independent QA phase (read-only agent).** After VERIFY passes on a bug ticket: a fresh agent
       that did not see the implementation writes a short checklist first (negative inputs, alternate
       routes to the same page/action, permissions, re-open of the original bug), then runs it. Findings

@@ -355,6 +355,10 @@ Verify then logs `META|qa-supporting|info|checks=<S>;criterion_fails=<F>;observa
 
 It is a `META` line on purpose: `detect-resume.sh` derives `IMPLEMENT_FROM` from the last `IMPLEMENT|<step>|done|` line, so an `IMPLEMENT|persona-select|done|` line would resume at an unknown step. `lib/tests/test-persona-injection.sh` pins that the line leaves `RESUME_STEP` and `IMPLEMENT_FROM` unchanged.
 
+### Pre-fix proof entries (pre-fix-fails-gate)
+
+`lib/pre-fix-fails.sh check` (ticket-implement Step 4b, bug tickets) writes one per repo: `META|pre-fix-fails|info|verdict=<proved|proved-weak|unproven|skipped> reason=<why> repo=… mode=… rc_before=… rc_after=… base=<sha12> copied=<n> report=… secs=… tests=…` (early exits carry fewer fields). META for the resume reason below; evidence only, never a gate-stop or verifier result.
+
 ### Run identity entries (Branch A, Commercial Evidence MVP)
 
 Written by `lib/run-identity.sh`, the single writer for these three META keys — both
