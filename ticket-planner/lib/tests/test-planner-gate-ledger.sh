@@ -157,10 +157,11 @@ cands=$(awk -F'\t' '/^== G4 demotion candidates/ { on = 1; getline; next } on &&
 # Pinned on purpose: a ledger change that adds or drops a candidate shows here.
 # G4 fixed F58 (draft-guard ASSUMPTION_INVALID) in the guard; its row is no
 # longer live, so it left the list. Iter 16 added crosscheck
-# RESOLUTION_NOT_PROPAGATED (F94, a checker bug still on main); when F94 is
-# fixed, mark that row fixed=yes live=no and drop it here.
-want_cands=$'refinement MISSING_CORE_AC\ncrosscheck RESOLUTION_NOT_PROPAGATED\ndraft EDGE_CASE_GAP\ndraft INTENT_AC_MISMATCH'
-[ "$cands" = "$want_cands" ] && pass "G4 candidates are the pinned four" || fail "G4 candidates" "got: ${cands}"
+# RESOLUTION_NOT_PROPAGATED (F94); planner 0.60.0 fixed it (a native
+# `### F<n>` section is one block), so its row is fixed=yes live=no and it
+# left the list too.
+want_cands=$'refinement MISSING_CORE_AC\ndraft EDGE_CASE_GAP\ndraft INTENT_AC_MISMATCH'
+[ "$cands" = "$want_cands" ] && pass "G4 candidates are the pinned three" || fail "G4 candidates" "got: ${cands}"
 problems=$(awk -F'\t' '$13 ~ /(^| )F58( |$)/ && !($11 == "yes" && $12 == "no") { print $1 " " $4 " fixed=" $11 " live=" $12 }' "$WORK/data")
 check "F58 (ASSUMPTION_INVALID reuse) is fixed and not live" "$problems"
 

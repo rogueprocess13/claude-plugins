@@ -25,6 +25,65 @@ A `--record` video showed what the pipeline did, but not what it cost or how lon
 - **`--anim`.** A 192×192 original pixel-art coder loops in the bottom-left corner: idle (3 fps) with no agent, normal (8 fps), fast (16 fps) with two or more agents or output tokens at `RECORD_ANIM_FAST_TPS` per second (default 10). Each frame becomes its own segment, joined with `-c copy`; total duration is unchanged. The frames are drawn from ASCII grids in `lib/record-assets/coder.grid` by a stdlib-only generator; a test keeps the committed PNGs in step with the grid. The SessionStart sync now copies `lib/record-assets/*.png` to `~/.claude/skills/lib/record-assets/`.
 - **`--no-overlay`** keeps the old output; `plan --no-overlay` is byte-identical to the previous plan. `/ticket-record-stitch` passes both options through.
 
+## ticket-planner 0.60.0 (2026-11-21) — planner-halt-recall: fix the Crosscheck false fires part (c) found
+
+No code is demoted and `PLANNER_CROSSCHECK_WARN_CODES` is unchanged: the checker bugs
+behind the false fires are fixed instead, and recall is re-measured (no code drops).
+
+- **`RESOLUTION_NOT_PROPAGATED` (F94, bug 6).** A native `### F<n> — … — accepted`
+  Consensus section is now one block, heading to the next heading, instead of
+  blank-line paragraphs; its disposition is the last accepted / rejected / deferred word
+  of the heading. Such a section is judged only on the specs that open one of its list
+  items (`- \`api\`: …`): judging every prose mention ("now blocked by `a`", "gone from
+  `a`", "`a` and `b` already build …") gave 8 false findings on the iteration 11–16
+  finals and 0 true. Disposition and severity words (accepted, minor, critical, …) are
+  never terms; a slug inside a longer code span (`specs/a.md`) is not a mention; a
+  heading-name or spec-path span is not a term. Iteration 16's halt no longer fires.
+- **`PRECEDENT_NOT_FOUND` (bugs 1 + 2, together).** REPOS_ROOT's `.grill/` (grill-me's
+  answers quote the brief) is excluded from the precedent search and from the contracts
+  repo-definition search, and an identifier a spec of the same plan creates — marked
+  `(new …)`, or in the code-span run right after exports / defines / adds / creates /
+  introduces / declares / new — counts as resolved. Fixing only the first would have
+  turned iteration 13's in-plan `users` into a new halt.
+- **`CONTRACT_MISMATCH` (bug 4).** A spec pair is disjoint only when neither paragraph
+  shares a term with anything the other initiative says about the structure, so a
+  consumer spec's call-site paragraph is no longer compared with a sibling's definition
+  on its own.
+- **Recall re-measured** (`corpus/recall/results.tsv` regenerated). RESOLUTION 15/20 →
+  20/20 caught (R1, the native format, was untested on all 5 plans), untested 5 → 0;
+  PRECEDENT control false fires 1 → 0; CONTRACT_MISMATCH seeded-control false fires 3/5
+  → 0/5 and collateral 4 → 0. Every other cell is unchanged.
+- **Ledger.** The iteration 16 F94 row is `fixed=yes live=no`, so it leaves the G4
+  candidate list (`test-planner-gate-ledger.sh` pins three).
+- **Tests.** New `lib/tests/test-planner-crosscheck-false-fires.sh` (Makefile): each
+  false-fire case failed before the fix, each recall guard passes before and after.
+
+## ticket-planner 0.59.0 (2026-11-21) — planner-halt-recall (c): recall for the 8 blocking prose Crosscheck codes
+
+A measurement only: no check, code list or gate behaviour changes. M3's rule is that no
+code is demoted before its recall is measured; this release measures it and keeps the
+measurement repeatable.
+
+- **Held-out recall set.** `ticket-planner/lib/tests/corpus/s11-final … s15-final` hold
+  the scrubbed final plans of rehearsal iterations 11–15 (full specs and consensus.md),
+  and `corpus/recall/` the sandbox repo at its base plus 41 seeded defect operators and 3
+  seeded controls (`ops.tsv`, `steps.tsv`). Every operator names the finding of
+  iterations 01–10 it came from; the test fails on any other.
+- **`scripts/planner-halt-recall.sh`** applies each operator to each final plan, runs the
+  real check families on a scratch REPOS_ROOT with the part (a) unit counter, and writes
+  per-case results and a per-code recall table (Wilson 95% intervals; a case whose check
+  judged 0 units is `untested`, and recall is also given with untested counted as
+  missed). `--all` also records which other codes newly fire.
+- **`test-planner-halt-recall.sh`** pins every case's status and units in
+  `corpus/recall/results.tsv`, so a checker change that moves recall fails until the pin is
+  regenerated on purpose.
+- **Result.** Every code catches its canonical wording; most natural wordings from the
+  real plans are missed or untested. No code has recall 0, so none qualifies for
+  demotion under the M3 decision table. The two codes with false fires
+  (`RESOLUTION_NOT_PROPAGATED`, `CONTRACT_MISMATCH`) are recommended to stay blocking with
+  their false-fire causes fixed. The table and seven checker issues found on the way are in
+  the PR description.
+
 ## ticket-planner 0.58.1 (2026-11-21) — gate ledger rows for rehearsal iterations 12–16 (data only)
 
 - **`ticket-planner/gates/gate-ledger.tsv`** now covers dispatch rehearsal iterations

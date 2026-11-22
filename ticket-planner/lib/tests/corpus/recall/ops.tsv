@@ -1,0 +1,43 @@
+op_id	code	form	locus	provenance	description
+R1	RESOLUTION_NOT_PROPAGATED	natural	missing-it=\[([^] ]+ )*{B}[] ]	F25	accepted Consensus finding in the native heading format (iters 04+); the title names no spec; the body hands one term to two specs; only the first spec gets it
+R2	RESOLUTION_NOT_PROPAGATED	natural	missing-it=\[([^] ]+ )*{B}[] ]	F25	native heading names both specs in backticks (the iter 08 Consensus F10 shape); only the first spec gets the term
+R3	RESOLUTION_NOT_PROPAGATED	canonical	missing-it=\[([^] ]+ )*{B}[] ]	F25	one-paragraph accepted list item naming two specs and the term (iter 02 format); only the first spec gets it
+R5	RESOLUTION_NOT_PROPAGATED	natural	missing-it=\[([^] ]+ )*{C}[] ]	F25	accepted list item naming three specs (F25 m7: Signals edited in 3 of 6 specs); the third spec is missed
+P1	PRECEDENT_NOT_FOUND	canonical	'createServer'	F36 F29	claims the factory mirrors the existing `createServer`; the repo holds only README.md and CLAUDE.md
+P2	PRECEDENT_NOT_FOUND	canonical	'validateBody'	F36 F29	claims validation reuses `validateBody`, which no file defines
+P3	PRECEDENT_NOT_FOUND	canonical	'withSession'	F36 F29	claims handlers follow the `withSession` pattern, which does not exist
+P4	PRECEDENT_NOT_FOUND	natural	'runSuite'	F36 F23	builds on the existing test runner `runSuite()` (iters 05-10 'Builds on ...' wording); nothing defines it
+P5	PRECEDENT_NOT_FOUND	natural	'conflictBody'	F36 F23	extends the existing error builders (iters 05-10 'Extend ...' / 'the existing builders' wording); nothing defines them
+FR1	FORWARD_REF_UNFULFILLED	canonical	→ {B} \(promised terms=\[[^]]*formatdate	F43	'`formatDate` lands in `B`'; B never mentions it
+FR2	FORWARD_REF_UNFULFILLED	canonical	→ {B} \(promised terms=\[[^]]*formatdate	F43	'`formatDate` helper delivered by B'; B never mentions it
+FR3	FORWARD_REF_UNFULFILLED	canonical	→ {B} \(promised terms=\[[^]]*retryfetch	F43	'for `retryFetch`, see `B`'; B never mentions it
+FR4	FORWARD_REF_UNFULFILLED	natural	→ {B} \(promised terms=\[[^]]*usesession	F43	'takes `useSession` from the B ticket' (the F43 wording); B never mentions it
+FR5	FORWARD_REF_UNFULFILLED	natural	→ {B} \(promised terms=\[[^]]*toprofilejson	F38	'`toProfileJSON` (new in B)', the sibling-file marker (F38); B never mentions it
+CM1	CONTRACT_MISMATCH	canonical	MISMATCH `toProfileJSON`	F22	a live sibling initiative and this one give `toProfileJSON` disjoint fields
+CM2	CONTRACT_MISMATCH	canonical	MISMATCH `validationErrors`	F22	the sibling says per-field, this initiative says top-level for `validationErrors`
+CM3	CONTRACT_MISMATCH	natural	MISMATCH `[^`]*profiles	F22	disjoint response bodies for one endpoint, written as inline JSON (the Conduit specs' own style)
+CM4	CONTRACT_MISMATCH	natural	MISMATCH `toProfileJSON	F22	disjoint fields for `toProfileJSON(user)`, written with its argument (the specs' own style)
+CM5	CONTRACT_MISMATCH	natural	MISMATCH `{SHARED}`	F22	a live sibling redefines a structure this initiative shares across 2-3 specs, with disjoint terms
+CMc	CONTRACT_MISMATCH	control	-	F22	control: a live sibling quotes this initiative's own paragraph about the shared structure verbatim
+CC1	CONTRACT_CONSUMERS_UNNOTIFIED	canonical	UNNOTIFIED `{SHARED}`	F18 F23	the owner spec retires a structure 2-3 specs use (active voice), naming no consumer
+CC2	CONTRACT_CONSUMERS_UNNOTIFIED	canonical	UNNOTIFIED `{SHARED}`	F18 F23	passive voice: the structure 'is removed', naming no consumer
+CC3	CONTRACT_CONSUMERS_UNNOTIFIED	natural	UNNOTIFIED `{SHARED}`	F18	'Replace the `X` calls with `XV2`' (iters 02-03 'replace the ...' cleanup wording)
+CC4	CONTRACT_CONSUMERS_UNNOTIFIED	natural	UNNOTIFIED `{SHARED}`	F18	'`X` is renamed to `XV2`'
+CC5	CONTRACT_CONSUMERS_UNNOTIFIED	natural	UNNOTIFIED `{SHARED}`	F18	'no longer exports `X`' (iters 05-06 'no longer prescribes' wording)
+CCc	CONTRACT_CONSUMERS_UNNOTIFIED	control	-	F18	control: the retirement names every consumer spec
+B1	BYPASS_PATH_UNADDRESSED	canonical	legacy/admin.js	F18 F23	guard '`passwordHash` is derived ... never hand-set'; leftover repo code assigns it from the request body
+B2	BYPASS_PATH_UNADDRESSED	canonical	legacy/articles.js	F18 F23	guard 'only the signed-in author may change `authorId`'; leftover code assigns it from the request
+B3	BYPASS_PATH_UNADDRESSED	natural	legacy/admin.js	F18 F23	the B1 guard written without backticks; the same leftover writer
+B4	BYPASS_PATH_UNADDRESSED	natural	legacy/admin.js	F18 F23	the B1 guard; the leftover writer is a mass assignment `Object.assign(user, req.body)`
+B5	BYPASS_PATH_UNADDRESSED	canonical	legacy/server.js	F18	guard 'only the sign-up handler may add records to `members`'; a leftover route pushes the raw body
+Bc	BYPASS_PATH_UNADDRESSED	control	-	F18	control: the B1 guard cites the leftover file it removes
+S1	SIGNALS_UNIFORM	canonical	{B}.md	F25	the second spec's Signals JSON replaced by the first spec's, byte for byte
+S2	SIGNALS_UNIFORM	canonical	{B}.md	F25	the second spec copies the first spec's three counts and TargetSymbols
+S3	SIGNALS_UNIFORM	natural	{B}.md	F25	the second spec copies the first spec's three counts only (F25 m7: Signals values pasted, not derived)
+S4	SIGNALS_UNIFORM	natural	{B}.md	F25	the first spec's Signals pasted into the second with one TargetSymbols name edited
+AC1	AC_STATUS_UNCOVERED	canonical	status 503	F16	behaviour 'returns 503 with a body'; no criterion
+AC2	AC_STATUS_UNCOVERED	canonical	status 413	F16	behaviour 'responds with status 413'; no criterion
+AC3	AC_STATUS_UNCOVERED	natural	status 500	F16	'falls back to a 500 response' (F16 '500 fallback'); no criterion
+AC4	AC_STATUS_UNCOVERED	natural	status 401	F16 F31	'an expired token on create returns 401' (F16); the condition has no criterion
+AC5	AC_STATUS_UNCOVERED	natural	status 401	F16	frontend 'On 401 from the API, the page clears the token' (F16 '401-on-editor'); no criterion
+AC6	AC_STATUS_UNCOVERED	natural	status {CODE}	F16	the plan's own criteria for one status code its behaviour section mentions are deleted

@@ -133,8 +133,9 @@ _planner_crosscheck_contracts_is_generic_word() {
 }
 
 # Directories excluded from the repo-definition search — same convention as
-# planner-crosscheck-citations.sh's PLANNER_CROSSCHECK_EXCLUDE_DIRS.
-PLANNER_CROSSCHECK_CONTRACTS_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".claude" "ledgerly" "tickets")
+# planner-crosscheck-citations.sh's PLANNER_CROSSCHECK_EXCLUDE_DIRS, .grill
+# (grill-me's answers quote the brief) included.
+PLANNER_CROSSCHECK_CONTRACTS_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".claude" ".grill" "ledgerly" "tickets")
 
 # True if <symbol> already resolves to a real definition somewhere under
 # <repos_root> — i.e. it's an existing structure this initiative's specs are
@@ -428,6 +429,22 @@ _planner_crosscheck_contracts_shape_terms() {
     done | sort -u
 }
 
+# Every shape term co-mentioned with <structure> in any paragraph of any spec
+# in <specs_dir> — what one initiative says about the structure as a whole.
+# Usage: _planner_crosscheck_contracts_all_shape_terms <specs_dir> <structure> [<exclude>...]
+_planner_crosscheck_contracts_all_shape_terms() {
+  local specs_dir="$1" structure="$2"
+  shift 2
+  local f block
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    while IFS= read -r -d '' block; do
+      grep -qF "\`${structure}\`" <<<"$block" || continue
+      _planner_crosscheck_contracts_shape_terms "$block" "$structure" "$@"
+    done < <(_planner_crosscheck_contracts_blocks "$f")
+  done < <(_planner_crosscheck_contracts_files_with_structure "$specs_dir" "$structure")
+}
+
 # True if <block> reads as deferring to / crediting another spec's existing
 # shape of a structure rather than independently (re)defining it — e.g. "not
 # by this ticket's own field_reconciliation table", "modeled on ... 's
@@ -515,6 +532,15 @@ planner_crosscheck_contract_mismatch() {
       _planner_crosscheck_contracts_is_commodity "$initiatives_root" "$s" && continue
       _planner_crosscheck_contracts_exists_in_repo "$repos_root" "$s" && continue
 
+      # What each initiative says about `s` as a whole (bug 4): a consumer
+      # spec's first paragraph is often a call site ("calls `s` from
+      # `requireAuth`"), whose terms are disjoint from any definition. A
+      # pair is disjoint only when neither side shares a term with anything
+      # the other initiative says about `s`.
+      local -a self_all sib_all
+      mapfile -t self_all < <(_planner_crosscheck_contracts_all_shape_terms "$specs_dir" "$s" "${self_slugs[@]}" "${sib_slugs[@]}" | sort -u)
+      mapfile -t sib_all < <(_planner_crosscheck_contracts_all_shape_terms "$sib_specs" "$s" "${self_slugs[@]}" "${sib_slugs[@]}" | sort -u)
+
       local fileA
       while IFS= read -r fileA; do
         [ -z "$fileA" ] && continue
@@ -546,6 +572,16 @@ planner_crosscheck_contract_mismatch() {
             for t in "${shapeA[@]}"; do
               _planner_crosscheck_contracts_array_has "$t" "${shapeB[@]}" && overlap=1 && break
             done
+            if [ "$overlap" -eq 0 ]; then
+              for t in "${shapeB[@]}"; do
+                _planner_crosscheck_contracts_array_has "$t" "${self_all[@]}" && overlap=1 && break
+              done
+            fi
+            if [ "$overlap" -eq 0 ]; then
+              for t in "${shapeA[@]}"; do
+                _planner_crosscheck_contracts_array_has "$t" "${sib_all[@]}" && overlap=1 && break
+              done
+            fi
           fi
 
           local reason=""

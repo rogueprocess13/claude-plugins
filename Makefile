@@ -365,10 +365,12 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-repo-ref.sh
 	bash ticket-planner/lib/tests/test-planner-base-branch.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-propagation.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-false-fires.sh
 	bash ticket-planner/lib/tests/test-planner-corpus.sh
 	bash ticket-planner/lib/tests/test-corpus-privacy.sh
 	bash ticket-planner/lib/tests/test-planner-gate-ledger.sh
 	bash ticket-planner/lib/tests/test-planner-corpus-replay.sh
+	bash ticket-planner/lib/tests/test-planner-halt-recall.sh
 	bash ticket-planner/lib/tests/test-planner-semantic-format-retry.sh
 	bash ticket-planner/lib/tests/test-planner-semantic-harness-errors.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-bypass.sh

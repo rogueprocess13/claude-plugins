@@ -52,7 +52,7 @@
 #   note      what fired and why (no tracker ids, initiative ids, names or paths)
 #
 # G4 rule (seam-audit PLAN): only a false fire with live=yes counts toward a
-# demotion. Fires from checker bugs already fixed (F12/F24, F22, F33, F52, F67)
+# demotion. Fires from checker bugs already fixed (F12/F24, F22, F33, F52, F67, F94)
 # do not count, and a DEPENDENCY_CYCLE closed only by a derived edge stays BLOCK.
 iter	gate	round	code	class	outcome	unit	count	label	cause	fixed	live	f_id	evidence	note
 01	crosscheck	-	CITED_ARTIFACT_UNRESOLVED	block	accepted	consensus.md	1	false	checker-bug	yes	no	F12	findings.md:16	public openapi.yml listed as a NOT FOUND cited artifact; Discovery prompt excludes public reference contracts since planner 0.26.2 (F24 fix)
@@ -211,6 +211,6 @@ iter	gate	round	code	class	outcome	unit	count	label	cause	fixed	live	f_id	eviden
 15	draft	0	EDGE_CASE_GAP	block	revised	frontend-shell	1	true	plan-gap	-	-	-	iter-15/run-record.md:48	non-401 boot failure; assumed r1 (clear the token, fail closed), consistent with neighbours (G7 B2 resolved)
 15	dor-check	-	TEST_DATA_UNSOURCED	block	expected	negative-control	1	true	negative-control	-	-	-	iter-15/run-record.md:38	planted: Source stripped from the one prerequisite row, row kept
 15	dor-check	-	TEST_USER_MISSING	block	expected	negative-control	1	true	negative-control	-	-	-	iter-15/run-record.md:39	planted: Test User section emptied
-16	crosscheck	-	RESOLUTION_NOT_PROPAGATED	block	halted	(cross-file)	1	false	checker-bug	no	yes	F94	iter-16/run-record.md:28	a Consensus finding heading split from its body is read as its own accepted block, and the disposition word is the only term given to the second slug; the resolution is in that spec
+16	crosscheck	-	RESOLUTION_NOT_PROPAGATED	block	halted	(cross-file)	1	false	checker-bug	yes	no	F94	iter-16/run-record.md:28	a Consensus finding heading split from its body is read as its own accepted block, and the disposition word is the only term given to the second slug; the resolution is in that spec
 16	crosscheck	-	OWN_UNDECLARED_REF	warn	logged	(multiple)	9	false	format	no	yes	F40	findings.md:58	parameter keys in Technical Context, all 9 specs; not labelled at run time (halt before review), the run record names the F40 cause
 16	crosscheck	-	TEST_DATA_IMPLIED_WEAK	warn	logged	project-scaffold	1	debatable	unlabelled	-	-	-	iter-16/run-record.md:30	no label recorded at run time (run record: likely false, a route placeholder needs no data)
