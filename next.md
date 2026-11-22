@@ -2370,7 +2370,7 @@ Open (user): success bar (PLAN §8.3); oracle and truth-set authorship; X0 track
 checkpoint owner; brownfield target (before M2); retire the Steps 16/19 loop; Playwright + GitHub token
 for X0.
 
-## Step 22 — `--record`: capture the automation as it runs — code + docs MERGED 2026-11-21; live check (5.2) open
+## Step 22 — `--record`: capture the automation as it runs — code + docs MERGED 2026-11-21; live check (5.2) open; overlay PR #810
 
 Openspec change **`ticket-auto-record`** — all 5 PRs merged 2026-11-20/21: #776 flag+guard (`lib/record.sh`),
 #777 VERIFY capture, #780 stitch (`/ticket-record-stitch`, `lib/record-stitch.sh`), #786 recorder board driver +
@@ -2440,7 +2440,11 @@ feature working → move to Done → next ticket to Ready). Recording never chan
       PASS). Blocked on a user decision: how the client sees it (guest seat vs shared link).
 - [x] 5. Stitch command: reads every manifest in time order, title card per ticket, re-runnable
       without re-recording. (#780)
-- [ ] 6. Stitch overlay — openspec `record-stitch-overlay`, specced 2026-11-21, not started. Top right:
+- [ ] 6. Stitch overlay — openspec `record-stitch-overlay`, groups 1–5 IMPLEMENTED 2026-11-22, PR #810
+      (0.141.0, branch `feat/record-stitch-overlay-impl`, worktree `claude-plugins-worktrees/record-stitch-overlay`);
+      open: task 6 live check (stitch a real recorded ticket with/without `--anim`, tune
+      `RECORD_ANIM_FAST_TPS`), then archive. Also fixed: the SessionStart sync now copies
+      `lib/record-assets/*.png` (it copied only `*.sh`/`*.md`). Top right:
       running token counter (sum of `META|tokens` lines up to each frame), wall-clock timer since the
       ticket's first log line, active agents across all tickets in the video. Optional `--anim`:
       original pixel-art coder loop bottom left, speed tier idle/normal/fast from agents + output-token
