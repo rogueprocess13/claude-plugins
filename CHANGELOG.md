@@ -17,13 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.148.0 (2026-11-26) — verify reads a clean worktree path and can drive a second tab
+## 0.149.0 (2026-11-26) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.
 
 - **`lib/notes-field.sh`.** The one reader of ticket-implement's pre-implementation checkpoint line (`- Repos: … | Branch: … | Worktree: … | Mode: …`): `notes-field.sh worktree|branch|repos|mode <ticket-dir|notes.md>` stops each value at the next `|`, trims padding and backticks, and takes the last checkpoint. ticket-verify Step 6 read the worktree with `sed 's/.*Worktree: //'`, which kept ` | Mode: …`, so `cd "$WORKTREE_PATH"` failed or the agent had to trim it by hand. ticket-verify Step 6 and ticket-pr-review now call the helper.
 - **`ticket-verify-agent` gets `mcp__playwright__browser_tabs` and `mcp__playwright__browser_close`.** Step 4b says when to use them: a second-tab criterion opens, switches and closes a tab; a fresh-context criterion closes the browser and navigates again, and when the session survives (the server is not `--isolated`) clears cookies and storage, reloads and marks the evidence as emulated.
 - **Tests.** `lib/tests/test-notes-field.sh` (new) covers the parse and fails on any unbounded `Worktree:` read in a skill or lib; `test-verify-agent-guard.sh` checks the two new grants.
+
+## 0.148.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
+
+GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.
+
+- **`agents/ticket-appraise-agent.md`** keeps "no source changes, no branches, no `git commit`/`git add` of your own" and names the three required actions as exceptions. The agent has no Agent tool, so Step 3.6 is a recorded self-review; any other required step that cannot run is logged `fail` with a `META|gate-warn|warn|` line, never `skip` or `done`.
+- **`skills/ticket-appraise-exec/SKILL.md`.** Step 3.6 without an Agent tool ends its `done` line with ` — self-review` and logs `META|gate-warn|warn|ADVERSARIAL_SELF_REVIEW`. Step 5 is never logged `skip`: a failed post logs `EXEC|post-linear|fail` and `APPRAISAL_COMMENT_NOT_POSTED`. Step 1.5's task tracker applies to interactive runs only. `TICKET_ROUTER_PLAN_REVIEW` keeps its default (`false`); turning it on gives complex tickets the independent reviewer.
+- **`agents/ticket-implement-agent.md`** names the `save_comment` feedback comment its skill posts, which its "All Linear mutations go through flow.sh" line had forbidden.
+- **Tests.** `lib/tests/test-agent-tool-coverage.sh` now also checks prohibitions: for every dispatch-table (skill, agent) pair, an agent body that forbids commits, Linear mutations, or writes outside a scope must name each committing script, non-read `LINEAR_OPS` op and `{…_ROOT}/` file its skill requires. It finds the pre-fix agent's three conflicts, and the two `ticket-appraise-exec` TaskCreate/TaskUpdate known gaps are gone.
 
 ## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
 
