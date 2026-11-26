@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.146.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
+## 0.147.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
 
 GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.
 
@@ -25,6 +25,15 @@ GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "neve
 - **`skills/ticket-appraise-exec/SKILL.md`.** Step 3.6 without an Agent tool ends its `done` line with ` — self-review` and logs `META|gate-warn|warn|ADVERSARIAL_SELF_REVIEW`. Step 5 is never logged `skip`: a failed post logs `EXEC|post-linear|fail` and `APPRAISAL_COMMENT_NOT_POSTED`. Step 1.5's task tracker applies to interactive runs only. `TICKET_ROUTER_PLAN_REVIEW` keeps its default (`false`); turning it on gives complex tickets the independent reviewer.
 - **`agents/ticket-implement-agent.md`** names the `save_comment` feedback comment its skill posts, which its "All Linear mutations go through flow.sh" line had forbidden.
 - **Tests.** `lib/tests/test-agent-tool-coverage.sh` now also checks prohibitions: for every dispatch-table (skill, agent) pair, an agent body that forbids commits, Linear mutations, or writes outside a scope must name each committing script, non-read `LINEAR_OPS` op and `{…_ROOT}/` file its skill requires. It finds the pre-fix agent's three conflicts, and the two `ticket-appraise-exec` TaskCreate/TaskUpdate known gaps are gone.
+
+## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
+
+GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
+
+- **`lib/operator-root.sh`.** `operator_resolve_repos_root` keeps the order (environment, ticket env file, `./CLAUDE.md`) but, when `./CLAUDE.md` declares a `REPOS_ROOT` and the root came from somewhere else, the two must name the same directory (compared by physical path). A mismatch exits 3, prints both values and records nothing. `operator_require_manifest` requires the ticket's manifest to exist under the root: a ticket held at a gate always has one, so a missing manifest is exit 3, never a create.
+- **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
+- **Nothing unplain reaches the terminal.** Both roots and the manifest path are printed beside the prompt, so each must pass `regression_risk_plain` (no control characters, ANSI escapes, C1, zero-width or direction marks; valid UTF-8) first. A value that does not is exit 3 and is never printed; a host where the check cannot run (no `iconv`) is refused the same way.
+- `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
 
 ## 0.145.0 (2026-11-26) — an exported BASE_BRANCH is the default base again
 
