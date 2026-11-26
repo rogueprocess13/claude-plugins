@@ -25,6 +25,9 @@
 #      so VERIFY / PR-REVIEW route no-verdict, never a stale capture (#764).
 #   2. IMPLEMENT | VERIFY | PR-REVIEW: phase-result-parse.sh on that capture
 #      (advisory, writes META|phase-result|info|{json}; || true)
+#   2b. VERIFY (with or without a return): playwright-scrub.sh redacts typed
+#      passwords in ./.playwright-mcp snapshots (#819); writes
+#      META|playwright-scrub|info|files=N redacted=M only when M > 0.
 #   3. VERIFY: verdict-recompute.sh --ticket-dir D (META|claim-delta)
 #   3b. VERIFY | PR-REVIEW: phase-route.sh over the log → prints
 #      ROUTE_RESULT= / ROUTE_VERDICT= / ROUTE_SOURCE= (seam audit Track 0.2).
@@ -200,6 +203,17 @@ _rs_post_spawn() {
     fi
     ;;
   esac
+
+  if [ "$_rs_phase" = VERIFY ]; then
+    # GitHub #819: Playwright MCP snapshots under ./.playwright-mcp record a
+    # typed password in clear text. Redact them whatever the agent returned.
+    local _rs_scrub
+    _rs_scrub=$(bash "$_RS_DIR/playwright-scrub.sh" 2>/dev/null || true)
+    case "$_rs_scrub" in
+    *" redacted=0" | "") ;;
+    *) _rs_plog META playwright-scrub info "${_rs_scrub#PLAYWRIGHT_SCRUB }" ;;
+    esac
+  fi
 
   if [ "$_rs_phase" = VERIFY ] && [ "$_rs_have_return" = true ]; then
     # Never halts; an optimistic delta on fresh evidence fails the route.

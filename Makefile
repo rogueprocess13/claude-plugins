@@ -235,6 +235,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-persona-injection.sh
 	bash ticket-auto-pipeline/lib/tests/test-qa-persona-wanted.sh
 	bash ticket-auto-pipeline/lib/tests/test-pre-fix-fails.sh
+	bash ticket-auto-pipeline/lib/tests/test-playwright-scrub.sh
 	bash ticket-auto-pipeline/lib/tests/test-critique-status.sh
 	bash ticket-auto-pipeline/lib/tests/test-critique-no-post.sh
 	bash scripts/tests/test-e2e-preflight.sh
