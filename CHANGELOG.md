@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.148.0 (2026-11-26) — the regression guard holds only for real risks
+
+GitHub #823. In an epic where each ticket builds on the one before, the guard made a person acknowledge nearly every ticket (ADJACENT and SUPERSEDES verdicts against earlier siblings), and it matched overlaps on file names in Prior Art prose, so it missed overlaps the prose did not name.
+
+- **`lib/regression-guard.sh` (new).** `overlap PLAN_FILES PRIOR_DIR` intersects the plan's files with the prior ticket's real changed files (its ai-context.md `## What changed` list; exit 1 when there is none, and only then does Step 3.5 fall back to prose). `relation TID PRIOR` prints `dependency same-epic:<EPIC>` (both resolve to one epic via `resolve_ticket_epic`), `dependency blocked-by` (this ticket's `blocked_by` names it) or `unrelated` (also when it cannot tell). `write TID NOTES ROWS` takes the agent's verdict rows and decides which need a person: CONFLICT always, SUPERSEDES unless the prior ticket is a dependency, ADJACENT never, an unknown verdict as CONFLICT. Gated rows go to `## ⚠️ Regression Risk` and are recorded with `regression-risk.sh record`; the rest go to `## Regression Notes` for the PR reviewer, which the implement gate does not read.
+- **`ticket-appraise-exec` Step 3.5.** Steps B and D call the script; the agent no longer writes either section by hand.
+- The implement gate (`regression-risk.sh check`) is unchanged.
+- Test: `lib/tests/test-regression-guard.sh`.
+
 ## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
 
 GitHub #821. `_derive_exit_path` grepped the whole ticket log for `META|gate-stop|fail`, so a gate-stop from an earlier, held run became the exit path of a later run that completed normally, and `_detect_mislabel` then flagged a Smooth outcome as `mislabeled_outcome: true`.
