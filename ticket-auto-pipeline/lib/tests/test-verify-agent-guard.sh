@@ -70,6 +70,25 @@ test_agent_grants_every_referenced_playwright_tool() {
 _run "(a) verify agent grants every mcp__playwright__* tool its skill/agent prose names" \
   test_agent_grants_every_referenced_playwright_tool
 
+# Second-tab and fresh-context criteria need tab and close tools (#825);
+# without them the agent can only emulate with window.open/storage clears.
+test_agent_grants_tab_and_close_tools() {
+  local t tools_line
+  tools_line=$(grep -m1 '^tools:' "$AGENT_MD" | tr -d ' ' | tr ',' '\n')
+  for t in mcp__playwright__browser_tabs mcp__playwright__browser_close; do
+    grep -qxF "$t" <<<"$tools_line" || {
+      echo "  ticket-verify-agent.md tools: is missing $t" >&2
+      return 1
+    }
+    grep -qF "$t" "$VERIFY_SKILL" || {
+      echo "  ticket-verify/SKILL.md never tells the agent when to use $t" >&2
+      return 1
+    }
+  done
+}
+_run "(a) verify agent grants browser_tabs and browser_close, and the skill says when to use them" \
+  test_agent_grants_tab_and_close_tools
+
 # A tool named only in a reference must still fail the guard.
 test_tool_named_only_in_a_reference_fails() {
   local d

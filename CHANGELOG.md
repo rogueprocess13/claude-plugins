@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.147.0 (2026-11-26) — verify reads a clean worktree path and can drive a second tab
+
+GitHub #822, #825.
+
+- **`lib/notes-field.sh`.** The one reader of ticket-implement's pre-implementation checkpoint line (`- Repos: … | Branch: … | Worktree: … | Mode: …`): `notes-field.sh worktree|branch|repos|mode <ticket-dir|notes.md>` stops each value at the next `|`, trims padding and backticks, and takes the last checkpoint. ticket-verify Step 6 read the worktree with `sed 's/.*Worktree: //'`, which kept ` | Mode: …`, so `cd "$WORKTREE_PATH"` failed or the agent had to trim it by hand. ticket-verify Step 6 and ticket-pr-review now call the helper.
+- **`ticket-verify-agent` gets `mcp__playwright__browser_tabs` and `mcp__playwright__browser_close`.** Step 4b says when to use them: a second-tab criterion opens, switches and closes a tab; a fresh-context criterion closes the browser and navigates again, and when the session survives (the server is not `--isolated`) clears cookies and storage, reloads and marks the evidence as emulated.
+- **Tests.** `lib/tests/test-notes-field.sh` (new) covers the parse and fails on any unbounded `Worktree:` read in a skill or lib; `test-verify-agent-guard.sh` checks the two new grants.
+
 ## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
 
 GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
