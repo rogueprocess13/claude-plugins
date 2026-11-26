@@ -349,17 +349,18 @@ test_entry_complex_held() {
   }
 }
 
-# 6b. New auth logic as the only complexity signal is held in auto mode. The
-# score is the real complexity-score.sh output read by the real get_complexity,
-# not a fake value: `reversibility:auth-new` weighs 3, the threshold.
-test_entry_auth_new_alone_held_in_auto() {
+# 6b. New auth logic plus one more axis is held in auto mode. The score is the
+# real complexity-score.sh output read by the real get_complexity, not a fake
+# value: `reversibility:auth-new` weighs 2 (issue #826), `cross-layer` 2, so
+# together they pass the threshold of 3.
+test_entry_auth_new_with_second_axis_held_in_auto() {
   _setup
   _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
   local td="${_ws}/${_tid}--test" rc=0
-  bash "$LIB_DIR/complexity-score.sh" write "$td" --axes "reversibility:auth-new" --reason "First sign-in module." >/dev/null || rc=$?
+  bash "$LIB_DIR/complexity-score.sh" write "$td" --axes "cross-layer,reversibility:auth-new" --reason "First sign-in module, UI and API." >/dev/null || rc=$?
   _fake_complexity=$(bash -c 'source "$1/notes-parse.sh"; get_complexity "$2"' _ "$LIB_DIR" "$td")
   [ "$rc" -eq 0 ] && [ "$_fake_complexity" = "complex" ] || {
-    echo "expected auth-new alone to score complex, got '$_fake_complexity' (rc=$rc)"
+    echo "expected auth-new plus cross-layer to score complex, got '$_fake_complexity' (rc=$rc)"
     _teardown
     return 1
   }
@@ -3901,7 +3902,7 @@ for fn in \
   test_entry_simple_semi_auto_calls_flow_human_approve \
   test_entry_simple_manual_held \
   test_entry_complex_held \
-  test_entry_auth_new_alone_held_in_auto \
+  test_entry_auth_new_with_second_axis_held_in_auto \
   test_entry_gate_start_event_written \
   test_entry_autonomy_from_log \
   test_entry_complexity_from_notes \

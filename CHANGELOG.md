@@ -17,13 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.151.0 (2026-11-27) — a PR-review fix round shows in the outcome label
+## 0.152.0 (2026-11-27) — a PR-review fix round shows in the outcome label
 
 GitHub #827. `outcome-label-check.sh` took the outcome from the latest implement round's own self-grade, so a ticket that failed PR review, had its plan amended and re-approved, and needed a second implement round was still labelled Smooth, and the planner feedback and the retro treated it as a first-time pass. A recorded outcome was also never overwritten, so a later round's grade reached only the log.
 
 - **Review-round floor.** The outcome is now the whole attempt's: one PR-review fix round (a `pr-iterate` line after a `pr-review` verdict of WARN, BLOCK or fail), or a `GATE|reapprove|done|` re-approval, makes it at least Rough; two or more fix rounds make it Hard. The floor only raises an outcome.
 - **Attempt window.** The check reads the current run (#821's `META|run-id` boundary) widened back over earlier runs that ended without completing (`held:` / `stopped:`), since a reapprove hold closes its run and the re-implement runs in the next one. A fix round from before the last `completed:` outcome does not count.
 - **Manifest.** A recorded `outcome_label` that differs from the computed outcome is overwritten.
+
+## 0.151.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
+
+GitHub #826. Two calibration fixes found in an end-to-end rehearsal.
+
+- **`lib/complexity-score.sh`.** `reversibility:auth-new` weighs 2 (was 3, the threshold). New auth logic nothing existing depends on is now a weak axis: alone it scores `simple`; with any second axis (multi-service, cross-layer, blast radius) it reaches `complex` and the approve gate. Every auth-new-only ticket in the rehearsal went to a person and ended Smooth. `reversibility:auth-modify`, a bare `reversibility:auth` and every other spelling still weigh 3, and the fast-path keyword scan is unchanged. `skills/ticket-appraise/SKILL.md` states the new weight.
+- **`lib/planned-feedback-write.sh` `_compute_decision_drift`.** The planner's confidence (about 0.55) and `_compute_actual_confidence` (Smooth 0.90) are on different scales, so the raw difference made every Smooth ticket `major`. Both values are now ranked by the new `_confidence_tier` (`lib/confidence.sh`: high ≥ 0.75, medium 0.50–0.74, low < 0.50) and the ranks compared: same rank `none`, one apart `minor`, low vs high `major`. A prediction that is not a number is `unknown`. The confidence values in the feedback payload are unchanged.
+- **Tests.** `lib/tests/test-complexity-score.sh` (auth-new alone simple; with multi-service, cross-layer or blast radius complex), `lib/tests/test-gate-check.sh` (auth-new plus cross-layer is still held in auto mode), `lib/tests/test-planned-feedback-write.sh` Test 11b (drift per outcome, not constant; tier cut points).
 
 ## 0.150.0 (2026-11-26) — the regression guard holds only for real risks
 
@@ -34,6 +42,7 @@ GitHub #823. In an epic where each ticket builds on the one before, the guard ma
 - The implement gate (`regression-risk.sh check`) is unchanged.
 - Test: `lib/tests/test-regression-guard.sh`.
 
+
 ## 0.149.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
@@ -42,6 +51,7 @@ GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan a
 - **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
 - **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
 - **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+
 ## 0.148.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
 
 GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.
