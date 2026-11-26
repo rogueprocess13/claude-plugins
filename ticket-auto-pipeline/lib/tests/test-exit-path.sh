@@ -376,6 +376,57 @@ test_readiness_reclassification_is_retroactive_on_an_archived_log() {
   return $ok
 }
 
+# ── Exit path is scoped to the current run (#821) ─────────────────────────────
+
+test_exit_path_ignores_gate_stop_from_an_earlier_run() {
+  # A gate-stop from an earlier, held run must not become the exit path of a
+  # later run that completed normally.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|run-id|info|{"run_id":"T-1-2026-01-01T00:00:00Z-1"}
+2026-01-01T00:09:00Z|META|gate-stop|fail|REGRESSION_RISK_UNACKNOWLEDGED — reason=unacknowledged; risk=abc
+2026-01-01T00:09:01Z|META|outcome|info|held: gate
+2026-01-02T00:00:00Z|META|run-id|info|{"run_id":"T-1-2026-01-02T00:00:00Z-2"}
+2026-01-02T00:10:00Z|IMPLEMENT|implement|done|ok
+2026-01-02T00:20:00Z|META|outcome|info|completed: STEP_6
+EOF
+  local got ok
+  got=$(bash -c "source '$LIB_DIR/exit-path.sh'; LOG_FILE='$log' EXIT_CODE=0 _derive_exit_path ''")
+  [ "$got" = "completed" ]
+  ok=$?
+  [ $ok -eq 0 ] || echo "  got exit path: $got" >&2
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_exit_path_reports_gate_stop_of_the_current_run() {
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|run-id|info|{"run_id":"T-1-2026-01-01T00:00:00Z-1"}
+2026-01-01T00:09:00Z|META|gate-stop|fail|EXEC_NO_ARTIFACT
+2026-01-02T00:00:00Z|META|run-id|info|{"run_id":"T-1-2026-01-02T00:00:00Z-2"}
+2026-01-02T00:10:00Z|META|gate-stop|fail|COMPLEXITY_ARTIFACT_MISMATCH
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; LOG_FILE='$log' EXIT_CODE=1 _derive_exit_path ''")" = "gate-stop:COMPLEXITY_ARTIFACT_MISMATCH" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_exit_path_without_run_id_reads_whole_log() {
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:09:00Z|META|gate-stop|fail|EXEC_NO_ARTIFACT' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; LOG_FILE='$log' EXIT_CODE=0 _derive_exit_path ''")" = "gate-stop:EXEC_NO_ARTIFACT" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 # ── Invariant: completed outcome never carries a failure_class (issue #357) ────
 
 test_completed_outcome_overrides_stale_gate_stop_evidence() {
@@ -676,7 +727,10 @@ _run "class: readiness via plan-missing gate-hold log line, not outcome" test_cl
 _run "class: approval_gate still wins with no plan-missing log line" test_class_approval_gate_still_wins_when_no_plan_missing_line
 _run "class: readiness completed run still classifies none" test_class_readiness_completed_run_still_classifies_none
 _run "readiness reclassification is retroactive on an archived log" test_readiness_reclassification_is_retroactive_on_an_archived_log
-_run "completed outcome overrides stale gate-stop evidence" test_completed_outcome_overrides_stale_gate_stop_evidence
+_run "exit path ignores a gate-stop from an earlier run (#821)" test_exit_path_ignores_gate_stop_from_an_earlier_run
+_run "exit path reports the current run's gate-stop (#821)" test_exit_path_reports_gate_stop_of_the_current_run
+_run "exit path without a run-id reads the whole log" test_exit_path_without_run_id_reads_whole_log
+_run "completed outcome overrides stale gate-stop evidence"test_completed_outcome_overrides_stale_gate_stop_evidence
 _run "completed outcome overrides stale VERIFY_EXHAUSTED evidence" test_completed_outcome_overrides_stale_verify_exhausted_evidence
 _run "held: gate outcome still classifies approval_gate, not none" test_held_gate_outcome_still_classifies_approval_gate_not_none
 _run "override breadcrumb appears when evidence is actually suppressed" test_override_line_appears_when_evidence_is_actually_suppressed

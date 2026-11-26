@@ -608,6 +608,36 @@ test_state_stays_out_of_home() {
   _teardown
 }
 
+test_earlier_run_gate_stop_not_reported_for_completed_run() {
+  # #821: a gate-stop from an earlier, held run must not become the exit
+  # path, a signal, or mislabel evidence for a later run that completed.
+  _setup
+  _write_log "
+2026-08-08T10:00:02Z|META|run-id|info|{\"run_id\":\"TEST-123-2026-08-08T10:00:02Z-1\"}
+2026-08-08T10:01:00Z|META|gate-stop|fail|REGRESSION_RISK_UNACKNOWLEDGED — reason=unacknowledged; risk=abc
+2026-08-08T10:01:01Z|META|outcome|info|held: gate
+2026-08-09T10:00:00Z|META|run-id|info|{\"run_id\":\"TEST-123-2026-08-09T10:00:00Z-2\"}
+2026-08-09T10:01:00Z|IMPLEMENT|implement|done|ok
+2026-08-09T10:02:00Z|META|verifier-result|info|{\"verifier\":\"test\",\"verdict\":\"PASS\",\"score\":1.0,\"phase\":\"VERIFY\"}
+2026-08-09T10:03:00Z|META|outcome-label|info|Smooth
+"
+  _run_pm 0
+
+  local _line _json
+  _line=$(grep '|META|postmortem|info|.*"run_id":"TEST-123-2026-08-09T10:00:00Z-2"' "$_log_file" | grep -v '"status":"started"' | tail -1)
+  _json=$(echo "$_line" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
+  local _exit_path _mislabeled
+  _exit_path=$(echo "$_json" | jq -r '.exit_path // empty')
+  _mislabeled=$(echo "$_json" | jq -r '.mislabeled_outcome // "false"')
+  if [ "$_exit_path" = "completed" ] && [ "$_mislabeled" = "false" ]; then
+    _teardown
+    return 0
+  fi
+  echo "FAIL: expected completed/false, got exit_path=$_exit_path mislabeled=$_mislabeled (line: $_line)" >&2
+  _teardown
+  return 1
+}
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 _filter="${1:-}"
