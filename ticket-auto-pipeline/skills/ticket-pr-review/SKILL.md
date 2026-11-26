@@ -120,7 +120,7 @@ WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
 if [ ! -d "$WORKTREE_PATH/.git" ] && [ ! -f "$WORKTREE_PATH/.git" ]; then
   # Worktree missing (e.g. GC'd) — fall back to the checkpoint notes.md recorded at
   # implement time (`### ... — pre-implementation checkpoint`, `Worktree:` field).
-  WORKTREE_PATH=$(grep "Worktree:" {ticket-dir}/notes.md 2>/dev/null | tail -1 | sed -n 's/.*Worktree: \([^|]*\).*/\1/p' | sed 's/[[:space:]]*$//')
+  WORKTREE_PATH=$(bash ~/.claude/skills/lib/notes-field.sh worktree {ticket-dir})
 fi
 GH_REPO=$(git -C "$WORKTREE_PATH" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
 if [ -z "$GH_REPO" ]; then

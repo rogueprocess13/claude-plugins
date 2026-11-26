@@ -94,6 +94,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-implement-diff-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-conflict-marker-scan.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-repo-resolve.sh
+	bash ticket-auto-pipeline/lib/tests/test-notes-field.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-merge-gate.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-review-transition.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-review-comment.sh

@@ -161,7 +161,7 @@ Record the printed `VERIFY_MODE` for the rest of this skill. `browser` (the defa
 
 ### 1f — Mode reference (load condition)
 
-**If `VERIFY_MODE=build-only`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/build-only.md`; **if `VERIFY_MODE=live-backend`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/live-backend.md`. Do this before Step 2, and before re-entering Step 4c or 4c-live on a `--from-step` resume (`build-plan`, `execute-steps` or `checkpoint`), then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/${VERIFY_MODE}.md"` and stop: never run the Step 2 variant, Step 4c, Step 4c-live or their Step 7a diagnostics from memory. In `browser` mode, read neither file.
+**If `VERIFY_MODE=build-only`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/build-only.md`; **if `VERIFY_MODE=live-backend`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/live-backend.md`. Do this before Step 2, and before re-entering Step 4c or 4c-live on a `--from-step` resume (`build-plan`, `execute-steps` or `checkpoint`), then Read the printed path in full. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/${VERIFY_MODE}.md"` and stop: never run the Step 2 variant, Step 4c, Step 4c-live or their Step 7a diagnostics from memory. In `browser` mode, read neither file.
 
 A `--from-step` resume skips Step 1e, so take the mode from this ticket's latest `load-context` line:
 
@@ -254,7 +254,7 @@ Only one verify app stack is ever up at a time; a concurrent request queues. One
 bash ~/.claude/skills/lib/verify-env-up.sh up "{TICKET-ID}" --branch "{branch}" --services "{services}" --tickets-root "{TICKETS_ROOT}" --local-url "{LOCAL_URL}"
 ```
 
-`{branch}` is the ticket's branch (notes.md's pre-implementation-checkpoint `Worktree:`/branch entry, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`). `{services}` is the 1.6a list, empty when 1.6a found none or the ticket dir is missing. Exit 0: the stack is up, serves this ticket's code and holds its seed data, and the lock stays held for the criteria. **Any non-zero exit: stop here.** The script has logged why and released the lock: exit 1 is a lock timeout (`verify-lock|fail`) or one of the gate-stops below; any other code is `env-start.sh`'s own failure, so abort with its error and do not proceed to the browser.
+`{branch}` is the ticket's branch (`notes-field.sh branch {ticket-dir}`, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`). `{services}` is the 1.6a list, empty when 1.6a found none or the ticket dir is missing. Exit 0: the stack is up, serves this ticket's code and holds its seed data, and the lock stays held for the criteria. **Any non-zero exit: stop here.** The script has logged why and released the lock: exit 1 is a lock timeout (`verify-lock|fail`) or one of the gate-stops below; any other code is `env-start.sh`'s own failure, so abort with its error and do not proceed to the browser.
 
 On a resume past Step 1.6 (see Step dispatch), take the lock alone: `bash ~/.claude/skills/lib/verify-env-up.sh lock "{TICKET-ID}"` (exit 1: timed out; stop).
 
@@ -270,7 +270,7 @@ Under the lock, `up` resolves or resyncs this run's own worktree per affected re
 
 **env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it.
 
-**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, `up` compares the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees (`verify-env-up.sh served-check`, also in `live-backend` mode). This ticket's code (`served-worktree|done`) continues. An undecided port (no worktree to compare, an unreadable or container-served port) is a visible `VERIFY_SERVED_UNVERIFIED` gate-warn and continues. A port serving a different commit or a dirty checkout of a repo under test is a `VERIFY_SERVED_WRONG_WORKTREE` gate-stop with recovery steps. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades that stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
+**Check what is actually served.** `env-status.sh` reports only up/down, so a stack serving the primary clone (maybe another ticket's branch) reads green: a silent false verdict. Once `env-start.sh` succeeds, `up` compares the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees (`verify-env-up.sh served-check`, also in `live-backend` mode). This ticket's code (`served-worktree|done`) continues. An undecided port (no worktree to compare, an unreadable or container-served port) is a visible `VERIFY_SERVED_UNVERIFIED` gate-warn and continues. A port serving a different commit or a dirty checkout of a repo under test is a `VERIFY_SERVED_WRONG_WORKTREE` gate-stop with recovery steps. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades that stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
 
 ### 1.6c — Apply seeds from merged test-data blockers
 
@@ -571,7 +571,7 @@ bash ~/.claude/skills/lib/plog.sh VERIFY navigate done "Reached {feature area}"
 
 With the browser now on the correct page, work through each remaining step in the Verification Plan sequentially. For **every step**:
 
-1. Perform the Playwright action with the matching tool: click (`mcp__playwright__browser_click`), type into a field (`mcp__playwright__browser_type`), choose a native `<select>` option (`mcp__playwright__browser_select_option`), press a key such as Enter, Escape or Tab (`mcp__playwright__browser_press_key`), hover to open a hover menu (`mcp__playwright__browser_hover`), accept or dismiss a native `confirm()`/`alert()` (`mcp__playwright__browser_handle_dialog`), upload a file (`mcp__playwright__browser_file_upload`), go back (`mcp__playwright__browser_navigate_back`), or change the viewport for a responsive criterion (`mcp__playwright__browser_resize`). Do not substitute `mcp__playwright__browser_evaluate` DOM edits for a user action — they bypass the framework's change detection and can produce a false PASS. Use `browser_evaluate` only to read state.
+1. Perform the Playwright action with the matching tool: click (`mcp__playwright__browser_click`), type into a field (`mcp__playwright__browser_type`), choose a native `<select>` option (`mcp__playwright__browser_select_option`), press a key such as Enter, Escape or Tab (`mcp__playwright__browser_press_key`), hover to open a hover menu (`mcp__playwright__browser_hover`), accept or dismiss a native `confirm()`/`alert()` (`mcp__playwright__browser_handle_dialog`), upload a file (`mcp__playwright__browser_file_upload`), go back (`mcp__playwright__browser_navigate_back`), resize for a responsive criterion (`mcp__playwright__browser_resize`), or use a second tab (`mcp__playwright__browser_tabs`; close it before the next criterion). Fresh context: `mcp__playwright__browser_close`, then navigate; if still signed in (no `--isolated`), clear cookies and storage, reload, and mark the evidence emulated. Do not substitute `mcp__playwright__browser_evaluate` DOM edits for a user action — they bypass the framework's change detection and can produce a false PASS. Use `browser_evaluate` only to read state.
 2. Wait for settle (Step 4) whenever the action triggers navigation, a dialog, a save or any async load.
 3. Take a snapshot with `mcp__playwright__browser_snapshot`
 4. Record the **observed result** — what you see in the snapshot
@@ -632,7 +632,7 @@ One or more pass criteria are not met → proceed to Step 7.
 
 ### Report templates (load condition)
 
-Before writing the Step 6 pass report or the Step 7b failure report, including a Step 7 reached directly from Step 1b5, 1.6d, 3b or 4, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/templates.md`, then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/templates.md"` and stop: never write a report or comment from memory. The REMEDIATION_BRIEF (7c), the notes.md records and the PR body stay in this file.
+Before writing the Step 6 pass report or the Step 7b failure report, including a Step 7 reached directly from Step 1b5, 1.6d, 3b or 4, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/templates.md`, then Read the printed path in full. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/templates.md"` and stop: never write a report or comment from memory. The REMEDIATION_BRIEF (7c), the notes.md records and the PR body stay in this file.
 
 ---
 
@@ -664,12 +664,12 @@ source ~/.claude/skills/lib/verifier-result.sh && verify_record_verdict "{VERIFY
 
 Verification passed on localhost — the implementation is confirmed working. Now open the PR:
 
-1. Read `notes.md` for the branch name, repo, and worktree path from the `pre-implementation checkpoint` entry.
+1. Take the branch, repo and worktree from `notes.md`'s `pre-implementation checkpoint` line.
 2. For each affected repo, check if a PR already exists for this branch, then open one against `$BASE_BRANCH`:
    ```bash
    source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
-   # Resolve worktree path — prefer notes.md checkpoint, fall back to path computation
-   WORKTREE_PATH=$(grep "Worktree:" {ticket-dir}/notes.md 2>/dev/null | head -1 | sed 's/.*Worktree: //')
+   # notes.md checkpoint, else the path formula
+   WORKTREE_PATH=$(bash ~/.claude/skills/lib/notes-field.sh worktree {ticket-dir})
    if [ -z "$WORKTREE_PATH" ]; then
      source "$HOME/.claude/skills/lib/worktree.sh"
      WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
