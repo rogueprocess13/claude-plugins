@@ -38,7 +38,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `code-review` | Step 5 (commit/push) | — |
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
-**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for your own prompt or skill name — your own process (and its own `spawn_agent_pre` shell) always matches. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
+**Concurrency guard:** to check whether another worker is implementing this ticket, never grep `ps`/`pgrep` for your prompt or skill name (your own process always matches). Use file signals: a worktree/branch with commits on it, a lockfile whose PID is not your ancestor, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line in `$TAP_LOG`.
 
 **Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Every invocation starts at the tickets repo root; Step 4 `cd`s into a code worktree and nothing `cd`s back, so Step 5.5 uses this instead of CWD:
 
@@ -50,6 +50,8 @@ IMPLEMENT_TICKETS_ROOT="$(pwd)"
 
 **Rework.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/rework.md` only on a rework entry: Step 2.5 finds `FAIL_COUNT` > `SECTION_COUNT`, or a `--from-step` resume that skips Step 2.5 (`detect-path`, `checkout-branch`, `implement`) while a rework is still open (`REWORK_OPEN=true` from the Step 2.5 call: notes.md's last `— verification re-run #` entry comes after its last `— committed` entry).
 A first implementation attempt, and a run whose verify failures are all addressed, does not read it.
+
+**Pre-fix proof.** If `bash ~/.claude/skills/lib/pre-fix-fails.sh wanted {TICKET-ID} "{ticket-dir}/context.md"` prints `true`, after Step 4b's clean code review, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/pre-fix-fails.md` and follow it before Step 5.
 
 **Feedback.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/feedback.md` in Step 4c only when a feedback item exists: a complexity mismatch (`MISMATCH=true`: predicted `simple` with outcome `Rough`/`Hard`, or predicted `complex` with `Smooth`), or a wiki gap found in Part 3. A run with neither does not read it.
 
@@ -242,8 +244,8 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement done "{N} files changed"
 
 **After implementation is complete, write tests covering the changed logic.** This is mandatory — do not skip.
 
-- **If `{BE_TEST_CMD}` is defined and the ticket touches a BE repo:** Write tests in the repo's test directory. Create `tests/` if it doesn't exist. Test any new or modified functions/methods, including error paths. Install the test framework if needed (e.g. `pip install pytest`). Use `{BE_TEST_RUNNER}` as the test invocation if defined (e.g., `~/.pyenv/versions/3.13.12/bin/pytest`), otherwise fall back to `{BE_TEST_CMD}`.
-- **If `{FE_TEST_CMD}` is defined and the ticket touches a non-BE repo:** Write tests alongside the changed files or in `__tests__/`. Test new or modified components, API routes, and utility functions. Install the test framework if needed.
+- **If `{BE_TEST_CMD}` is defined and the ticket touches a BE repo:** Write tests in the repo's test directory (create `tests/` if absent) for new or modified functions/methods, error paths included. Install the test framework if needed. Run them with `{BE_TEST_RUNNER}` if defined, else `{BE_TEST_CMD}`.
+- **If `{FE_TEST_CMD}` is defined and the ticket touches a non-BE repo:** Write tests alongside the changed files or in `__tests__/` for new or modified components, API routes and utility functions. Install the test framework if needed.
 - **If neither is defined:** Skip all tests. Do not invent or install a test framework. Note "no test command configured" in the session log and move on.
 - **DB migrations:** If the change includes a migration, write a test that verifies the new schema (column exists, index exists, constraint works).
 
@@ -258,7 +260,7 @@ awk '/^## Refinement Carry-over/{on=1; next} on && /^## /{exit} on && /^### Test
 **Every candidate must end as a test or a recorded reason** — never silently dropped:
 
 - **Add a test** covering the named behaviour, alongside the tests above, when the behaviour is in this ticket's scope and a test command is configured.
-- **Otherwise record why not**: append one line per candidate to notes.md under `## Session Log`, naming it by its `(candidate <key>)` suffix — e.g. `- Test candidate f-0123456789ab not tested: out of scope for this change (belongs to the export service)` or `… not tested: no test command configured`.
+- **Otherwise record why not**: append one line per candidate to notes.md under `## Session Log`, naming it by its `(candidate <key>)` suffix — e.g. `- Test candidate f-0123456789ab not tested: out of scope (belongs to the export service)` or `… not tested: no test command configured`.
 
 A candidate is a gap Refinement found, not an accepted acceptance criterion: do not widen the implementation to satisfy one, and do not treat an untestable one as a blocker. `ticket-verify` re-checks each candidate as a non-failing `carry-over` check. No `### Test candidates` sub-section → skip this.
 
@@ -310,7 +312,7 @@ Do not commit until the review is clean or the loop gate-stops. At a clean exit,
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
 
-**Seeder scenarios (#601).** If the ticket ships one (`seed.sh <scenario>`, `Seed command:`, a diff under `$WIKI_ROOT/api/_tools/seed/`), check every request it makes against the OpenAPI contract (path, method, param min/max, required fields) and that a re-run takes its "already exists" paths. Do not start or reset the shared stack: VERIFY Step 1.6d runs it twice on its clean baseline before any criterion.
+**Seeder scenarios (#601).** If the ticket ships one (`seed.sh <scenario>`, `Seed command:`, a diff under `$WIKI_ROOT/api/_tools/seed/`), check every request it makes against the OpenAPI contract (path, method, param min/max, required fields) and that a re-run takes its "already exists" paths. Never start or reset the shared stack: VERIFY Step 1.6d runs it twice, on a clean baseline.
 
 ---
 
@@ -339,10 +341,7 @@ Moved to `references/feedback.md` (the Linear mismatch comment, the claude-mem f
 `WIKI_CONSULTED=false` (no `Wiki bootstrap:` line in notes.md, written by `ticket-appraise`
 Step 3a when it loaded a wiki flow file) → skip this Part: there is nothing wiki-sourced to check.
 
-If the wiki was consulted, ask independently of the mismatch check above: **did anything the
-wiki said turn out wrong, stale, or missing during implementation?** A wrong class name, a
-Feign client the flow didn't mention, an entity field the wiki didn't document, a call-chain
-step that no longer matches the code — any of these counts, on any outcome label, `Smooth` included.
+If the wiki was consulted, ask independently of the mismatch check above: **did anything the wiki said turn out wrong, stale, or missing during implementation?** A wrong class name, a Feign client the flow didn't mention, an entity field the wiki didn't document, a call-chain step that no longer matches the code — any of these counts, on any outcome label, `Smooth` included.
 
 - **No gap found:** run `bash ~/.claude/skills/lib/implement-feedback.sh wiki-ok --log-file "$TAP_LOG"`
   (writes `META|wiki-check|info|wiki consulted, no gap found`) and move on.
@@ -370,9 +369,7 @@ A failed correction write logs a `corrections-error` warning and **never halts**
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT commit-push start "Committing and pushing"
 
-**No-diff check first.** Pass every affected repo's worktree. When none of them has a
-source change (no uncommitted or untracked non-ignored file, and no commit ahead of the
-base), the script writes `IMPLEMENT|commit-push|skip|…` and exits 4 — the line
+**No-diff check first.** Pass every affected repo's worktree. When none of them has a source change (no uncommitted or untracked non-ignored file, and no commit ahead of the base), the script writes `IMPLEMENT|commit-push|skip|…` and exits 4 — the line
 `ticket-pr-review` keys its no-diff exemption on (a verification-only ticket has no PR):
 
 ```bash
@@ -401,7 +398,7 @@ For each affected repo:
      source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
      gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "HEAD"
      ```
-     (Run from `$WORKTREE_PATH`: `HEAD` is the branch you're about to push. `list_repos`' `commitsBehind` is measured against the indexed clone's checkout, not this branch.) `ok <n>` (exit 0) means verified — proceed to `detect_changes`. `wrong-branch`/`ahead <n>`/`stale <n>` (exit 1) or `unresolvable <reason>` (exit 2) mean unverified — skip `detect_changes`, log a warning, and proceed without it (never block the push on GitNexus).
+     (Run from `$WORKTREE_PATH`, whose `HEAD` is the branch to push; `list_repos`' `commitsBehind` measures the indexed clone's checkout, not this branch.) `ok <n>` (exit 0) means verified — proceed to `detect_changes`. `wrong-branch`/`ahead <n>`/`stale <n>` (exit 1) or `unresolvable <reason>` (exit 2) mean unverified — skip `detect_changes`, log a warning, and proceed without it (never block the push on GitNexus).
    - Only once verified: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "$BASE_BRANCH"`.
    - **Sanity-check the result (#359):** compare the affected-file list against `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"...HEAD` (one path per line each) via `gitnexus_check_result_subset "$RETURNED_FILES" "$KNOWN_DIFF_FILES"`. A non-subset result (exit 1) means the structural diff named files outside this branch's actual changes — discard it, log a warning, and proceed without it.
    - If the result shows `risk_level: "high"` or `"critical"`, OR affected execution flows outside the ticket's stated scope: append a warning to the handoff output.

@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix
+
+next.md Step 24 item 1. A regression test that passes on the old code proves nothing, and until now only the implementing agent judged its own test. This increment measures; it blocks nothing.
+
+- **`lib/pre-fix-fails.sh`.** `wanted <TID>` is `true` for a bug ticket (`ticket-type.sh`) unless `PRE_FIX_FAILS=off`. `check` builds a throwaway worktree at the merge base with only the ticket's test files copied in (production files stay old; renamed and deleted test files handled), runs the named tests there and on the fix, and judges from JUnit XML with a strict matcher: `proved`, `proved-weak` (the test errors or does not build before the fix), `unproven <reason>` or `skipped`. Maven and pytest run only the named tests; other runners run the whole test command. No report is `unproven no-report`, never a pass. One `META|pre-fix-fails|info` line per repo; no gate-stop, no verifier result.
+- **ticket-implement** reads `references/pre-fix-fails.md` behind that condition after a clean code review: the agent names the test(s), runs the check, and may strengthen a test that passes before the fix once. SKILL.md did not grow.
+- `features.json` gains `PRE_FIX_FAILS` (`warn`, `off`). Openspec change `pre-fix-fails-gate`, shaped by three reviews (verdict correctness, pipeline fit, real projects): enforcing waits for the counts.
+
 ## 0.142.0 (2026-11-22) — the VERIFY QA persona is on for bug tickets by default
 
 `VERIFY_QA_PERSONA` shipped off (#748) and so never got the live run its rollout waited on. It now takes three values: `bug` (the new default), `true` (every ticket, the old opt-in) and `false` (off).
