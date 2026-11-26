@@ -194,6 +194,25 @@ EOF
   grep -q '|META|outcome|info|completed: STEP_6' <<<"$last"
 }
 
+# GitHub #820: the reapprove gate's hold is closed by GATE|reapprove|done|
+# (the gate itself, or detect-resume's release after a person's approval).
+test_resolved_reapprove_hold_does_not_re_hold() {
+  _setup
+  local log="$_ws/logs/CRE-16-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|GATE|reapprove|fail|held: the amended plan needs a person's approval
+2026-09-01T00:00:02Z|META|gate-held|info|held
+2026-09-01T01:00:00Z|GATE|reapprove|done|released: a person's approval (resume)
+EOF
+  unset LINEAR_API_KEY
+  _finalize "CRE-16" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  grep -q '|META|outcome|info|completed: STEP_6' <<<"$last"
+}
+
 # ── Outcome ordering ─────────────────────────────────────────────────────────
 
 test_outcome_remains_last_line() {
@@ -403,6 +422,7 @@ for fn in \
   test_gate_held_written_for_unreleased_hold_even_with_clean_exit_code \
   test_resolved_gate_hold_does_not_re_hold_a_clean_completion \
   test_resolved_gate_hold_via_reconcile_clean_does_not_re_hold \
+  test_resolved_reapprove_hold_does_not_re_hold \
   test_outcome_remains_last_line \
   test_exactly_one_run_line \
   test_idempotent_rerun_does_not_duplicate_run_event \

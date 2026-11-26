@@ -31,7 +31,7 @@ Bridges the gap between PR review and re-implementation. Locates the PR review f
 |----------|----------|-------------|
 | PR Review #N section | Plan artifact | Structured gaps with implementation steps |
 | notes.md update | {ticket-dir}/notes.md | Session log entry |
-| Linear state | Linear | Ready + approved, reviewed/rejected cleared |
+| Stage | Manifest | Ready + policy approval, reviewed/rejected cleared (no label added) |
 
 ## How it works
 

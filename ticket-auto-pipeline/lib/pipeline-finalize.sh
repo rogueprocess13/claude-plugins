@@ -71,7 +71,9 @@ _pf_has_unreleased_human_hold() {
 # `EXIT_CODE -eq 0` check has no way to tell that apart from a genuine
 # STEP_6 completion. "Resolved" mirrors detect-resume.sh's own two gate
 # completion markers (`GATE|gate|done|` from gate-check.sh's auto-approve/
-# reapprove path, `GATE|reconcile|done|clean` from ticket-gate-reconcile) so
+# reapprove path, `GATE|reconcile|done|clean` from ticket-gate-reconcile,
+# `GATE|reapprove|done|` from the reapprove gate or detect-resume's release
+# of a reapprove hold, GitHub #820) so
 # this function and the router's own resume logic never disagree about what
 # counts as "the hold is over".
 _pf_has_unreleased_gate_hold() {
@@ -88,7 +90,7 @@ _pf_has_unreleased_gate_hold() {
   lineno=0
   while IFS= read -r line; do
     lineno=$((lineno + 1))
-    if grep -qE '^[^|]*\|GATE\|(gate\|done\||reconcile\|done\|clean)' <<<"$line"; then
+    if grep -qE '^[^|]*\|GATE\|(gate\|done\||reapprove\|done\||reconcile\|done\|clean)' <<<"$line"; then
       resolved_lineno=$lineno
     fi
   done <"$log_file"
