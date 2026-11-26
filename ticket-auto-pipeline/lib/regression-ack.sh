@@ -51,8 +51,14 @@
 # The control raises the bar and makes a bypass a deliberate, visible act;
 # it is not a sandbox.
 #
+# REPOS_ROOT comes from the environment, else the ticket's env file, else
+# ./CLAUDE.md. When ./CLAUDE.md declares one and the root came from
+# elsewhere, the two must agree, and the ticket's manifest must already exist
+# under it (lib/operator-root.sh); either miss is exit 3 with nothing
+# recorded. The prompt names the manifest the acknowledgement goes into.
+#
 # Exit: 0 acknowledged or nothing left to acknowledge, 2 usage, 3 notes.md
-#       or manifest not usable, 4 agent context or no terminal, 5 no risk on
+#       or manifest not usable, or REPOS_ROOT unresolved or disagreeing, 4 agent context or no terminal, 5 no risk on
 #       record, 6 the typed id did not match (nothing recorded), 7 the risk
 #       text cannot be shown safely or does not match its id, 1 a tool or a
 #       write failed. Only exit 0 with acknowledged=true means it is done.
@@ -108,6 +114,16 @@ source "$_RA_DIR/regression-risk.sh" || die 1 "regression-risk.sh could not be l
 # The operator's own words are stored and later logged: plain, one line.
 note=$(printf '%s' "$note" | tr '\n\r|' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//') || die 1 "could not read --note"
 [ -z "$note" ] || regression_risk_plain "$note" || die 2 "--note holds control or invisible characters"
+
+# REPOS_ROOT: the environment, else the ticket's env file, else ./CLAUDE.md;
+# one that disagrees with ./CLAUDE.md is refused, and the manifest must
+# already exist under it (lib/operator-root.sh, GitHub #818). Without this an
+# exported REPOS_ROOT from another project got a fresh _adhoc manifest
+# created there, holding an acknowledgement this project never sees.
+# shellcheck source=/dev/null
+source "$_RA_DIR/operator-root.sh" || die 1 "operator-root.sh could not be loaded"
+operator_resolve_repos_root "regression-ack" "$tid" || exit 3
+manifest_path=$(operator_require_manifest "regression-ack" "$tid") || exit 3
 
 # Sets RR_NOTES and RR_MANIFEST, or says why not (rc 2).
 _rr_resolve "$tid" "$notes" || exit 3
@@ -186,6 +202,7 @@ else
     elif [ "$last" != "$cur" ]; then
       echo "notes.md now shows a version that is already acknowledged. The text above is what is not."
     fi
+    echo "Recording in: $manifest_path (REPOS_ROOT from the $OPERATOR_ROOT_SOURCE)"
     printf 'Type %s to acknowledge everything shown above (anything else aborts): ' "$id"
   } >&9
   answer=""
