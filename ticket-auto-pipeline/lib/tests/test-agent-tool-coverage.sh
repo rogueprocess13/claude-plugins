@@ -59,8 +59,6 @@ ticket-appraise	mcp__plugin_claude-mem_mcp-search__prime_corpus
 ticket-appraise	mcp__plugin_claude-mem_mcp-search__query_corpus
 ticket-appraise-exec	Agent
 ticket-appraise-exec	Skill
-ticket-appraise-exec	TaskCreate
-ticket-appraise-exec	TaskUpdate
 ticket-gate-reconcile	mcp__linear-server__list_comments
 ticket-pr-review	TaskCreate
 ticket-pr-review	TaskUpdate
@@ -350,6 +348,129 @@ if [ -z "$unlisted" ] && [ "$(jq '[.prompt_manifests[].files | index("lib:skill-
   _ok "every manifest that loads the preamble lists adr-gate's references/gate.md after it"
 else
   _bad "manifests load the preamble without the gate file right after it: $(tr '\n' ' ' <<<"$unlisted")"
+fi
+
+# ── Prohibitions against required actions (GitHub #816) ──────────────────────
+# The tools: line is not the only way an agent definition can forbid a step.
+# ticket-appraise-agent said "MUST NOT ... commit", "never attempt Linear API
+# mutations" and "Write only to the ticket workspace" while ticket-appraise-exec,
+# dispatched to it, requires a committing script (Step 3.4), a save_comment
+# (Step 5) and a write to {TICKETS_ROOT}/app-knowledge.md (Step 3.7); the agent
+# obeyed its definition and skipped them. A blanket prohibition in an agent body
+# must name every action of that kind its dispatched skills require, as the
+# stated exception.
+
+# A committing call is `~/.claude/skills/lib/X.sh commit ...` for a script X
+# that runs `git commit` itself (its commit is a subcommand), or any call of a
+# wrapper: a lib script that names such a script and runs a `commit` subcommand.
+COMMIT_DIRECT=$(grep -lE '^[^#]*\bgit\b[^#]* commit\b' "$PLUGIN_DIR"/lib/*.sh | xargs -n1 basename | sort -u)
+COMMIT_WRAPPERS=$(
+  for f in "$PLUGIN_DIR"/lib/*.sh; do
+    code=$(grep -vE '^[[:space:]]*#' "$f")
+    grep -qE '(\.sh|")"? commit\b' <<<"$code" || continue
+    grep -oE '[a-z0-9-]+\.sh' <<<"$code" | grep -vxF "$(basename "$f")" |
+      grep -qxFf <(printf '%s\n' "$COMMIT_DIRECT") && basename "$f"
+  done | sort -u
+)
+
+# committing_calls <file>... — the script name of every committing call.
+committing_calls() {
+  grep -ohE 'skills/lib/[a-z0-9-]+\.sh"?( [a-z-]+)?' "$@" | sed 's|^skills/lib/||; s/"//' |
+    while read -r name word; do
+      if grep -qxF "$name" <<<"$COMMIT_WRAPPERS" ||
+        { [ "$word" = commit ] && grep -qxF "$name" <<<"$COMMIT_DIRECT"; }; then
+        echo "$name"
+      fi
+    done
+}
+
+# agent_body <agent.md> — the system prompt, frontmatter dropped.
+agent_body() {
+  awk 'NR == 1 && /^---$/ { fm = 1; next } fm && /^---$/ { fm = 0; next } !fm' "$1"
+}
+
+# required_actions <skill> — kind<TAB>name per action the skill requires:
+#   commit  a committing lib script it runs (`~/.claude/skills/lib/X.sh`)
+#   linear  a non-read op in its preamble LINEAR_OPS
+#   write   a `{..._ROOT}/file` it tells the agent to append, write or create
+required_actions() {
+  local skill_dir="$PLUGIN_DIR/skills/$1" files pre=()
+  mapfile -t pre < <(preamble_files "$1")
+  files=("$skill_dir/SKILL.md" "${pre[@]}")
+  for f in "$skill_dir"/references/*.md; do [ -f "$f" ] && files+=("$f"); done
+  {
+    committing_calls "${files[@]}" | sed 's/^/commit\t/'
+    grep -ohE 'LINEAR_OPS=[a-z_,]+' "$skill_dir/SKILL.md" | sed 's/^LINEAR_OPS=//' |
+      tr ',' '\n' | grep -vE '^(get_|$)' | sed 's/^/linear\t/'
+    grep -hiE '\b(append|write|create)' "${files[@]}" |
+      grep -oE '`\{[A-Z_]*ROOT\}/[^`]+`' | tr -d '`' | sed 's|.*/||; s/^/write\t/'
+  } | sort -u
+}
+
+# forbids <kind> — reads an agent body on stdin; 0 when it carries a blanket
+# prohibition of that kind of action.
+forbids() {
+  case "$1" in
+  commit) grep -qE '(MUST NOT|must not|[Nn]ever)[^.]*\bcommit' ;;
+  linear) grep -qE '(MUST NOT|must not|[Nn]ever)[^.]*\bLinear\b[^.]*\b(mutations?|state)\b|All Linear mutations go through' ;;
+  write) grep -qE '[Ww]rite only to' ;;
+  *) return 1 ;;
+  esac
+}
+
+# prohibition_conflicts <skill> <agent.md> — kind:name per required action the
+# agent forbids without naming it.
+prohibition_conflicts() {
+  local body kind name
+  body=$(agent_body "$2")
+  while IFS=$'\t' read -r kind name; do
+    [ -n "$kind" ] || continue
+    forbids "$kind" <<<"$body" || continue
+    grep -qF -- "$name" <<<"$body" || echo "$kind:$name"
+  done < <(required_actions "$1")
+}
+
+printf '%s\n' 'bash ~/.claude/skills/lib/appraise-exec-coherence.sh "X" "D"' \
+  'bash ~/.claude/skills/lib/openspec-tracking-check.sh commit d X' \
+  'bash "$HOME/.claude/skills/lib/wiki-lock.sh" acquire --wiki-root W' \
+  'bash "$HOME/.claude/skills/lib/wiki-finalize.sh" --wiki-root W' >"$TMP/calls.md"
+got=$(committing_calls "$TMP/calls.md" | tr '\n' ' ')
+if [ "$got" = "appraise-exec-coherence.sh openspec-tracking-check.sh wiki-finalize.sh " ]; then
+  _ok "committing calls: a wrapper always, a direct committer only with its commit subcommand"
+else
+  _bad "committing_calls returned: $got (wrappers: $(tr '\n' ' ' <<<"$COMMIT_WRAPPERS"))"
+fi
+
+# The agent definition as it was before #816.
+cat >"$TMP/old-appraise-agent.md" <<'EOF'
+---
+name: ticket-appraise-agent
+tools: Bash, Read, Grep, Glob, Write, mcp__gitnexus__impact
+---
+
+You are a ticket appraisal agent in the ticket-auto-pipeline. Your scope is investigation and artifact creation only. You may read any file and search the codebase, but you MUST NOT modify source code, create branches, or commit. Write only to the ticket workspace directory (notes.md, simple-fix.md, OpenSpec artifacts). Failures go to the pipeline log — never attempt Linear API mutations directly.
+EOF
+got=$(prohibition_conflicts ticket-appraise-exec "$TMP/old-appraise-agent.md" | sort | tr '\n' ' ')
+if [ "$got" = "commit:appraise-exec-coherence.sh linear:save_comment write:app-knowledge.md " ]; then
+  _ok "detector finds the pre-#816 appraise agent forbidding the commit, the comment and app-knowledge.md"
+else
+  _bad "detector on the pre-#816 appraise agent returned: $got"
+fi
+
+conflicts=""
+while IFS=$'\t' read -r skill agent; do
+  [ -n "$skill" ] || continue
+  agent_file="$PLUGIN_DIR/agents/$agent.md"
+  [ -f "$agent_file" ] && [ -f "$PLUGIN_DIR/skills/$skill/SKILL.md" ] || continue
+  while IFS= read -r c; do
+    [ -n "$c" ] && conflicts+="  $skill → $agent: $c"$'\n'
+  done < <(prohibition_conflicts "$skill" "$agent_file")
+done <<<"$pairs"
+if [ -z "$conflicts" ]; then
+  _ok "no agent definition forbids an action its dispatched skill requires"
+else
+  _bad "an agent definition forbids an action its dispatched skill requires (name it as an exception, or change the step):"
+  printf '%s' "$conflicts"
 fi
 
 echo

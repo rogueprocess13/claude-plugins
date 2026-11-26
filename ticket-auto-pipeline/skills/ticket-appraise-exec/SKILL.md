@@ -62,23 +62,18 @@ bash ~/.claude/skills/lib/plog.sh EXEC load-workspace done "Loaded {COMPLEXITY}"
 
 ## Step 1.5 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 2.5 through 7). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate.
+Interactive runs only: one tracker task per remaining step (2.5 to 7), per the full preamble. Skip under `--from-auto`.
 
 ---
 
 ## Step 2.5 — ADR gate check
 
-Before drafting `simple-fix.md` or an openspec change, check whether notes.md's `## Initial
-Investigation` (populated by `ticket-appraise`) already names a decision candidate that looks
-architectural — including one `ticket-appraise` itself flagged but did not resolve at 3a.0b. If
-so, invoke the gate now — see § 8 ADR gate in the shared preamble — **before** Step 3 writes the
-artifact, so the artifact reflects a verdict rather than an unexamined assumption baked into the
-implementation plan. If the request results in a `CREATED_PROPOSED`, `SUPERSEDE_REQUIRED`, or
-`CONFLICT` verdict, the resulting hold or gate-stop happens here, before any artifact exists —
-there is nothing to roll back if a human's answer changes the approach.
-
-The overwhelmingly common case is nothing to check here — skip straight to Step 3 when notes.md
-carries no such candidate.
+Before drafting the artifact, check whether notes.md's `## Initial
+Investigation` names a decision candidate that looks architectural, including one
+`ticket-appraise` flagged but did not resolve at 3a.0b. If so, invoke the gate now (§ 8 ADR gate
+in the shared preamble), **before** Step 3 writes the artifact, so the plan reflects a verdict.
+A `CREATED_PROPOSED`, `SUPERSEDE_REQUIRED` or `CONFLICT` verdict holds or stops here, before any
+artifact exists. Usually there is no candidate: skip straight to Step 3.
 
 ---
 
@@ -244,7 +239,7 @@ bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning advers
 
 `ADV_PRIOR_BLOCKS` counts `ADVERSARIAL_BLOCKED` gate-stops since the last PASS/WARNINGS verdict (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls: note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
 
-Spawn a `general-purpose` agent with an adversarial framing: it finds what's wrong, missing or under-specified in the plan, it does not confirm it.
+Spawn a `general-purpose` agent with an adversarial framing: it finds what's wrong, missing or under-specified in the plan, it does not confirm it. **No Agent tool** (`ticket-appraise-agent`): run the prompt yourself, end the `done` line below with ` — self-review`, and log `plog.sh META gate-warn warn "ADVERSARIAL_SELF_REVIEW — no independent reviewer"`.
 
 **⚠️ MANDATORY — read before spawning:** the `Task` call's return is not the end of this skill. Handle it per **"When the agent returns"**, then continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
 
@@ -408,6 +403,8 @@ Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_
 If no Open Questions bullet is tagged `[needs-human]`, omit the warning line.
 
 bash ~/.claude/skills/lib/plog.sh EXEC post-linear done "Comment posted"
+
+Required: never log `skip`. A failed post logs `EXEC post-linear fail` and `META gate-warn warn "APPRAISAL_COMMENT_NOT_POSTED — <reason>"`; continue.
 
 ---
 
