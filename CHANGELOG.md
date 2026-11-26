@@ -17,13 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.152.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
+## 0.153.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.
 
 - **`lib/notes-field.sh`.** The one reader of ticket-implement's pre-implementation checkpoint line (`- Repos: … | Branch: … | Worktree: … | Mode: …`): `notes-field.sh worktree|branch|repos|mode <ticket-dir|notes.md>` stops each value at the next `|`, trims padding and backticks, and takes the last checkpoint. ticket-verify Step 6 read the worktree with `sed 's/.*Worktree: //'`, which kept ` | Mode: …`, so `cd "$WORKTREE_PATH"` failed or the agent had to trim it by hand. ticket-verify Step 6 and ticket-pr-review now call the helper.
 - **`ticket-verify-agent` gets `mcp__playwright__browser_tabs` and `mcp__playwright__browser_close`.** Step 4b says when to use them: a second-tab criterion opens, switches and closes a tab; a fresh-context criterion closes the browser and navigates again, and when the session survives (the server is not `--isolated`) clears cookies and storage, reloads and marks the evidence as emulated.
 - **Tests.** `lib/tests/test-notes-field.sh` (new) covers the parse and fails on any unbounded `Worktree:` read in a skill or lib; `test-verify-agent-guard.sh` checks the two new grants.
+
+## 0.152.0 (2026-11-27) — a PR-review fix round shows in the outcome label
+
+GitHub #827. `outcome-label-check.sh` took the outcome from the latest implement round's own self-grade, so a ticket that failed PR review, had its plan amended and re-approved, and needed a second implement round was still labelled Smooth, and the planner feedback and the retro treated it as a first-time pass. A recorded outcome was also never overwritten, so a later round's grade reached only the log.
+
+- **Review-round floor.** The outcome is now the whole attempt's: one PR-review fix round (a `pr-iterate` line after a `pr-review` verdict of WARN, BLOCK or fail), or a `GATE|reapprove|done|` re-approval, makes it at least Rough; two or more fix rounds make it Hard. The floor only raises an outcome.
+- **Attempt window.** The check reads the current run (#821's `META|run-id` boundary) widened back over earlier runs that ended without completing (`held:` / `stopped:`), since a reapprove hold closes its run and the re-implement runs in the next one. A fix round from before the last `completed:` outcome does not count.
+- **Manifest.** A recorded `outcome_label` that differs from the computed outcome is overwritten.
 
 ## 0.151.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
 

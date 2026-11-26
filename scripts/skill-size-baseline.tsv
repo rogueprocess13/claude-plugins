@@ -15,7 +15,7 @@ ticket-auto-pipeline/agents/ticket-plan-review-agent.md	1394	8
 ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
 ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
 # allow-growth: verify-qa-persona — one line telling the verify agent to plan as the Step 1g QA persona while the verdict stays on the acceptance criteria (0.122.0)
-# allow-growth: browser_tabs and browser_close grants for second-tab and fresh-context criteria (#825, +63 bytes, 0.152.0)
+# allow-growth: browser_tabs and browser_close grants for second-tab and fresh-context criteria (#825, +63 bytes, 0.153.0)
 ticket-auto-pipeline/agents/ticket-verify-agent.md	3024	12
 ticket-auto-pipeline/lib/skill-preamble-auto.md	17538	341
 ticket-auto-pipeline/lib/skill-preamble.md	11450	269
