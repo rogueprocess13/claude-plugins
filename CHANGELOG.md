@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.144.0 (2026-11-26) — typed test passwords are redacted from Playwright MCP snapshots
+
+GitHub #819. Playwright MCP writes every `browser_snapshot` as YAML under `.playwright-mcp/` in the tickets root, and a filled password field is recorded in clear text. Every browser verify that signed in left the test password on disk.
+
+- **`lib/playwright-scrub.sh`.** Rewrites the snapshot files in place: the value of any `textbox` named like `password`/`passcode` and every literal occurrence of the configured `UAT_TEST_PASSWORD` become `[REDACTED]`. Never prints a secret.
+- **Router.** `router-step.sh post-spawn VERIFY` runs it after every verify agent, whatever the agent returned, and logs `META|playwright-scrub|info|` when it rewrote a file.
+- **ticket-verify** runs it right after a password fill (Step 3b) and at Step 5, so a standalone `/ticket-verify` cleans up too.
+
 ## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix
 
 next.md Step 24 item 1. A regression test that passes on the old code proves nothing, and until now only the implementing agent judged its own test. This increment measures; it blocks nothing.
