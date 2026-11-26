@@ -178,11 +178,15 @@ Otherwise:
 - If `{COMPLEXITY}` = simple: read `simple-fix.md` → collect every file path listed under `## Affected files`
 - If `{COMPLEXITY}` = complex: read `openspec/changes/{change-name}/tasks.md` → collect every file path mentioned in implementation tasks
 
-**B. Cross-reference:** For each file path in the plan, check whether any Prior Art hit mentions the same file path, class name, or component name. A match is when the same token appears in both the plan's affected-file list and the prior art hit's **Key finding** or **Incorporate** lines.
+**B. Cross-reference:** plan files, one per line, to `{TICKET_DIR}/plan-files.txt`. Per Prior Art hit with a ticket dir (`ticket-dir.sh ticket-dir {PRIOR-ID}`):
+```bash
+bash ~/.claude/skills/lib/regression-guard.sh overlap "{TICKET_DIR}/plan-files.txt" "{PRIOR_DIR}"
+```
+Exit 0: the printed paths (from its ai-context.md) are the overlaps, nothing else. Exit 1 or no dir: a token in both the plan files and the hit's **Key finding**/**Incorporate** lines.
 
 **C. For each overlapping file, perform conflict reasoning:**
 
-Read the prior ticket's artifact: check for `simple-fix.md` in the matched ticket directory first, then fall back to the `## Initial Investigation` section of its notes.md. Read the relevant section of the current plan for that same file. Then explicitly reason:
+Read the prior ticket's `simple-fix.md`, else its notes.md `## Initial Investigation`. Read the relevant section of the current plan for that same file. Then explicitly reason:
 
 > "The prior fix did X to this file. The current plan does Y. Does Y undo, overwrite, or conflict with X?"
 
@@ -191,24 +195,13 @@ Assign a verdict:
 - `ADJACENT` — same file, different lines/method/section, no direct conflict
 - `SUPERSEDES` — current plan intentionally replaces the prior fix (document why)
 
-**D. Write to notes.md** if any overlap exists (regardless of verdict):
-
-```markdown
-## ⚠️ Regression Risk
-
-| Plan file | Prior art | Verdict | Detail |
-|-----------|-----------|---------|--------|
-| `{file}` | {TICKET-ID} [local-ticket\|mem] | CONFLICT\|ADJACENT\|SUPERSEDES | {one sentence} |
-
-→ A person acknowledges this from a terminal: `bash ~/.claude/skills/lib/regression-ack.sh {TICKET-ID}`. An edit here does not.
-```
-
-Then record it (a failure here is a stop):
+**D. Write** one tab-separated row per overlap to `{TICKET_DIR}/regression-rows.tsv`: `{file}	{PRIOR-ID}	[local-ticket|mem]	{verdict}	{one sentence}`, then (a failure is a stop; never write the sections by hand):
 ```bash
-bash ~/.claude/skills/lib/regression-risk.sh record "{TICKET-ID}" "{TICKET_DIR}/notes.md"
+bash ~/.claude/skills/lib/regression-guard.sh write "{TICKET-ID}" "{TICKET_DIR}/notes.md" "{TICKET_DIR}/regression-rows.tsv"
 ```
+It gates CONFLICT, and SUPERSEDES of a ticket outside this epic and `blocked_by` (`## ⚠️ Regression Risk`); the rest go to `## Regression Notes`.
 
-**E. Print to user** the worst verdict and: `See ## Regression Risk in notes.md. Implementation holds until a person runs regression-ack.sh.`
+**E. Print** `REGRESSION_GUARD_WORST`; if `REGRESSION_GUARD_GATED` > 0 add: `Implementation holds until a person runs regression-ack.sh.`
 
 If no overlap: write nothing — proceed silently.
 

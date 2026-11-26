@@ -908,9 +908,12 @@ test_unreadable_inputs_never_pass() {
 test_skills_call_the_scripts_and_drop_the_hand_edit() {
   local impl="$PLUGIN_DIR/skills/ticket-implement/SKILL.md" exec="$PLUGIN_DIR/skills/ticket-appraise-exec/SKILL.md"
   grep -q 'lib/regression-risk.sh check' "$impl" || return 1
-  grep -q 'lib/regression-risk.sh record' "$exec" || return 1
+  # Step 3.5 writes and records the section through regression-guard.sh (#823).
+  local guard="$LIB_DIR/regression-guard.sh"
+  grep -q 'lib/regression-guard.sh write' "$exec" || return 1
+  grep -q 'regression-risk.sh" record' "$guard" || return 1
   ! grep -q 'Status:\*\* ACKNOWLEDGED' "$impl" || return 1
-  ! grep -qi 'change Status to' "$impl" "$exec" || return 1
+  ! grep -qi 'change Status to' "$impl" "$exec" "$guard" || return 1
   grep -q 'regression-ack.sh' "$exec" || return 1
   # The line the skill writes into notes.md is the boilerplate the
   # fingerprint drops: a notes.md built from the template fingerprints the
@@ -919,7 +922,7 @@ test_skills_call_the_scripts_and_drop_the_hand_edit() {
   t=$(_mk)
   _write_notes "$t" UNACKNOWLEDGED
   a=$(_sha "$t")
-  line=$(grep -m1 '^→ A person acknowledges' "$exec" | sed "s/{TICKET-ID}/$TID/")
+  line=$(grep -m1 'A person acknowledges' "$guard" | sed -n 's/.*\(→ A person acknowledges.* An edit here does not\.\).*/\1/p' | sed "s/%s/$TID/")
   [ -n "$line" ] || return 1
   sed -i '/^→ /d' "$(_notes "$t")"
   [ "$(_sha "$t")" = "$a" ] || return 1
