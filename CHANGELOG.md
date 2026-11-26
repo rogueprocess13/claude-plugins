@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.145.0 (2026-11-26) — the reapprove gate asks whose approval it is
+## 0.146.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
 
@@ -25,6 +25,13 @@ GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan a
 - **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
 - **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
 - **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+## 0.145.0 (2026-11-26) — an exported BASE_BRANCH is the default base again
+
+GitHub #817. `config.sh` documents `BASE_BRANCH=main /ticket-auto <ID>`, but a run started through the preamble opened on `develop` anyway: `ticket_preamble_run` declared `local BASE_BRANCH` (empty, from the log) before sourcing `branch-resolve.sh`, so `config.sh`'s `${BASE_BRANCH:-develop}` saw the empty local and fell back. The decision was then recorded in `META|branch-context` and rehydrated on every retry.
+
+- **`lib/ticket-preamble.sh`** saves the caller's `BASE_BRANCH` before the local declaration and restores it before resolving. It is still only the default (precedence 3): `--branch` and an epic Branch Directive win as before, and a recorded branch context is still rehydrated, never re-resolved.
+- **Tests.** `lib/tests/test-ticket-preamble.sh` covers the exported value, the `develop` fallback and `--branch` winning over the variable.
+
 ## 0.144.0 (2026-11-26) — typed test passwords are redacted from Playwright MCP snapshots
 
 GitHub #819. Playwright MCP writes every `browser_snapshot` as YAML under `.playwright-mcp/` in the tickets root, and a filled password field is recorded in clear text. Every browser verify that signed in left the test password on disk.
