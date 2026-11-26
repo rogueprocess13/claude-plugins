@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.149.0 (2026-11-26) — new auth logic alone is not complex; decision drift compares ranks
+
+GitHub #826. Two calibration fixes found in an end-to-end rehearsal.
+
+- **`lib/complexity-score.sh`.** `reversibility:auth-new` weighs 2 (was 3, the threshold). New auth logic nothing existing depends on is now a weak axis: alone it scores `simple`; with any second axis (multi-service, cross-layer, blast radius) it reaches `complex` and the approve gate. Every auth-new-only ticket in the rehearsal went to a person and ended Smooth. `reversibility:auth-modify`, a bare `reversibility:auth` and every other spelling still weigh 3, and the fast-path keyword scan is unchanged. `skills/ticket-appraise/SKILL.md` states the new weight.
+- **`lib/planned-feedback-write.sh` `_compute_decision_drift`.** The planner's confidence (about 0.55) and `_compute_actual_confidence` (Smooth 0.90) are on different scales, so the raw difference made every Smooth ticket `major`. Both values are now ranked by the new `_confidence_tier` (`lib/confidence.sh`: high ≥ 0.75, medium 0.50–0.74, low < 0.50) and the ranks compared: same rank `none`, one apart `minor`, low vs high `major`. A prediction that is not a number is `unknown`. The confidence values in the feedback payload are unchanged.
+- **Tests.** `lib/tests/test-complexity-score.sh` (auth-new alone simple; with multi-service, cross-layer or blast radius complex), `lib/tests/test-gate-check.sh` (auth-new plus cross-layer is still held in auto mode), `lib/tests/test-planned-feedback-write.sh` Test 11b (drift per outcome, not constant; tier cut points).
+
 ## 0.148.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
 
 GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.

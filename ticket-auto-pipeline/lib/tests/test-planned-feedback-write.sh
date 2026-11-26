@@ -185,8 +185,8 @@ echo "2026-07-21T00:00:00Z|META|outcome-label|info|Smooth" >"$log"
 (cd "$TMPDIR" && FROM_PLANNED=true REPOS_ROOT="" planned_feedback_write "TEST-9" "$log") || true
 payload=$(_payload "$log")
 got=$(echo "$payload" | jq -c '[.confidence_predicted, .decision_drift, .services_touched]' 2>/dev/null)
-if [ "$got" = '[0.76,"minor",["svc-a","svc-b"]]' ]; then
-  pass "context.md beside the log dir gives 0.76, drift minor, both services"
+if [ "$got" = '[0.76,"none",["svc-a","svc-b"]]' ]; then
+  pass "context.md beside the log dir gives 0.76, drift none, both services"
 else
   fail "context.md fallback" "got $got"
 fi
@@ -245,11 +245,50 @@ else
   fail "non-numeric Confidence" "got $got"
 fi
 
-if [ "$(_compute_decision_drift 0.90 0.90)" = "none" ] && [ "$(_compute_decision_drift 0.5 0.90)" = "major" ] &&
+if [ "$(_compute_decision_drift 0.90 0.90)" = "none" ] && [ "$(_compute_decision_drift 0.40 0.90)" = "major" ] &&
   [ "$(_compute_decision_drift null 0.90)" = "unknown" ] && [ "$(_compute_decision_drift "" 0.90)" = "unknown" ]; then
   pass "drift labels: none, major, unknown"
 else
   fail "drift labels" "unexpected label"
+fi
+
+# --- Test 11b: drift compares ranks on one scale, so it varies (issue #826) ---
+# The planner predicts about 0.55 and a Smooth outcome is 0.90: a raw
+# difference of 0.35 made every Smooth ticket "major". On the shared rank
+# scale the label follows the outcome.
+echo "--- Test 11b: decision drift on a shared scale ---"
+_drift_case() {
+  local pred="$1" outcome="$2" corr="$3" want="$4" got
+  got=$(_compute_decision_drift "$pred" "$(_compute_actual_confidence "$outcome" "$corr")")
+  if [ "$got" = "$want" ]; then
+    pass "drift $pred vs $outcome/$corr corrections is $want"
+  else
+    fail "drift $pred vs $outcome/$corr corrections" "want $want, got $got"
+  fi
+}
+_drift_case 0.55 Smooth 0 minor
+_drift_case 0.60 Smooth 0 minor
+_drift_case 0.55 Rough 0 none
+_drift_case 0.55 Hard 0 minor
+_drift_case 0.84 Smooth 1 none
+_drift_case 0.84 Rough 0 minor
+_drift_case 0.84 Hard 0 major
+_drift_case 0.35 Smooth 0 major
+_drift_case 0.35 Hard 2 none
+labels=$(for p in 0.55 0.84; do for o in Smooth Rough Hard; do
+  _compute_decision_drift "$p" "$(_compute_actual_confidence "$o" 0)"
+done; done | sort -u | tr '\n' ' ')
+if [ "$labels" = "major minor none " ]; then
+  pass "drift is not constant across outcomes (labels: $labels)"
+else
+  fail "drift varies" "got labels: $labels"
+fi
+if [ "$(_compute_decision_drift abc 0.90)" = "unknown" ] && [ "$(_confidence_tier 0.75)" = 2 ] &&
+  [ "$(_confidence_tier 0.74)" = 1 ] && [ "$(_confidence_tier 0.5)" = 1 ] && [ "$(_confidence_tier 0.49)" = 0 ] &&
+  [ "$(_confidence_tier 1)" = 2 ]; then
+  pass "tier cut points 0.50 / 0.75; non-numeric prediction is unknown"
+else
+  fail "tier cut points" "unexpected tier"
 fi
 
 # --- Test 12: files_changed from the ticket worktree against a develop base ---
