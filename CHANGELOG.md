@@ -17,13 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.150.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
+## 0.151.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
 
 GitHub #826. Two calibration fixes found in an end-to-end rehearsal.
 
 - **`lib/complexity-score.sh`.** `reversibility:auth-new` weighs 2 (was 3, the threshold). New auth logic nothing existing depends on is now a weak axis: alone it scores `simple`; with any second axis (multi-service, cross-layer, blast radius) it reaches `complex` and the approve gate. Every auth-new-only ticket in the rehearsal went to a person and ended Smooth. `reversibility:auth-modify`, a bare `reversibility:auth` and every other spelling still weigh 3, and the fast-path keyword scan is unchanged. `skills/ticket-appraise/SKILL.md` states the new weight.
 - **`lib/planned-feedback-write.sh` `_compute_decision_drift`.** The planner's confidence (about 0.55) and `_compute_actual_confidence` (Smooth 0.90) are on different scales, so the raw difference made every Smooth ticket `major`. Both values are now ranked by the new `_confidence_tier` (`lib/confidence.sh`: high ≥ 0.75, medium 0.50–0.74, low < 0.50) and the ranks compared: same rank `none`, one apart `minor`, low vs high `major`. A prediction that is not a number is `unknown`. The confidence values in the feedback payload are unchanged.
 - **Tests.** `lib/tests/test-complexity-score.sh` (auth-new alone simple; with multi-service, cross-layer or blast radius complex), `lib/tests/test-gate-check.sh` (auth-new plus cross-layer is still held in auto mode), `lib/tests/test-planned-feedback-write.sh` Test 11b (drift per outcome, not constant; tier cut points).
+## 0.150.0 (2026-11-26) — the regression guard holds only for real risks
+
+GitHub #823. In an epic where each ticket builds on the one before, the guard made a person acknowledge nearly every ticket (ADJACENT and SUPERSEDES verdicts against earlier siblings), and it matched overlaps on file names in Prior Art prose, so it missed overlaps the prose did not name.
+
+- **`lib/regression-guard.sh` (new).** `overlap PLAN_FILES PRIOR_DIR` intersects the plan's files with the prior ticket's real changed files (its ai-context.md `## What changed` list; exit 1 when there is none, and only then does Step 3.5 fall back to prose). `relation TID PRIOR` prints `dependency same-epic:<EPIC>` (both resolve to one epic via `resolve_ticket_epic`), `dependency blocked-by` (this ticket's `blocked_by` names it) or `unrelated` (also when it cannot tell). `write TID NOTES ROWS` takes the agent's verdict rows and decides which need a person: CONFLICT always, SUPERSEDES unless the prior ticket is a dependency, ADJACENT never, an unknown verdict as CONFLICT. Gated rows go to `## ⚠️ Regression Risk` and are recorded with `regression-risk.sh record`; the rest go to `## Regression Notes` for the PR reviewer, which the implement gate does not read.
+- **`ticket-appraise-exec` Step 3.5.** Steps B and D call the script; the agent no longer writes either section by hand.
+- The implement gate (`regression-risk.sh check`) is unchanged.
+- Test: `lib/tests/test-regression-guard.sh`.
+
 
 ## 0.149.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
