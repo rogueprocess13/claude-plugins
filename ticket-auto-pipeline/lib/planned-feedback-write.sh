@@ -376,32 +376,29 @@ _pfw_files_changed() {
 }
 
 # Compute decision drift label from predicted vs actual confidence.
-# none: ≤0.10, minor: 0.11–0.25, major: >0.25; unknown when there is no
-# prediction to compare (GitHub #768).
+# Both values are ranked on the shared scale of _confidence_tier
+# (confidence.sh, issue #826) and the ranks compared: same rank none, one apart
+# minor, two apart (low vs high) major. The raw values are on different
+# scales, so a raw difference was "major" on every Smooth ticket. unknown when
+# there is no prediction to compare (GitHub #768); a missing actual counts as 0.
 _compute_decision_drift() {
-  local predicted="$1" actual="$2"
+  local predicted="$1" actual="$2" p_tier a_tier diff
 
   if [ -z "$predicted" ] || [ "$predicted" = "null" ]; then
     echo "unknown"
     return 0
   fi
+  p_tier=$(_confidence_tier "$predicted") || {
+    echo "unknown"
+    return 0
+  }
+  a_tier=$(_confidence_tier "${actual:-0}") || a_tier=0
 
-  # Handle a missing actual value
-  [ -z "$actual" ] && actual=0
-
-  # Scale to integer hundredths for bash arithmetic
-  local p_int a_int diff
-  p_int=$(echo "$predicted * 100" | bc 2>/dev/null | cut -d'.' -f1 || echo 0)
-  a_int=$(echo "$actual * 100" | bc 2>/dev/null | cut -d'.' -f1 || echo 0)
-
-  diff=$((p_int - a_int))
+  diff=$((p_tier - a_tier))
   [ "$diff" -lt 0 ] && diff=$((-diff))
-
-  if [ "$diff" -le 10 ]; then
-    echo "none"
-  elif [ "$diff" -le 25 ]; then
-    echo "minor"
-  else
-    echo "major"
-  fi
+  case "$diff" in
+  0) echo "none" ;;
+  1) echo "minor" ;;
+  *) echo "major" ;;
+  esac
 }

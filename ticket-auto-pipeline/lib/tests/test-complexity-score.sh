@@ -64,9 +64,17 @@ test_prior_rejection_complex() { _write_case prior-rejection 3 complex; }
 # Reusing an unchanged auth check on new endpoints held simple tickets at the
 # complex gate with reversibility:3. It weighs 0.
 test_auth_reuse_is_simple() { _write_case "reversibility:auth-reuse" 0 simple && [ "$(_line 'Axes fired')" = "reversibility:0 (auth-reuse)" ]; }
-# New auth logic is recorded as its own kind but weighs the full 3: alone it
-# is complex, so it always stops at the human approve gate.
-test_auth_new_alone_is_complex() { _write_case "reversibility:auth-new" 3 complex && [ "$(_line 'Axes fired')" = "reversibility:3 (auth-new)" ]; }
+# New auth logic weighs 2 (issue #826): a weak axis. Alone it sat exactly on
+# the threshold, so every first sign-in ticket went to a person and all of
+# them ended Smooth. Alone it is now simple; any second axis escalates it.
+test_auth_new_alone_is_simple() { _write_case "reversibility:auth-new" 2 simple && [ "$(_line 'Axes fired')" = "reversibility:2 (auth-new)" ]; }
+test_auth_new_with_multi_service_is_complex() { _write_case "multi-service,reversibility:auth-new" 4 complex; }
+test_auth_new_with_blast_radius_is_complex() {
+  _scored reversibility:auth-new '| `login handler` | HIGH | 9 callers | 4 indirect | sign-in | modifying |\n' || return 1
+  local out
+  out=$(bash "$CS" blast "$TMP") || return 1
+  grep -qx 'COMPLEXITY=complex' <<<"$out" && grep -qx 'WEIGHTED=5' <<<"$out" && [ "$(_get)" = complex ]
+}
 # Guards: changed auth behaviour, and any unrecognised auth spelling, stay complex.
 test_auth_modify_is_complex() { _write_case "reversibility:auth-modify" 3 complex && [ "$(_line 'Axes fired')" = "reversibility:3 (auth-modify)" ]; }
 test_auth_legacy_qualifiers_stay_complex() {
@@ -75,7 +83,7 @@ test_auth_legacy_qualifiers_stay_complex() {
     _write_case "reversibility:$q" 3 complex || return 1
   done
 }
-test_auth_new_with_weak_axis_is_complex() { _write_case "cross-layer,reversibility:auth-new" 5 complex; }
+test_auth_new_with_weak_axis_is_complex() { _write_case "cross-layer,reversibility:auth-new" 4 complex; }
 test_auth_reuse_does_not_hide_other_axes() { _write_case "multi-service,cross-layer,reversibility:auth-reuse" 4 complex; }
 test_auth_cannot_be_listed_beside_another_reversibility() { _refuses "reversibility:auth-reuse,reversibility:schema-migration"; }
 # A reused check on new endpoints whose only other caller is a test: simple
@@ -285,8 +293,8 @@ test_summary_blast_escalation_keeps_sweep_simple() {
 }
 
 test_summary_auth_new_and_none() {
-  _write_case "cross-layer,reversibility:auth-new" 5 complex || return 1
-  [ "$(_sum)" = "sweep: complex, score 5 (threshold 3, blast radius not yet applied), axes: cross-layer:2, reversibility:3 (auth-new)" ] || return 1
+  _write_case "cross-layer,reversibility:auth-new" 4 complex || return 1
+  [ "$(_sum)" = "sweep: complex, score 4 (threshold 3, blast radius not yet applied), axes: cross-layer:2, reversibility:2 (auth-new)" ] || return 1
   _write_case none 0 simple || return 1
   [ "$(_sum final)" = "final: simple, score 0 = sweep 0 + blast-radius 0 (threshold 3), axes: none" ]
 }
