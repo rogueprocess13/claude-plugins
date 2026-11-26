@@ -568,6 +568,10 @@ ticket_preamble_run() {
   fi
 
   # 0.5a — branch context: rehydrate a recorded decision, resolve only once.
+  # Save the caller's BASE_BRANCH before the local below hides it (#817):
+  # branch-resolve.sh sources config.sh, whose ${BASE_BRANCH:-develop} would
+  # otherwise see the empty local and fall back to develop.
+  local _tp_env_base_branch="${BASE_BRANCH:-}"
   local BASE_BRANCH INTEGRATION_BRANCH TICKET_BRANCH BRANCH_SOURCE
   local UAT_POLICY MERGE_POLICY BRANCH_ORIGIN
   BASE_BRANCH="$(_tp_branch_field "$LOG_FILE" base)"
@@ -581,6 +585,9 @@ ticket_preamble_run() {
     BRANCH_ORIGIN="rehydrated"
   else
     BRANCH_ORIGIN="resolved"
+    # The caller's value is only the default (precedence 3); --branch and an
+    # epic directive still win inside resolve_branch_context.
+    BASE_BRANCH="$_tp_env_base_branch"
     source "$_TP_LIB_DIR/branch-resolve.sh"
 
     local _br_out _br_rc=0
