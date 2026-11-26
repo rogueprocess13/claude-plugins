@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.144.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
+## 0.145.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
 
 GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
 
@@ -25,6 +25,14 @@ GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the env
 - **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
 - **Nothing unplain reaches the terminal.** Both roots and the manifest path are printed beside the prompt, so each must pass `regression_risk_plain` (no control characters, ANSI escapes, C1, zero-width or direction marks; valid UTF-8) first. A value that does not is exit 3 and is never printed; a host where the check cannot run (no `iconv`) is refused the same way.
 - `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
+
+## 0.144.0 (2026-11-26) — typed test passwords are redacted from Playwright MCP snapshots
+
+GitHub #819. Playwright MCP writes every `browser_snapshot` as YAML under `.playwright-mcp/` in the tickets root, and a filled password field is recorded in clear text. Every browser verify that signed in left the test password on disk.
+
+- **`lib/playwright-scrub.sh`.** Rewrites the snapshot files in place: the value of any `textbox` named like `password`/`passcode` and every literal occurrence of the configured `UAT_TEST_PASSWORD` become `[REDACTED]`. Never prints a secret.
+- **Router.** `router-step.sh post-spawn VERIFY` runs it after every verify agent, whatever the agent returned, and logs `META|playwright-scrub|info|` when it rewrote a file.
+- **ticket-verify** runs it right after a password fill (Step 3b) and at Step 5, so a standalone `/ticket-verify` cleans up too.
 
 ## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix
 
