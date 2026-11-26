@@ -23,6 +23,7 @@ GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the env
 
 - **`lib/operator-root.sh`.** `operator_resolve_repos_root` keeps the order (environment, ticket env file, `./CLAUDE.md`) but, when `./CLAUDE.md` declares a `REPOS_ROOT` and the root came from somewhere else, the two must name the same directory (compared by physical path). A mismatch exits 3, prints both values and records nothing. `operator_require_manifest` requires the ticket's manifest to exist under the root: a ticket held at a gate always has one, so a missing manifest is exit 3, never a create.
 - **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
+- **Nothing unplain reaches the terminal.** Both roots and the manifest path are printed beside the prompt, so each must pass `regression_risk_plain` (no control characters, ANSI escapes, C1, zero-width or direction marks; valid UTF-8) first. A value that does not is exit 3 and is never printed; a host where the check cannot run (no `iconv`) is refused the same way.
 - `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
 
 ## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix

@@ -20,7 +20,30 @@
 # Function definitions only — safe to source. Needs manifest-read.sh (or
 # manifest-write.sh, which sources it) loaded for step 3.
 
+#
+# Every value these functions print (both roots, the manifest path) reaches
+# the person's terminal, beside the prompt they answer. A value that is not
+# plain text (regression_risk_plain: control characters, ANSI escapes, C1,
+# zero-width or direction marks, invalid UTF-8) could rewrite what that
+# terminal shows, so it is refused (exit 3) and never printed. A missing
+# plain-text check is a refusal too.
+
 _OPERATOR_ROOT_LIB="${BASH_SOURCE[0]%/*}"
+
+# _operator_root_plain <value>... — 0 when every value is plain text.
+_operator_root_plain() {
+  if ! declare -f regression_risk_plain >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "$_OPERATOR_ROOT_LIB/regression-risk.sh" 2>/dev/null ||
+      source "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/regression-risk.sh" 2>/dev/null || return 1
+    declare -f regression_risk_plain >/dev/null 2>&1 || return 1
+  fi
+  local v
+  for v in "$@"; do
+    regression_risk_plain "$v" || return 1
+    [[ "$v" != *$'\n'* ]] || return 1
+  done
+}
 
 # _operator_root_norm <path> — the physical path of an existing directory,
 # else the path with trailing slashes removed.
@@ -64,6 +87,11 @@ operator_resolve_repos_root() {
     fi
   fi
 
+  if ! _operator_root_plain "${REPOS_ROOT:-}" "$md_root"; then
+    echo "$who: REPOS_ROOT (from the ${OPERATOR_ROOT_SOURCE:-environment}, or in ./CLAUDE.md) is not plain text: it holds control or invisible characters, or is not valid UTF-8. It is not shown, and nothing was recorded. Check REPOS_ROOT and ./CLAUDE.md." >&2
+    return 3
+  fi
+
   if [ -z "${REPOS_ROOT:-}" ]; then
     if [ -z "$md_root" ]; then
       echo "$who: REPOS_ROOT is not set and ./CLAUDE.md declares none. Run this from the project's tickets root, or export REPOS_ROOT. Nothing was recorded." >&2
@@ -76,7 +104,7 @@ operator_resolve_repos_root() {
     {
       echo "$who: REPOS_ROOT disagrees with this project's CLAUDE.md. Nothing was recorded."
       echo "  REPOS_ROOT from the $OPERATOR_ROOT_SOURCE: $REPOS_ROOT"
-      echo "  REPOS_ROOT in $PWD/CLAUDE.md: $md_root"
+      echo "  REPOS_ROOT in ./CLAUDE.md: $md_root"
       echo "Your shell may still hold a REPOS_ROOT from another project. Unset it (or set it to this project's root), then run this again."
     } >&2
     return 3
@@ -91,6 +119,10 @@ operator_resolve_repos_root() {
 operator_require_manifest() {
   local who="$1" tid="$2" path=""
   path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || path=""
+  if ! _operator_root_plain "$path" "${REPOS_ROOT:-}"; then
+    echo "$who: the manifest path for $tid is not plain text: it holds control or invisible characters, or is not valid UTF-8. It is not shown, and nothing was recorded." >&2
+    return 3
+  fi
   if [ -z "$path" ] || [ ! -f "$path" ]; then
     {
       echo "$who: $tid has no manifest under REPOS_ROOT=$REPOS_ROOT (from the ${OPERATOR_ROOT_SOURCE:-environment}). Nothing was recorded."

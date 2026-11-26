@@ -395,6 +395,26 @@ test_ack_refuses_missing_manifest() {
   [ ! -e "$t/repos/.ticket-auto" ]
 }
 
+# GitHub #818 review: a REPOS_ROOT with an escape sequence is refused and
+# never printed (it would sit beside the prompt the person answers).
+test_ack_refuses_non_plain_repos_root() {
+  local t out rc=0 root
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  root="$t/r"$'\e[2J\e[H'"x"
+  mkdir -p "$root"
+  cp -r "$t/repos/.ticket-auto" "$root/"
+  out=$(_env "$t" REPOS_ROOT="$root" python3 "$WORK/pty_run.py" "x" \
+    bash "$ACK_SH" "$TID" --notes "$(_notes "$t")") || rc=$?
+  [ "$rc" -eq 3 ] || {
+    echo "rc=$rc: $(cat -v <<<"$out")" >&2
+    return 1
+  }
+  [[ "$out" != *$'\e'* ]] || return 1
+  grep -q "is not plain text" <<<"$out" || return 1
+  [ -z "$(jq -r '(.regression_acks // [])[-1].risk // ""' "$root/.ticket-auto/initiatives/INIT-1/tickets/$TID/planner/manifest.json")" ]
+}
+
 # GitHub #818: the prompt names the manifest before the id is typed.
 test_ack_prompt_names_target_manifest() {
   local t out
@@ -806,7 +826,9 @@ test_validator_failure_is_refusal() {
   t=$(_mk)
   _write_notes "$t" UNACKNOWLEDGED "plain text"
   _stub "$t" iconv "exit 1"
-  PATH="$t/bin:$PATH" _expect_rc 7 _ack "$t" "$(_id "$t")" || return 1
+  # The same validator checks REPOS_ROOT before anything is shown
+  # (lib/operator-root.sh, #818), so the refusal now comes there: exit 3.
+  PATH="$t/bin:$PATH" _expect_rc 3 _ack "$t" "$(_id "$t")" || return 1
   [ -z "$(_ack_field "$t" risk)" ]
 }
 
@@ -939,6 +961,7 @@ _run "the actuator clears the gate and records provenance, who and when" test_ac
 _run "an exported REPOS_ROOT that disagrees with ./CLAUDE.md is refused (#818)" test_ack_refuses_repos_root_mismatch
 _run "no manifest under REPOS_ROOT is refused, never created (#818)" test_ack_refuses_missing_manifest
 _run "the prompt names the manifest the acknowledgement goes into (#818)" test_ack_prompt_names_target_manifest
+_run "a REPOS_ROOT with an escape sequence is refused and never printed (#818)" test_ack_refuses_non_plain_repos_root
 _run "a wrong, empty or generic answer records nothing" test_wrong_answer_records_nothing
 _run "a repeat acknowledgement is a no-op" test_repeat_ack_is_noop
 _run "no section and nothing recorded: nothing to acknowledge (exit 5)" test_no_section_nothing_to_ack

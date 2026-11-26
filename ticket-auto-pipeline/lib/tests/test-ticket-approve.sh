@@ -227,6 +227,34 @@ test_approve_refused_on_repos_root_mismatch() {
   fi
 }
 
+# ── approve: a REPOS_ROOT that is not plain text is refused, never shown ─────
+# The root and the manifest path are printed beside the prompt; an escape
+# sequence in them could rewrite what the person reads (#818 review).
+test_approve_refused_on_non_plain_repos_root() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  local root="$tmpdir/r"$'\e[2J\e[H'"Approve WIL-1"
+  mkdir -p "$root"
+  _seed_manifest "$root" WIL-1
+  _seed_plan "$tmpdir" WIL-1
+
+  local rc=0 out
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$root" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  local approved
+  approved=$(jq -r '.approved // empty' "$root/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null)
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ -z "$approved" ] && [[ "$out" != *$'\e'* ]] &&
+    grep -q "is not plain text" <<<"$out"; then
+    _pass "approve.sh: a REPOS_ROOT holding an escape sequence is refused and never printed"
+  else
+    _fail "approve.sh: should refuse a non-plain REPOS_ROOT (rc=$rc approved=$approved out=$(cat -v <<<"$out"))"
+  fi
+}
+
 # ── approve: the prompt names the manifest before the id is typed (#818) ─────
 # REPOS_ROOT from ./CLAUDE.md alone (nothing exported), and an exported one
 # that names the same directory (trailing slash) is not a mismatch.
@@ -728,6 +756,7 @@ test_reject_clears_approval
 test_approve_refused_without_manifest
 test_approve_refused_on_repos_root_mismatch
 test_approve_prompt_names_target_manifest
+test_approve_refused_on_non_plain_repos_root
 test_approve_clears_needs_info_flag
 test_approve_noop_when_needs_info_absent
 test_approve_usage_error_on_missing_arg
