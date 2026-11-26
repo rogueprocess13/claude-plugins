@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.144.0 (2026-11-26) — the reapprove gate asks whose approval it is
+
+GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
+
+- **`gate-check.sh --mode reapprove`** applies the entry gate's rule (`_gate_approval_need`): a complex, manual-mode or open-`[needs-human]` ticket holds (`GATE|reapprove|fail|held: …`, exit 1, `gate-held` reason `reapprove-needs-human`) until a person runs `approve.sh` on the amended plan; a person's approval of a plan that changed since holds with `PLAN_CHANGED_SINCE_APPROVAL` (reason `reapprove-plan-changed`). A simple auto/semi-auto ticket goes on. The `gate-released` event carries the manifest's `approval_provenance`. No approval at all is still the `APPROVAL_REVOKED` gate-stop (exit 2).
+- **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
+- **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
+- **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+
 ## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix
 
 next.md Step 24 item 1. A regression test that passes on the old code proves nothing, and until now only the implementing agent judged its own test. This increment measures; it blocks nothing.

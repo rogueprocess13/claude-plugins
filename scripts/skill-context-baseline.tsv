@@ -41,7 +41,7 @@ ticket-plan-review	5473
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-ticket-pr-iterate	105202
+ticket-pr-iterate	105192
 ticket-pr-iterate:conditional	11566
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)

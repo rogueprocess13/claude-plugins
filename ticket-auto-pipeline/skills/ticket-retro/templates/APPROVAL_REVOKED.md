@@ -18,7 +18,7 @@ In `~/.claude/skills/ticket-pr-iterate/SKILL.md`:
 
 ## Order-of-operations artifact (check first)
 
-Before chasing a label-race hypothesis, check whether a `pr-iterate` trigger-def line follows the gate-stop within a minute or two, with `GATE|reapprove|done` shortly after. If so, the reapprove gate ran before `pr-iterate` on a PR-review WARN. A WARN legitimately leaves the ticket in `Review` with `approved` removed; only `pr-iterate` moves it `Review -> Ready` and re-adds `approved`. The reapprove gate must run AFTER `pr-iterate` (loop body: `pr-review -> pr-iterate -> gate-check.sh --mode reapprove -> implement ...`). A gate-stop with reason `state=Review AND approved label missing` and no label race is this ordering bug, not a revoked approval.
+Before chasing a label-race hypothesis, check whether a `pr-iterate` trigger-def line follows the gate-stop within a minute or two, with `GATE|reapprove|done` shortly after. If so, the reapprove gate ran before `pr-iterate` on a PR-review WARN. A WARN legitimately leaves the ticket in `Review` with no approval in the manifest; only `pr-iterate` moves it `Review -> Ready` and records a (policy) approval. The reapprove gate must run AFTER `pr-iterate` (loop body: `pr-review -> pr-iterate -> gate-check.sh --mode reapprove -> implement ...`). A gate-stop with reason `manifest records no approval` right before a `pr-iterate` line is this ordering bug, not a revoked approval.
 
 ## Minimal Fix Pattern
 
