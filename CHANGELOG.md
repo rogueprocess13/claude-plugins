@@ -17,13 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.150.0 (2026-11-26) — verify reads a clean worktree path and can drive a second tab
+## 0.151.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.
 
 - **`lib/notes-field.sh`.** The one reader of ticket-implement's pre-implementation checkpoint line (`- Repos: … | Branch: … | Worktree: … | Mode: …`): `notes-field.sh worktree|branch|repos|mode <ticket-dir|notes.md>` stops each value at the next `|`, trims padding and backticks, and takes the last checkpoint. ticket-verify Step 6 read the worktree with `sed 's/.*Worktree: //'`, which kept ` | Mode: …`, so `cd "$WORKTREE_PATH"` failed or the agent had to trim it by hand. ticket-verify Step 6 and ticket-pr-review now call the helper.
 - **`ticket-verify-agent` gets `mcp__playwright__browser_tabs` and `mcp__playwright__browser_close`.** Step 4b says when to use them: a second-tab criterion opens, switches and closes a tab; a fresh-context criterion closes the browser and navigates again, and when the session survives (the server is not `--isolated`) clears cookies and storage, reloads and marks the evidence as emulated.
 - **Tests.** `lib/tests/test-notes-field.sh` (new) covers the parse and fails on any unbounded `Worktree:` read in a skill or lib; `test-verify-agent-guard.sh` checks the two new grants.
+
+## 0.150.0 (2026-11-26) — the regression guard holds only for real risks
+
+GitHub #823. In an epic where each ticket builds on the one before, the guard made a person acknowledge nearly every ticket (ADJACENT and SUPERSEDES verdicts against earlier siblings), and it matched overlaps on file names in Prior Art prose, so it missed overlaps the prose did not name.
+
+- **`lib/regression-guard.sh` (new).** `overlap PLAN_FILES PRIOR_DIR` intersects the plan's files with the prior ticket's real changed files (its ai-context.md `## What changed` list; exit 1 when there is none, and only then does Step 3.5 fall back to prose). `relation TID PRIOR` prints `dependency same-epic:<EPIC>` (both resolve to one epic via `resolve_ticket_epic`), `dependency blocked-by` (this ticket's `blocked_by` names it) or `unrelated` (also when it cannot tell). `write TID NOTES ROWS` takes the agent's verdict rows and decides which need a person: CONFLICT always, SUPERSEDES unless the prior ticket is a dependency, ADJACENT never, an unknown verdict as CONFLICT. Gated rows go to `## ⚠️ Regression Risk` and are recorded with `regression-risk.sh record`; the rest go to `## Regression Notes` for the PR reviewer, which the implement gate does not read.
+- **`ticket-appraise-exec` Step 3.5.** Steps B and D call the script; the agent no longer writes either section by hand.
+- The implement gate (`regression-risk.sh check`) is unchanged.
+- Test: `lib/tests/test-regression-guard.sh`.
 
 ## 0.149.0 (2026-11-26) — the reapprove gate asks whose approval it is
 

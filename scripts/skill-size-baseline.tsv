@@ -15,7 +15,7 @@ ticket-auto-pipeline/agents/ticket-plan-review-agent.md	1394	8
 ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
 ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
 # allow-growth: verify-qa-persona — one line telling the verify agent to plan as the Step 1g QA persona while the verdict stays on the acceptance criteria (0.122.0)
-# allow-growth: browser_tabs and browser_close grants for second-tab and fresh-context criteria (#825, +63 bytes, 0.150.0)
+# allow-growth: browser_tabs and browser_close grants for second-tab and fresh-context criteria (#825, +63 bytes, 0.151.0)
 ticket-auto-pipeline/agents/ticket-verify-agent.md	3024	12
 ticket-auto-pipeline/lib/skill-preamble-auto.md	17538	341
 ticket-auto-pipeline/lib/skill-preamble.md	11450	269
@@ -62,7 +62,7 @@ ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	7073	97
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26086	453
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26081	446
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	34911	511
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	1318	25

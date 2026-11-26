@@ -3,8 +3,9 @@
 # (GitHub #771), as deterministic bash.
 #
 # ticket-appraise-exec Step 3.5 writes a `## ⚠️ Regression Risk` section into
-# notes.md when the plan touches a file a prior fix touched. A person must
-# acknowledge that risk before implementation starts.
+# notes.md (through lib/regression-guard.sh, GitHub #823) when the plan
+# conflicts with, or replaces without depending on, a file a prior fix
+# touched. A person must acknowledge that risk before implementation starts.
 #
 # Two append-only lists in the ticket's local manifest carry the gate.
 # notes.md is only where the risk is described:
