@@ -17,13 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.151.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
+## 0.152.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.
 
 - **`lib/notes-field.sh`.** The one reader of ticket-implement's pre-implementation checkpoint line (`- Repos: … | Branch: … | Worktree: … | Mode: …`): `notes-field.sh worktree|branch|repos|mode <ticket-dir|notes.md>` stops each value at the next `|`, trims padding and backticks, and takes the last checkpoint. ticket-verify Step 6 read the worktree with `sed 's/.*Worktree: //'`, which kept ` | Mode: …`, so `cd "$WORKTREE_PATH"` failed or the agent had to trim it by hand. ticket-verify Step 6 and ticket-pr-review now call the helper.
 - **`ticket-verify-agent` gets `mcp__playwright__browser_tabs` and `mcp__playwright__browser_close`.** Step 4b says when to use them: a second-tab criterion opens, switches and closes a tab; a fresh-context criterion closes the browser and navigates again, and when the session survives (the server is not `--isolated`) clears cookies and storage, reloads and marks the evidence as emulated.
 - **Tests.** `lib/tests/test-notes-field.sh` (new) covers the parse and fails on any unbounded `Worktree:` read in a skill or lib; `test-verify-agent-guard.sh` checks the two new grants.
+
+## 0.151.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
+
+GitHub #826. Two calibration fixes found in an end-to-end rehearsal.
+
+- **`lib/complexity-score.sh`.** `reversibility:auth-new` weighs 2 (was 3, the threshold). New auth logic nothing existing depends on is now a weak axis: alone it scores `simple`; with any second axis (multi-service, cross-layer, blast radius) it reaches `complex` and the approve gate. Every auth-new-only ticket in the rehearsal went to a person and ended Smooth. `reversibility:auth-modify`, a bare `reversibility:auth` and every other spelling still weigh 3, and the fast-path keyword scan is unchanged. `skills/ticket-appraise/SKILL.md` states the new weight.
+- **`lib/planned-feedback-write.sh` `_compute_decision_drift`.** The planner's confidence (about 0.55) and `_compute_actual_confidence` (Smooth 0.90) are on different scales, so the raw difference made every Smooth ticket `major`. Both values are now ranked by the new `_confidence_tier` (`lib/confidence.sh`: high ≥ 0.75, medium 0.50–0.74, low < 0.50) and the ranks compared: same rank `none`, one apart `minor`, low vs high `major`. A prediction that is not a number is `unknown`. The confidence values in the feedback payload are unchanged.
+- **Tests.** `lib/tests/test-complexity-score.sh` (auth-new alone simple; with multi-service, cross-layer or blast radius complex), `lib/tests/test-gate-check.sh` (auth-new plus cross-layer is still held in auto mode), `lib/tests/test-planned-feedback-write.sh` Test 11b (drift per outcome, not constant; tier cut points).
 
 ## 0.150.0 (2026-11-26) — the regression guard holds only for real risks
 
@@ -34,6 +42,7 @@ GitHub #823. In an epic where each ticket builds on the one before, the guard ma
 - The implement gate (`regression-risk.sh check`) is unchanged.
 - Test: `lib/tests/test-regression-guard.sh`.
 
+
 ## 0.149.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
@@ -42,6 +51,7 @@ GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan a
 - **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
 - **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
 - **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+
 ## 0.148.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
 
 GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.

@@ -65,7 +65,7 @@ ticket-retro:conditional	4179
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-# allow-growth: browser_tabs and browser_close grants in ticket-verify-agent.md (#825, +61 bytes net, 0.151.0)
+# allow-growth: browser_tabs and browser_close grants in ticket-verify-agent.md (#825, +61 bytes net, 0.152.0)
 ticket-verify	175921
 # allow-growth: ticket-auto-record — references/record.md (fixed viewport, one frame per settled step, the record.sh append call, password rule, failures ignored), read only when recording is on and VERIFY_MODE=browser (+3,984 bytes, 0.126.0)
 # allow-growth: #761 — one paragraph each in references/build-only.md (diff-only tickets: file and diff checks, no build tool) and references/live-backend.md (api-only tickets: curl and the test command, never a browser), read only in those modes (+917 bytes, 0.126.1)
