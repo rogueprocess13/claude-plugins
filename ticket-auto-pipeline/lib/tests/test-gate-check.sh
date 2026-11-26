@@ -494,6 +494,7 @@ test_entry_fleet_detect_format() {
 # deliberately left at its "not approved" default to prove that.
 test_reapprove_approved_and_ready_passes() {
   _setup
+  _plog_raw "META" "autonomy" "info" "auto"
   local repos_root
   repos_root=$(mktemp -d)
   REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
@@ -517,6 +518,7 @@ test_reapprove_approved_and_ready_passes() {
 # validation does; the PASS verdict must still be written.
 test_reapprove_no_verification_sections_writes_pass() {
   _setup
+  _plog_raw "META" "autonomy" "info" "auto"
   local repos_root art verdicts="${_ws}/verdicts.log" payloads="${_ws}/payloads.log"
   repos_root=$(mktemp -d)
   REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
@@ -2675,13 +2677,15 @@ test_implement_unapproved_or_unstaged_refused() {
     _implement_refused complex auto human Approve &&
     _implement_refused simple auto policy ""
 }
-# ticket-pr-iterate re-approves with policy after a first implementation
-# that had its own approval (implement-complete cleared it): the router's
-# rework loop must still get through, as it does at the reapprove gate.
-test_implement_policy_rework_after_prior_implementation_passes() {
-  _implement_allowed complex auto policy Ready prior-implement &&
-    _implement_allowed simple manual policy Ready prior-implement &&
-    _implement_refused complex auto none Ready prior-implement
+# GitHub #820: ticket-pr-iterate's policy re-approval after a first
+# implementation is no exception: a ticket that needs a person is refused,
+# as the reapprove gate holds it; a simple auto ticket still goes on.
+test_implement_policy_rework_after_prior_implementation_refused() {
+  _implement_refused complex auto policy Ready prior-implement &&
+    _implement_refused simple manual policy Ready prior-implement &&
+    _implement_refused complex auto none Ready prior-implement &&
+    _implement_allowed simple auto policy Ready prior-implement &&
+    _implement_allowed complex auto human Ready prior-implement
 }
 # An open [needs-human] question makes a simple auto ticket a person's too
 # (Check 5a), and an unreadable complexity is never read as simple.
@@ -3777,20 +3781,85 @@ test_plan_binding_implement_mode_refuses_changed_plan() {
     }
   done
 }
-# The reapprove gate (ticket-pr-iterate's policy re-approval) is not checked.
-test_plan_binding_reapprove_policy_unaffected() {
+# GitHub #820: the reapprove gate follows ticket-pr-iterate's policy
+# re-approval. It applies the entry gate's rule to it and releases with the
+# provenance the manifest records, never an assumed `human`.
+# _reapprove_case <complexity> <autonomy> <provenance> [rewrite] — prints
+# "rc|<log>|<emit calls>|<verdicts>".
+_reapprove_case() {
   _setup
-  _scaffold_exec_done "complex" "auto" "simple-fix" "${_ws}/simple-fix.md"
-  local repos_root rc=0
+  local plan="${_ws}/${_tid}--test/simple-fix.md"
+  _scaffold_exec_done "$1" "$2" "simple-fix" "$plan"
+  # ticket-pr-iterate appended its section before any re-approval.
+  printf 'plan\n\n## PR Review #1\nfix the gap\n' >"$plan"
+  _plog_raw "IMPLEMENT" "implement" "done" "Smooth"
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN"
+  local repos_root rc=0 verdicts="${_ws}/verdicts.log"
+  _write_gate_verdict() { echo "$1" >>"$verdicts"; }
   repos_root=$(mktemp -d)
   REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
-  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "policy" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "$3" >/dev/null
+  [ "$3" != "human" ] || _bind_plan "$repos_root"
   REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
-  printf '## PR Review #1\nrewrite\n' >"${_ws}/simple-fix.md"
+  [ "${4:-}" != "rewrite" ] || printf 'other plan\n' >"$plan"
   REPOS_ROOT="$repos_root" _gate_reapprove >/dev/null 2>&1 || rc=$?
+  printf '%s|%s|%s|%s' "$rc" "$(cat "$LOG_FILE")" "$(cat "${_ws}/emit-calls.log" 2>/dev/null)" "$(cat "$verdicts" 2>/dev/null)"
   rm -rf "$repos_root"
   _teardown
-  [ "$rc" -eq 0 ]
+}
+# The bug: a policy approval on a ticket that needs a person was released,
+# and as `human`.
+test_reapprove_policy_holds_ticket_that_needs_a_person() {
+  local out cx au
+  for cx in complex simple; do
+    for au in auto manual; do
+      [ "$cx/$au" != "simple/auto" ] || continue
+      out=$(_reapprove_case "$cx" "$au" policy)
+      [ "${out%%|*}" = "1" ] &&
+        grep -q '|GATE|reapprove|fail|held: the amended plan needs a person' <<<"$out" &&
+        grep -q 'bash ~/.claude/skills/ticket-approve/approve.sh' <<<"$out" &&
+        grep -q 'gate-held|{"reason":"reapprove-needs-human"}' <<<"$out" &&
+        ! grep -q 'gate-released' <<<"$out" &&
+        ! grep -q '|GATE|reapprove|done|' <<<"$out" &&
+        ! grep -q 'PASS' <<<"${out##*|}" &&
+        ! grep -q 'APPROVAL_REVOKED' <<<"$out" || {
+        echo "$cx/$au policy: expected a reapprove hold, got: $out"
+        return 1
+      }
+    done
+  done
+}
+test_reapprove_policy_releases_simple_auto_as_policy() {
+  local out
+  out=$(_reapprove_case simple auto policy)
+  [ "${out%%|*}" = "0" ] &&
+    grep -q 'gate-released|{"provenance":"policy"}' <<<"$out" &&
+    ! grep -q '"provenance":"human"' <<<"$out" &&
+    [ "${out##*|}" = "PASS" ] || {
+    echo "simple/auto policy: expected a policy release, got: $out"
+    return 1
+  }
+}
+test_reapprove_human_approval_of_amended_plan_releases_as_human() {
+  local out
+  out=$(_reapprove_case complex auto human)
+  [ "${out%%|*}" = "0" ] &&
+    grep -q 'gate-released|{"provenance":"human"}' <<<"$out" &&
+    grep -q '|GATE|reapprove|done|' <<<"$out" || {
+    echo "complex/auto human: expected a human release, got: $out"
+    return 1
+  }
+}
+test_reapprove_human_approval_of_other_plan_holds() {
+  local out
+  out=$(_reapprove_case complex auto human rewrite)
+  [ "${out%%|*}" = "1" ] &&
+    grep -q '|GATE|reapprove|fail|held: PLAN_CHANGED_SINCE_APPROVAL' <<<"$out" &&
+    grep -q 'gate-held|{"reason":"reapprove-plan-changed"}' <<<"$out" &&
+    ! grep -q 'gate-released' <<<"$out" || {
+    echo "complex/auto human, plan rewritten: expected a plan hold, got: $out"
+    return 1
+  }
 }
 
 for fn in \
@@ -3800,7 +3869,10 @@ for fn in \
   test_plan_binding_unchanged_passes \
   test_plan_binding_policy_approval_unaffected \
   test_plan_binding_implement_mode_refuses_changed_plan \
-  test_plan_binding_reapprove_policy_unaffected \
+  test_reapprove_policy_holds_ticket_that_needs_a_person \
+  test_reapprove_policy_releases_simple_auto_as_policy \
+  test_reapprove_human_approval_of_amended_plan_releases_as_human \
+  test_reapprove_human_approval_of_other_plan_holds \
   test_767_check5_already_approved_does_not_fire_again \
   test_767_check5_unapproved_still_fires_once \
   test_t0_critique_status_mixed_case_blocked_stops \
@@ -3906,7 +3978,7 @@ for fn in \
   test_implement_human_approval_passes_everywhere \
   test_implement_policy_approval_passes_simple_auto \
   test_implement_unapproved_or_unstaged_refused \
-  test_implement_policy_rework_after_prior_implementation_passes \
+  test_implement_policy_rework_after_prior_implementation_refused \
   test_implement_open_question_and_unreadable_complexity_need_a_person \
   test_implement_agrees_with_entry_gate_on_policy_approvals \
   test_approval_need_rule \

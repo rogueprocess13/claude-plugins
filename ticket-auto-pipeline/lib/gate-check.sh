@@ -115,8 +115,8 @@ _gate_emit_released() {
 # policy approval over open [needs-human] questions are a person's to
 # approve, and a `policy` approval (the pipeline's own) never stands in for
 # one. An approval of any other provenance reads as `hold`. The reapprove
-# gate passes no third argument: it follows ticket-pr-iterate's own policy
-# re-approval of a ticket that already cleared the entry gate.
+# gate applies the same rule (GitHub #820): ticket-pr-iterate's own policy
+# re-approval stands only for a ticket that needs no person.
 # Echoes exactly one of:
 #   pass                 — approved=true and stage matches
 #   hold                 — manifest read cleanly; not approved, or wrong stage
@@ -180,17 +180,24 @@ _gate_manifest_approved() {
 # (`hold-plan` above): GATE|gate|fail|held: PLAN_CHANGED_SINCE_APPROVAL — …,
 # the heartbeat and one gate-held event. The approval is left as it is: the
 # person re-runs approve.sh, which records the plan as it stands now.
+# [step]: the log step and heartbeat gate, `gate` (entry, the default) or
+# `reapprove` (GATE|reapprove|fail|held: …, heartbeat reapprove-gate).
 _gate_plan_hold() {
-  local msg
+  local step="${1:-gate}" hb_name="entry-gate" msg
+  [ "$step" = "gate" ] || hb_name="${step}-gate"
   if declare -f plan_binding_check >/dev/null 2>&1; then
     plan_binding_check "$TICKET_ID" --log-file "$LOG_FILE" >/dev/null 2>&1 || true
     msg=$(plan_binding_hold_message "$TICKET_ID")
   else
     msg="PLAN_CHANGED_SINCE_APPROVAL — lib/plan-binding.sh not found, so the approved plan cannot be checked. Reinstall the plugin, then a person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
   fi
-  _plog "$LOG_FILE" "GATE" "gate" "fail" "held: $msg"
-  hb_gate "entry-gate" "fail" "held: PLAN_CHANGED_SINCE_APPROVAL" "{}"
-  _gate_emit_held "plan-changed-since-approval"
+  _plog "$LOG_FILE" "GATE" "$step" "fail" "held: $msg"
+  hb_gate "$hb_name" "fail" "held: PLAN_CHANGED_SINCE_APPROVAL" "{}"
+  if [ "$step" = "gate" ]; then
+    _gate_emit_held "plan-changed-since-approval"
+  else
+    _gate_emit_held "${step}-plan-changed"
+  fi
   return 0
 }
 
@@ -1170,13 +1177,40 @@ _gate_reapprove() {
   fi
 
   if [ "$_reapprove_verdict" = "pass" ]; then
+    # GitHub #820: the approval this gate reads is usually ticket-pr-iterate's
+    # own (`pr-iterate --provenance policy`), written after it amended the
+    # plan. The entry gate's rule decides whether that is enough: a ticket
+    # that needs a person (_gate_approval_need: complex, manual mode or an
+    # open [needs-human] question) is held until a person runs approve.sh on
+    # the amended plan. The release carries the provenance the manifest
+    # records, never an assumed `human`.
+    local _ra_td="" _ra_open=0 _ra_need _ra_prov
+    if command -v resolve_ticket_dir &>/dev/null; then
+      _ra_td=$(resolve_ticket_dir "$TICKET_ID" "." 2>/dev/null || true)
+    fi
+    if declare -f get_open_needs_human_count >/dev/null 2>&1; then
+      _ra_open=$(get_open_needs_human_count "${_ra_td:-.}" 2>/dev/null) || _ra_open=0
+      [[ "$_ra_open" =~ ^[0-9]+$ ]] || _ra_open=0
+    fi
+    _ra_need=$(_gate_approval_need "$(_get_complexity)" "$(_get_autonomy)" "$_ra_open")
+    if [ "$_ra_need" = "human" ]; then
+      _reapprove_verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" human)
+      if [ "$_reapprove_verdict" = "hold-plan" ]; then
+        _gate_plan_hold reapprove
+        return 1
+      fi
+      if [ "$_reapprove_verdict" != "pass" ]; then
+        _plog "$LOG_FILE" "GATE" "reapprove" "fail" "held: the amended plan needs a person's approval; a policy approval (ticket-pr-iterate's) does not count. A person runs, in their own terminal from the tickets root: bash ~/.claude/skills/ticket-approve/approve.sh $TICKET_ID"
+        hb_gate "reapprove-gate" "fail" "held: needs a person's approval" "{\"prior_failures\":\"${verify_count:-0}\"}" || true
+        _gate_emit_held "reapprove-needs-human"
+        return 1
+      fi
+    fi
+    _ra_prov=$(get_ticket_manifest_field "$TICKET_ID" approval_provenance 2>/dev/null) || _ra_prov=""
+    [ "$_ra_prov" = "human" ] || _ra_prov="policy"
     _plog "$LOG_FILE" "GATE" "reapprove" "done" ""
     hb_gate "reapprove-gate" "ok" "re-approval confirmed" "{\"prior_failures\":\"${verify_count:-0}\"}" || true
-    # reapprove-mode is only ever entered because a human approved via
-    # approve.sh on a previously-held ticket — no automatic
-    # re-evaluation path exists in the current pipeline, so provenance is
-    # always "human" here.
-    _gate_emit_released "human"
+    _gate_emit_released "$_ra_prov"
     _write_gate_verdict PASS
     return 0
   fi
@@ -1199,14 +1233,11 @@ _gate_reapprove() {
 # plan_binding_check notes bytes appended to an approved plan as one
 # META|plan-binding|info line (once per distinct message). A person's
 # approval whose plan changed is refused with REASON=PLAN_CHANGED_SINCE_APPROVAL
-# — …, and the policy fallback below never covers it.
+# — ….
 #
-# One addition: a ticket that needs a person's approval is also let
-# through on a `policy` approval when the log already carries a completed
-# implementation (IMPLEMENT|implement|done|). That is ticket-pr-iterate's
-# re-approval of a ticket whose first implementation needed, and had, its
-# own approval; implement-complete cleared that one, so the manifest can no
-# longer show it. It is the reapprove gate's case.
+# No exception for a rework pass (GitHub #820): ticket-pr-iterate's policy
+# re-approval of a ticket that needs a person is refused here exactly as
+# the reapprove gate holds it, so the person approves the amended plan.
 #
 # Prints IMPLEMENT_AUTH=approved (exit 0) or IMPLEMENT_AUTH=none with a
 # REASON= line (exit 1). LOG-FILE `-`: TAP_LOG from the
@@ -1224,11 +1255,6 @@ _gate_implement() {
   fi
   need=$(_gate_approval_need "$complexity" "$autonomy" "$open_human")
   verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready" "$need")
-  # The policy fallback never covers a person's approval whose plan changed.
-  if [ "$verdict" != "pass" ] && [ "$verdict" != "hold-plan" ] && [ "$need" = "human" ] &&
-    grep -q '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null; then
-    verdict=$(_gate_manifest_approved "$TICKET_ID" "Ready")
-  fi
   if [ "$verdict" = "pass" ]; then
     echo "IMPLEMENT_AUTH=approved"
     return 0
