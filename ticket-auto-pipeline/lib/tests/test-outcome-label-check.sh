@@ -306,6 +306,100 @@ test_dedicated_smooth_beats_prose() {
   [ "$rc" -eq 0 ] && [ -n "$line" ]
 }
 
+# ── #827: a failed PR review plus a pr-iterate round floors the outcome ────────
+
+_last_outcome_label() {
+  grep '|META|outcome-label|info|' "$LOG_FILE" | tail -1 | cut -d'|' -f5
+}
+
+# The #827 shape: review WARN + pr-iterate in a run held at the reapprove
+# gate, re-implement in the next run, both rounds self-graded Smooth.
+test_review_warn_iterate_across_held_run_is_rough() {
+  _setup
+  _plog_raw "META" "run-id" "info" '{"run_id":"r1"}'
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _outcome_label_check >/dev/null 2>&1
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN — WARN 18/20: gap"
+  _plog_raw "PR-REVIEW" "pr-iterate" "start" "Iterate on PR feedback"
+  _plog_raw "PR-REVIEW" "pr-iterate" "done" "plan amended"
+  _plog_raw "GATE" "reapprove" "fail" "held: needs a person"
+  _plog_raw "META" "outcome" "info" "held: gate"
+  _plog_raw "META" "run-id" "info" '{"run_id":"r2"}'
+  _plog_raw "GATE" "reapprove" "done" "released: human"
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _outcome_label_check >/dev/null 2>&1
+  local label mirrored
+  label=$(_last_outcome_label)
+  mirrored=$(get_ticket_manifest_field "$_tid" outcome_label 2>/dev/null)
+  _teardown
+  [ "$label" = "Rough" ] && [ "$mirrored" = "Rough" ]
+}
+
+test_two_iterate_rounds_are_hard() {
+  _setup
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN — 1"
+  _plog_raw "PR-REVIEW" "pr-iterate" "done" "round 1"
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN — 2"
+  _plog_raw "PR-REVIEW" "pr-iterate" "done" "round 2"
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Rough"
+  _outcome_label_check >/dev/null 2>&1
+  local label
+  label=$(_last_outcome_label)
+  _teardown
+  [ "$label" = "Hard" ]
+}
+
+test_reapprove_alone_is_rough() {
+  _setup
+  _plog_raw "GATE" "reapprove" "done" "released: human"
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _outcome_label_check >/dev/null 2>&1
+  local label
+  label=$(_last_outcome_label)
+  _teardown
+  [ "$label" = "Rough" ]
+}
+
+test_floor_never_lowers_hard() {
+  _setup
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN — 1"
+  _plog_raw "PR-REVIEW" "pr-iterate" "done" "round 1"
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Hard"
+  _outcome_label_check >/dev/null 2>&1
+  local label
+  label=$(_last_outcome_label)
+  _teardown
+  [ "$label" = "Hard" ]
+}
+
+test_passing_review_without_iterate_stays_smooth() {
+  _setup
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _plog_raw "PR-REVIEW" "pr-review" "done" "OK — 20/20"
+  _outcome_label_check >/dev/null 2>&1
+  local label
+  label=$(_last_outcome_label)
+  _teardown
+  [ "$label" = "Smooth" ]
+}
+
+# A fix round from an earlier, completed attempt does not count.
+test_iterate_before_completed_run_ignored() {
+  _setup
+  _plog_raw "META" "run-id" "info" '{"run_id":"r1"}'
+  _plog_raw "PR-REVIEW" "pr-review" "done" "WARN — old"
+  _plog_raw "PR-REVIEW" "pr-iterate" "done" "old round"
+  _plog_raw "GATE" "reapprove" "done" "released: human"
+  _plog_raw "META" "outcome" "info" "completed: STEP_6"
+  _plog_raw "META" "run-id" "info" '{"run_id":"r2"}'
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _outcome_label_check >/dev/null 2>&1
+  local label
+  label=$(_last_outcome_label)
+  _teardown
+  [ "$label" = "Smooth" ]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -330,7 +424,13 @@ for fn in \
   test_prose_fallback_smooth_only_is_unrecorded \
   test_prose_fallback_records_rough \
   test_prose_fallback_worst_token_wins \
-  test_dedicated_smooth_beats_prose; do
+  test_dedicated_smooth_beats_prose \
+  test_review_warn_iterate_across_held_run_is_rough \
+  test_two_iterate_rounds_are_hard \
+  test_reapprove_alone_is_rough \
+  test_floor_never_lowers_hard \
+  test_passing_review_without_iterate_stays_smooth \
+  test_iterate_before_completed_run_ignored; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

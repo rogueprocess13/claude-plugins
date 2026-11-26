@@ -79,6 +79,78 @@ _get_outcome_from_log() {
   echo "$outcome"
 }
 
+# ── Review-round floor (GitHub #827) ───────────────────────────────────────────
+
+# _outcome_attempt_window
+# Prints the lines of the current attempt at this ticket: the current run
+# (#821's `META|run-id` boundary, as exit-path.sh's `_exitpath_run_window`
+# draws it) widened back over every earlier run that ended without
+# completing. A gate hold or a stop closes its run with
+# `META|outcome|info|held: …`/`stopped: …` and the resumed run gets a new
+# run-id, but it is the same attempt: in the #827 case the failed PR review
+# and the pr-iterate round sat in the held run, the re-implement in the next.
+# So the window starts at the first `META|run-id` after the last
+# `META|outcome|info|completed:` line; with no completed run it is the whole
+# log (also the pre-run-identity case).
+_outcome_attempt_window() {
+  [ -f "$LOG_FILE" ] || return 0
+  awk '
+    { line[NR] = $0 }
+    index($0, "|META|outcome|info|completed:") { done_at = NR }
+    END {
+      start = 1
+      if (done_at) {
+        start = NR + 1
+        for (i = done_at + 1; i <= NR; i++)
+          if (index(line[i], "|META|run-id|info|")) { start = i; break }
+      }
+      for (i = start; i <= NR; i++) print line[i]
+    }
+  ' "$LOG_FILE" 2>/dev/null || true
+}
+
+# _review_iterate_rounds
+# Counts the attempt window's fix rounds: a pr-iterate line (start or done)
+# that follows a PR review whose verdict was not a pass (`done|WARN`,
+# `done|BLOCK`, or `fail`). A passing review clears a pending verdict, and a
+# round counts once however many pr-iterate lines it wrote.
+_review_iterate_rounds() {
+  _outcome_attempt_window | awk -F'|' '
+    $2 == "PR-REVIEW" && $3 == "pr-review" {
+      if ($4 == "fail" || ($4 == "done" && $5 ~ /^(WARN|BLOCK)/)) bad = 1
+      else if ($4 == "done") bad = 0
+      next
+    }
+    $2 == "PR-REVIEW" && $3 == "pr-iterate" && ($4 == "start" || $4 == "done") {
+      if (bad) { rounds++; bad = 0 }
+    }
+    END { print rounds + 0 }
+  '
+}
+
+# _apply_review_floor <outcome>
+# The outcome is the whole attempt's, not the last implement round's self-
+# grade (#827). One PR-review fix round, or a plan amended and re-approved
+# (`GATE|reapprove|done|`), makes it at least Rough; two or more fix rounds
+# make it Hard. The floor only raises an outcome, never lowers one.
+_apply_review_floor() {
+  local outcome="$1" rounds floor=""
+  rounds=$(_review_iterate_rounds)
+  [[ "$rounds" =~ ^[0-9]+$ ]] || rounds=0
+  if [ "$rounds" -ge 2 ]; then
+    floor="Hard"
+  elif [ "$rounds" -ge 1 ] || grep -q '^[^|]*|GATE|reapprove|done|' <<<"$(_outcome_attempt_window)"; then
+    floor="Rough"
+  fi
+  case "$floor:$outcome" in
+  Hard:Smooth | Hard:Rough | Rough:Smooth)
+    echo "outcome-label-check: implement round said '$outcome'; $rounds PR-review fix round(s) in this attempt make it '$floor' (#827)" >&2
+    outcome="$floor"
+    ;;
+  esac
+  echo "$outcome"
+}
+
 # _manifest_has_outcome_label — true when the manifest already carries an
 # outcome_label value. No tracker read: the manifest is the only place
 # this value has ever been written.
@@ -109,8 +181,13 @@ _outcome_label_check() {
     return 1
   fi
 
-  # If outcome already recorded, exit clean
-  if _manifest_has_outcome_label; then
+  outcome=$(_apply_review_floor "$outcome")
+
+  # If this outcome is already recorded, exit clean. A different recorded
+  # value (an earlier implement round's) is overwritten below: a later
+  # round's outcome must reach the manifest, not only the log (#827).
+  if _manifest_has_outcome_label &&
+    [ "$(get_ticket_manifest_field "$TICKET_ID" outcome_label 2>/dev/null)" = "$outcome" ]; then
     hb_gate "outcome-check" "ok" "outcome label already present" "{\"outcome\":\"$outcome\"}"
     _plog "$LOG_FILE" "META" "outcome-label" "info" "$outcome"
     return 0

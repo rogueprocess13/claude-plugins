@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.152.0 (2026-11-27) — a PR-review fix round shows in the outcome label
+
+GitHub #827. `outcome-label-check.sh` took the outcome from the latest implement round's own self-grade, so a ticket that failed PR review, had its plan amended and re-approved, and needed a second implement round was still labelled Smooth, and the planner feedback and the retro treated it as a first-time pass. A recorded outcome was also never overwritten, so a later round's grade reached only the log.
+
+- **Review-round floor.** The outcome is now the whole attempt's: one PR-review fix round (a `pr-iterate` line after a `pr-review` verdict of WARN, BLOCK or fail), or a `GATE|reapprove|done|` re-approval, makes it at least Rough; two or more fix rounds make it Hard. The floor only raises an outcome.
+- **Attempt window.** The check reads the current run (#821's `META|run-id` boundary) widened back over earlier runs that ended without completing (`held:` / `stopped:`), since a reapprove hold closes its run and the re-implement runs in the next one. A fix round from before the last `completed:` outcome does not count.
+- **Manifest.** A recorded `outcome_label` that differs from the computed outcome is overwritten.
+
 ## 0.151.0 (2026-11-27) — new auth logic alone is not complex; decision drift compares ranks
 
 GitHub #826. Two calibration fixes found in an end-to-end rehearsal.
