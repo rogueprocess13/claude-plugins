@@ -18,7 +18,7 @@ You have been given a ticket ID as the argument (e.g. `CRE-39`), with optional f
 
 This skill never modifies source code.
 
-**Secrets rule:** a password is only ever typed into the login field. Never write it into a Linear comment, PR body, pipeline/heartbeat log line, verification plan, report, REMEDIATION_BRIEF, notes.md or any other file, and never `echo` it in a bash block.
+**Secrets rule:** a password is only ever typed into the login field. Never write it into a Linear comment, PR body, pipeline/heartbeat log line, verification plan, report, REMEDIATION_BRIEF, notes.md or any other file, and never `echo` it in a bash block. Playwright snapshots keep a typed password: after each password fill, run `bash ~/.claude/skills/lib/playwright-scrub.sh`.
 
 ## Pipeline Preamble
 
@@ -35,7 +35,7 @@ Event catalogue: [pipeline-heartbeat-format.md](../../pipeline-heartbeat-format.
 - after the verdict: `decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first takes the lock alone (Step 1.6a3, `verify-env-up.sh lock`) unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
+**Important:** `browser-session`, `navigate` and `execute-steps` need a live browser session, lost on a crash. If `--from-step` is one of these values, fall back to `build-plan` instead — browser steps always re-run from scratch. In build-only and live-backend mode (no browser session to lose), an `execute-steps` resume re-enters Step 4c / 4c-live at the next unchecked criterion. Any other value (e.g. `seed-apply`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first takes the lock alone (Step 1.6a3, `verify-env-up.sh lock`) unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
@@ -619,7 +619,7 @@ Release the verify lock now, before evaluating, so the next queued verify run ca
 
 ```bash
 source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-verify_lock_release
+verify_lock_release; bash ~/.claude/skills/lib/playwright-scrub.sh || true
 ```
 
 ### Pass
