@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.150.0 (2026-11-26) — the regression guard holds only for real risks
+
+GitHub #823. In an epic where each ticket builds on the one before, the guard made a person acknowledge nearly every ticket (ADJACENT and SUPERSEDES verdicts against earlier siblings), and it matched overlaps on file names in Prior Art prose, so it missed overlaps the prose did not name.
+
+- **`lib/regression-guard.sh` (new).** `overlap PLAN_FILES PRIOR_DIR` intersects the plan's files with the prior ticket's real changed files (its ai-context.md `## What changed` list; exit 1 when there is none, and only then does Step 3.5 fall back to prose). `relation TID PRIOR` prints `dependency same-epic:<EPIC>` (both resolve to one epic via `resolve_ticket_epic`), `dependency blocked-by` (this ticket's `blocked_by` names it) or `unrelated` (also when it cannot tell). `write TID NOTES ROWS` takes the agent's verdict rows and decides which need a person: CONFLICT always, SUPERSEDES unless the prior ticket is a dependency, ADJACENT never, an unknown verdict as CONFLICT. Gated rows go to `## ⚠️ Regression Risk` and are recorded with `regression-risk.sh record`; the rest go to `## Regression Notes` for the PR reviewer, which the implement gate does not read.
+- **`ticket-appraise-exec` Step 3.5.** Steps B and D call the script; the agent no longer writes either section by hand.
+- The implement gate (`regression-risk.sh check`) is unchanged.
+- Test: `lib/tests/test-regression-guard.sh`.
+
 ## 0.149.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.

@@ -21,7 +21,7 @@ ticket-appraise	155536
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+208 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
 # allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.148.0)
-ticket-appraise-exec	122964
+ticket-appraise-exec	122959
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
 ticket-appraise-exec:conditional	25886
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
