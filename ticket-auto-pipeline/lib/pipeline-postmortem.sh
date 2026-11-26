@@ -193,8 +193,8 @@ _collect_signals() {
   local tmp="$1"
 
   # Non-PASS verifier results
-  if grep -q '|META|verifier-result|' "$LOG_FILE" 2>/dev/null; then
-    grep '|META|verifier-result|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  if grep -q '|META|verifier-result|' "$_RUN_LOG" 2>/dev/null; then
+    grep '|META|verifier-result|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
       local _json
       _json=$(echo "$line" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
       local _verdict
@@ -208,14 +208,14 @@ _collect_signals() {
   fi
 
   # Gate-stop lines
-  grep '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|gate-stop|fail|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     local _code
     _code=$(echo "$line" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
     echo "gate-stop|${_code}" >>"$tmp/signals.txt"
   done || true
 
   # Phase-inspector warnings (Phase 1 — absent channel degrades gracefully)
-  grep '|META|phase-inspector|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|phase-inspector|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     local _json
     _json=$(echo "$line" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
     local _verdict
@@ -237,32 +237,32 @@ _collect_signals() {
 
   # F21: additional signal sources — flow errors, preflight failures,
   # phase failures (non-MAINTENANCE), drift warnings, mode changes
-  grep '|META|flow-error|fail|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|flow-error|fail|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     echo "flow-error|$line" >>"$tmp/signals.txt"
   done || true
 
-  grep '|META|preflight|fail|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|preflight|fail|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     echo "preflight-fail|$line" >>"$tmp/signals.txt"
   done || true
 
   # Phase |fail| entries (non-MAINTENANCE — maintenance failures are non-blocking)
-  grep -E '^\|?[^|]*\|(APPRAISE|EXEC|GATE|IMPLEMENT|VERIFY|PR-REVIEW)\|.*\|fail\|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep -E '^\|?[^|]*\|(APPRAISE|EXEC|GATE|IMPLEMENT|VERIFY|PR-REVIEW)\|.*\|fail\|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     echo "phase-fail|$line" >>"$tmp/signals.txt"
   done || true
 
-  grep '|META|drift|warn|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|drift|warn|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     echo "drift-warn|$line" >>"$tmp/signals.txt"
   done || true
 
-  grep '|META|mode-change|warn|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  grep '|META|mode-change|warn|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
     echo "mode-change|$line" >>"$tmp/signals.txt"
   done || true
 
   # MODEL entries
-  grep '|META|model|' "$LOG_FILE" 2>/dev/null | head -1 >"$tmp/model.txt" 2>/dev/null || true
+  grep '|META|model|' "$_RUN_LOG" 2>/dev/null | head -1 >"$tmp/model.txt" 2>/dev/null || true
 
   # from-planned marker
-  if grep -q '|META|from-planned|' "$LOG_FILE" 2>/dev/null; then
+  if grep -q '|META|from-planned|' "$_RUN_LOG" 2>/dev/null; then
     echo "true" >"$tmp/from-planned.txt"
   fi
 }
@@ -361,7 +361,7 @@ _detect_mislabel() {
   local tmp="$1"
 
   local _outcome_label
-  _outcome_label=$(grep '^[^|]*|META|outcome-label|info|' "$LOG_FILE" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}' || true)
+  _outcome_label=$(grep '^[^|]*|META|outcome-label|info|' "$_RUN_LOG" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}' || true)
 
   if [ -z "$_outcome_label" ]; then
     echo "false"
@@ -370,8 +370,8 @@ _detect_mislabel() {
 
   # Check for contrary evidence
   local _has_failure=false
-  if grep -q '|META|verifier-result|' "$LOG_FILE" 2>/dev/null; then
-    grep '|META|verifier-result|' "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+  if grep -q '|META|verifier-result|' "$_RUN_LOG" 2>/dev/null; then
+    grep '|META|verifier-result|' "$_RUN_LOG" 2>/dev/null | while IFS= read -r line; do
       local _json _verdict
       _json=$(echo "$line" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
       _verdict=$(echo "$_json" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
@@ -381,7 +381,7 @@ _detect_mislabel() {
     done
   fi
 
-  if grep -q '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null; then
+  if grep -q '|META|gate-stop|fail|' "$_RUN_LOG" 2>/dev/null; then
     echo "true" >"$tmp/mislabel-detected.txt"
   fi
 
@@ -673,6 +673,16 @@ _invoke_extractor_agent() {
 _pm_tmp="$(mktemp -d)"
 trap 'rm -rf "$_pm_tmp"' EXIT
 
+# The signal, mislabel and gate-stop scans below read only the current run:
+# the lines from the last META|run-id onward (#821). An earlier, held run's
+# gate-stop must not be reported against a later run that completed.
+_RUN_LOG="$_pm_tmp/run-window.log"
+if declare -f _exitpath_run_window >/dev/null 2>&1; then
+  _exitpath_run_window "$LOG_FILE" >"$_RUN_LOG"
+else
+  cp "$LOG_FILE" "$_RUN_LOG" 2>/dev/null || : >"$_RUN_LOG"
+fi
+
 _collect_signals "$_pm_tmp"
 
 _exit_path=$(_derive_exit_path "$_pm_tmp")
@@ -832,8 +842,8 @@ if [ -f "$_pm_tmp/signals.txt" ]; then
 
     # Gate-stop details
     _gate_stop_text=""
-    if grep -q '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null; then
-      _gate_stop_text=$(grep '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null | head -3 || true)
+    if grep -q '|META|gate-stop|fail|' "$_RUN_LOG" 2>/dev/null; then
+      _gate_stop_text=$(grep '|META|gate-stop|fail|' "$_RUN_LOG" 2>/dev/null | head -3 || true)
     fi
 
     # Suggested fix (placeholder — Phase 2 extractor agent will fill this)

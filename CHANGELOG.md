@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
+
+GitHub #821. `_derive_exit_path` grepped the whole ticket log for `META|gate-stop|fail`, so a gate-stop from an earlier, held run became the exit path of a later run that completed normally, and `_detect_mislabel` then flagged a Smooth outcome as `mislabeled_outcome: true`.
+
+- **`lib/exit-path.sh`.** New `_exitpath_run_window LOG` prints the lines from the last `META|run-id` to EOF (the boundary `run_summary_window` and `pr-evidence.sh` already use; the whole log when there is no run-id). `_derive_exit_path` reads its gate-stop, router-error and fleet-kill checks from that window.
+- **`lib/pipeline-postmortem.sh`.** Signal collection, the mislabel check and the issue body's gate-stop text read the same window (a copy in the post-mortem's temp dir). Heartbeat-file signals are unchanged.
+- Tests: two-run cases in `lib/tests/test-exit-path.sh` and `lib/tests/test-pipeline-postmortem.sh`.
+
 ## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
 
 GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
