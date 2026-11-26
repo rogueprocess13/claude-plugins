@@ -15,12 +15,12 @@ guidance-extractor:conditional	11566
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.147.0)
+# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.148.0)
 ticket-appraise	155536
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+208 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.147.0)
+# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.148.0)
 ticket-appraise-exec	122964
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
 ticket-appraise-exec:conditional	25886
@@ -35,7 +35,7 @@ ticket-gate-reconcile	6750
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+29 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-# allow-growth: #816 — agents/ticket-implement-agent.md names its save_comment feedback comment (0.147.0)
+# allow-growth: #816 — agents/ticket-implement-agent.md names its save_comment feedback comment (0.148.0)
 ticket-implement	145357
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
 # allow-growth: pre-fix-fails-gate — references/pre-fix-fails.md, read only on a bug ticket with PRE_FIX_FAILS not off (+2,484 bytes, 0.143.0)
@@ -54,7 +54,7 @@ ticket-pr-review:conditional	11566
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+582 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)
-# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.147.0)
+# allow-growth: #816 — agents/ticket-appraise-agent.md names the actions ticket-appraise-exec requires (0.148.0)
 ticket-reproduce	108293
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
 ticket-reproduce:conditional	14207

@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.147.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
+## 0.148.0 (2026-11-26) — the appraise agent may do what ticket-appraise-exec requires
 
 GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "never attempt Linear API mutations" and "Write only to the ticket workspace", while `ticket-appraise-exec`, dispatched to the same agent, requires Step 3.4's `appraise-exec-coherence.sh` (which commits the OpenSpec change), Step 5's appraisal comment and Step 3.7's `app-knowledge.md` entry. A complex run followed the agent definition: the plan stayed uncommitted, `EXEC|post-linear|skip` was logged and the phase still ended `done`.
 
@@ -25,6 +25,14 @@ GitHub #816. `agents/ticket-appraise-agent.md` said "MUST NOT ... commit", "neve
 - **`skills/ticket-appraise-exec/SKILL.md`.** Step 3.6 without an Agent tool ends its `done` line with ` — self-review` and logs `META|gate-warn|warn|ADVERSARIAL_SELF_REVIEW`. Step 5 is never logged `skip`: a failed post logs `EXEC|post-linear|fail` and `APPRAISAL_COMMENT_NOT_POSTED`. Step 1.5's task tracker applies to interactive runs only. `TICKET_ROUTER_PLAN_REVIEW` keeps its default (`false`); turning it on gives complex tickets the independent reviewer.
 - **`agents/ticket-implement-agent.md`** names the `save_comment` feedback comment its skill posts, which its "All Linear mutations go through flow.sh" line had forbidden.
 - **Tests.** `lib/tests/test-agent-tool-coverage.sh` now also checks prohibitions: for every dispatch-table (skill, agent) pair, an agent body that forbids commits, Linear mutations, or writes outside a scope must name each committing script, non-read `LINEAR_OPS` op and `{…_ROOT}/` file its skill requires. It finds the pre-fix agent's three conflicts, and the two `ticket-appraise-exec` TaskCreate/TaskUpdate known gaps are gone.
+
+## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
+
+GitHub #821. `_derive_exit_path` grepped the whole ticket log for `META|gate-stop|fail`, so a gate-stop from an earlier, held run became the exit path of a later run that completed normally, and `_detect_mislabel` then flagged a Smooth outcome as `mislabeled_outcome: true`.
+
+- **`lib/exit-path.sh`.** New `_exitpath_run_window LOG` prints the lines from the last `META|run-id` to EOF (the boundary `run_summary_window` and `pr-evidence.sh` already use; the whole log when there is no run-id). `_derive_exit_path` reads its gate-stop, router-error and fleet-kill checks from that window.
+- **`lib/pipeline-postmortem.sh`.** Signal collection, the mislabel check and the issue body's gate-stop text read the same window (a copy in the post-mortem's temp dir). Heartbeat-file signals are unchanged.
+- Tests: two-run cases in `lib/tests/test-exit-path.sh` and `lib/tests/test-pipeline-postmortem.sh`.
 
 ## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
 

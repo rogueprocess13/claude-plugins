@@ -5,10 +5,10 @@ grill-me/skills/grill-me/SKILL.md	14428	282
 # allow-growth: seam-gate-safety G6 — the agent must know a format retry reads no file and changes no finding, code, quote or verdict (0.120.0)
 ticket-auto-pipeline/agents/dor-semantic-agent.md	1711	10
 ticket-auto-pipeline/agents/guidance-extractor-agent.md	898	2
-# allow-growth: #816 — the appraise agent names the commit, comment and app-knowledge.md writes ticket-appraise-exec requires, and its self-review and failure rules (0.147.0)
+# allow-growth: #816 — the appraise agent names the commit, comment and app-knowledge.md writes ticket-appraise-exec requires, and its self-review and failure rules (0.148.0)
 ticket-auto-pipeline/agents/ticket-appraise-agent.md	1577	9
 ticket-auto-pipeline/agents/ticket-gate-reconcile-agent.md	818	2
-# allow-growth: #816 — the implement agent names the save_comment feedback comment its skill posts (0.147.0)
+# allow-growth: #816 — the implement agent names the save_comment feedback comment its skill posts (0.148.0)
 ticket-auto-pipeline/agents/ticket-implement-agent.md	783	2
 ticket-auto-pipeline/agents/ticket-maintenance-agent.md	2627	28
 ticket-auto-pipeline/agents/ticket-plan-review-agent.md	1394	8
