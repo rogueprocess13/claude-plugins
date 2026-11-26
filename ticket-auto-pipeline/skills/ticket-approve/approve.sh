@@ -5,7 +5,10 @@
 #   bash ~/.claude/skills/ticket-approve/approve.sh <TICKET-ID>
 #
 # Run it from the tickets root. REPOS_ROOT comes from the environment, else
-# the ticket's env file, else ./CLAUDE.md.
+# the ticket's env file, else ./CLAUDE.md. When ./CLAUDE.md declares one and
+# the root came from elsewhere, the two must agree, and the ticket's manifest
+# must already exist under the root (lib/operator-root.sh; else exit 3,
+# nothing recorded). The prompt names the manifest the approval goes into.
 #
 # It shows the ticket and its current stage on the controlling terminal and
 # asks for the ticket id to be typed back. Only a matching answer runs
@@ -44,7 +47,8 @@
 # that plan visible and blocking.
 #
 # Exit: 0 approved (or already approved for this exact plan), 1 usage,
-#       2 flow.sh or a library not found, 3 manifest not addressable,
+#       2 flow.sh or a library not found, 3 REPOS_ROOT unresolved or disagreeing with
+#       ./CLAUDE.md, or no manifest for the ticket under it,
 #       4 agent context or no terminal, 5 the manifest does not show the
 #       approval after the write, 6 the typed id did not match or the plan
 #       changed while on screen (nothing recorded), 7 no plan, or one that
@@ -80,19 +84,16 @@ human_terminal_require "ticket-approve" "approve $TICKET_ID" || exit 4
 source "$LIB_DIR/manifest-write.sh"
 
 # REPOS_ROOT in a person's own shell: the environment, else the ticket's env
-# file, else the project CLAUDE.md in the current directory.
-if [ -z "${REPOS_ROOT:-}" ] && [ -f "$LIB_DIR/ticket-env.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$LIB_DIR/ticket-env.sh" "$TICKET_ID" 2>/dev/null || true
-fi
-if [ -z "${REPOS_ROOT:-}" ] && [ -f ./CLAUDE.md ]; then
-  source "$LIB_DIR/claude-md-field.sh" 2>/dev/null ||
-    source "$SCRIPT_DIR/../../lib/claude-md-field.sh" 2>/dev/null || true
-  if declare -f claude_md_field >/dev/null 2>&1; then
-    REPOS_ROOT=$(claude_md_field ./CLAUDE.md REPOS_ROOT 2>/dev/null) || REPOS_ROOT=""
-  fi
-fi
-[ -z "${REPOS_ROOT:-}" ] || export REPOS_ROOT
+# file, else the project CLAUDE.md in the current directory. A root that
+# disagrees with ./CLAUDE.md is refused (lib/operator-root.sh, GitHub #818):
+# a REPOS_ROOT left exported from another project would record the approval
+# there while this project's ticket stays held.
+source "$LIB_DIR/operator-root.sh" 2>/dev/null ||
+  source "$SCRIPT_DIR/../../lib/operator-root.sh" 2>/dev/null || {
+  echo "ticket-approve: lib/operator-root.sh not found — reinstall the plugin" >&2
+  exit 2
+}
+operator_resolve_repos_root "ticket-approve" "$TICKET_ID" || exit 3
 
 # ── Resolve flow.sh (standard _flow_sh pattern, lib/skill-preamble-auto.md) ─
 # FLOW_SH, if already set by the caller (tests), is respected as-is.
@@ -110,14 +111,11 @@ if [ -z "$FLOW_SH" ] || [ ! -f "$FLOW_SH" ]; then
   exit 2
 fi
 
-# Manifest-addressable before flow.sh runs, so a ticket created outside the
-# planner is never silently no-op'd (D2). flow.sh calls this again itself —
-# idempotent, so the duplicate call costs nothing and this script's own
-# correctness doesn't depend on flow.sh's internals.
-ensure_ticket_manifest "$TICKET_ID" || {
-  echo "ticket-approve: could not make $TICKET_ID manifest-addressable" >&2
-  exit 3
-}
+# The manifest must already exist under the resolved root (GitHub #818). A
+# ticket held at the gate always has one: flow.sh wrote it on the way there,
+# for a planned and an ad-hoc ticket alike. A missing one means the wrong
+# root, so it is an error here, never a create.
+MANIFEST_PATH=$(operator_require_manifest "ticket-approve" "$TICKET_ID") || exit 3
 
 # One approval is one fact (GitHub #767). flow.sh emits an event on every
 # invocation by design, so a second /ticket-approve on a ticket this script
@@ -207,6 +205,7 @@ if [ "$ALREADY_APPROVED" != "true" ] || [ "$NEEDS_INFO_SET" = "true" ]; then
   _stage=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)
   [[ "$_stage" =~ ^[A-Za-z]+$ ]] || _stage="unknown"
   _lines=("Approve $TICKET_ID — current stage: $_stage.")
+  _lines+=("Recording in: $MANIFEST_PATH (REPOS_ROOT from the $OPERATOR_ROOT_SOURCE)")
   if [ "$ALREADY_APPROVED" = "true" ]; then
     _lines+=("It is already approved. This clears its needs-info flag.")
   else

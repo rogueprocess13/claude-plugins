@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.144.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
+
+GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
+
+- **`lib/operator-root.sh`.** `operator_resolve_repos_root` keeps the order (environment, ticket env file, `./CLAUDE.md`) but, when `./CLAUDE.md` declares a `REPOS_ROOT` and the root came from somewhere else, the two must name the same directory (compared by physical path). A mismatch exits 3, prints both values and records nothing. `operator_require_manifest` requires the ticket's manifest to exist under the root: a ticket held at a gate always has one, so a missing manifest is exit 3, never a create.
+- **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
+- `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
+
 ## 0.143.0 (2026-11-22) — a bug fix's regression test is checked against the code before the fix
 
 next.md Step 24 item 1. A regression test that passes on the old code proves nothing, and until now only the implementing agent judged its own test. This increment measures; it blocks nothing.

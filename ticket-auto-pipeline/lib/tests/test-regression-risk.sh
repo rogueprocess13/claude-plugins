@@ -356,6 +356,56 @@ test_ack_clears_and_records_provenance() {
   grep -q '|IMPLEMENT|regression-risk|done|acknowledged: risk=.*; provenance=human; by=Test Operator; at=' "$t/logs/${TID}-pipeline.log"
 }
 
+# GitHub #818: a person runs the command from project A's tickets root with
+# project B's REPOS_ROOT still exported. Refused, both roots named, nothing
+# written to either manifest and no _adhoc manifest created in B.
+test_ack_refuses_repos_root_mismatch() {
+  local a b out rc=0 before_a
+  a=$(_mk)
+  b=$(mktemp -d -p "$WORK")
+  mkdir -p "$b/repos"
+  _write_notes "$a" UNACKNOWLEDGED
+  printf '`REPOS_ROOT` = `%s`\n' "$a/repos" >"$a/tickets/CLAUDE.md"
+  before_a=$(cat "$(_manifest "$a")")
+  out=$(cd "$a/tickets" && _env "$a" REPOS_ROOT="$b/repos" python3 "$WORK/pty_run.py" "x" \
+    bash "$ACK_SH" "$TID" --notes "$(_notes "$a")") || rc=$?
+  [ "$rc" -eq 3 ] || {
+    echo "rc=$rc: $out" >&2
+    return 1
+  }
+  grep -qF "environment: $b/repos" <<<"$out" || return 1
+  grep -qF "CLAUDE.md: $a/repos" <<<"$out" || return 1
+  [ "$(cat "$(_manifest "$a")")" = "$before_a" ] || return 1
+  [ ! -e "$b/repos/.ticket-auto" ]
+}
+
+# GitHub #818: no manifest under the resolved root is an error, never a
+# create (the old path minted a fresh _adhoc manifest there).
+test_ack_refuses_missing_manifest() {
+  local t out rc=0
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  rm -rf "$t/repos/.ticket-auto"
+  out=$(_ack "$t" "x") || rc=$?
+  [ "$rc" -eq 3 ] || {
+    echo "rc=$rc: $out" >&2
+    return 1
+  }
+  grep -q "no manifest under REPOS_ROOT=" <<<"$out" || return 1
+  [ ! -e "$t/repos/.ticket-auto" ]
+}
+
+# GitHub #818: the prompt names the manifest before the id is typed.
+test_ack_prompt_names_target_manifest() {
+  local t out
+  t=$(_mk)
+  _write_notes "$t" UNACKNOWLEDGED
+  out=$(_ack "$t" "$(_id "$t")") || return 1
+  grep -qF "Recording in: $(_manifest "$t") (REPOS_ROOT from the environment)" <<<"$out" || return 1
+  # ...and it is shown before the question.
+  [ "$(grep -nF 'Recording in:' <<<"$out" | cut -d: -f1)" -le "$(grep -n 'anything else aborts' <<<"$out" | cut -d: -f1)" ]
+}
+
 test_wrong_answer_records_nothing() {
   local t
   t=$(_mk)
@@ -886,6 +936,9 @@ _run "an unparseable manifest, a NUL byte and failing tools never pass the gate"
 _run "a repeated hold emits gate-held once per risk" test_hold_event_once_per_risk
 _run "the gate does not evaluate without REPOS_ROOT (exit 2)" test_check_needs_repos_root
 _run "the actuator clears the gate and records provenance, who and when" test_ack_clears_and_records_provenance
+_run "an exported REPOS_ROOT that disagrees with ./CLAUDE.md is refused (#818)" test_ack_refuses_repos_root_mismatch
+_run "no manifest under REPOS_ROOT is refused, never created (#818)" test_ack_refuses_missing_manifest
+_run "the prompt names the manifest the acknowledgement goes into (#818)" test_ack_prompt_names_target_manifest
 _run "a wrong, empty or generic answer records nothing" test_wrong_answer_records_nothing
 _run "a repeat acknowledgement is a no-op" test_repeat_ack_is_noop
 _run "no section and nothing recorded: nothing to acknowledge (exit 5)" test_no_section_nothing_to_ack
