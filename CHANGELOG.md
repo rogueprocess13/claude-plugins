@@ -17,13 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.146.0 (2026-11-26) — the post-mortem reads only the current run
+## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
 
 GitHub #821. `_derive_exit_path` grepped the whole ticket log for `META|gate-stop|fail`, so a gate-stop from an earlier, held run became the exit path of a later run that completed normally, and `_detect_mislabel` then flagged a Smooth outcome as `mislabeled_outcome: true`.
 
 - **`lib/exit-path.sh`.** New `_exitpath_run_window LOG` prints the lines from the last `META|run-id` to EOF (the boundary `run_summary_window` and `pr-evidence.sh` already use; the whole log when there is no run-id). `_derive_exit_path` reads its gate-stop, router-error and fleet-kill checks from that window.
 - **`lib/pipeline-postmortem.sh`.** Signal collection, the mislabel check and the issue body's gate-stop text read the same window (a copy in the post-mortem's temp dir). Heartbeat-file signals are unchanged.
 - Tests: two-run cases in `lib/tests/test-exit-path.sh` and `lib/tests/test-pipeline-postmortem.sh`.
+
+## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
+
+GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
+
+- **`lib/operator-root.sh`.** `operator_resolve_repos_root` keeps the order (environment, ticket env file, `./CLAUDE.md`) but, when `./CLAUDE.md` declares a `REPOS_ROOT` and the root came from somewhere else, the two must name the same directory (compared by physical path). A mismatch exits 3, prints both values and records nothing. `operator_require_manifest` requires the ticket's manifest to exist under the root: a ticket held at a gate always has one, so a missing manifest is exit 3, never a create.
+- **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
+- **Nothing unplain reaches the terminal.** Both roots and the manifest path are printed beside the prompt, so each must pass `regression_risk_plain` (no control characters, ANSI escapes, C1, zero-width or direction marks; valid UTF-8) first. A value that does not is exit 3 and is never printed; a host where the check cannot run (no `iconv`) is refused the same way.
+- `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
 
 ## 0.145.0 (2026-11-26) — an exported BASE_BRANCH is the default base again
 

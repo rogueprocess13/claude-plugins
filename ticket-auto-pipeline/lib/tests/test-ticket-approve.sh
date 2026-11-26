@@ -107,7 +107,7 @@ test_approve_planned_ticket() {
   fi
 }
 
-# ── approve: ad-hoc ticket (no pre-existing manifest) ────────────────────────
+# ── approve: ad-hoc ticket (the _adhoc manifest flow.sh wrote on its way) ───
 
 test_approve_adhoc_ticket() {
   local tmpdir
@@ -115,7 +115,9 @@ test_approve_adhoc_ticket() {
   mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
   local marker="$tmpdir/mutated.marker"
   _stub_lib_dir "$tmpdir/lib" "$marker" state-approve Approve state-ready Ready '[]' '[{"id":"lbl-approved","name":"approved"}]'
-  # Deliberately no _seed_manifest call.
+  # An ad-hoc ticket held at the gate: flow.sh created its _adhoc manifest.
+  (REPOS_ROOT="$tmpdir/repos" && export REPOS_ROOT && source "$LIB_DIR/manifest-write.sh" &&
+    ensure_ticket_manifest WIL-1) >/dev/null 2>&1
   _seed_plan "$tmpdir" WIL-1
 
   local rc=0
@@ -163,20 +165,12 @@ test_reject_clears_approval() {
   fi
 }
 
-# ── approve: a well-formed ticket ID with no tracker presence still succeeds ──
-# tracker-flow-projection-cutover: flow.sh performs no tracker I/O at all, so
-# it has no way to learn that a ticket ID has no corresponding Linear issue —
-# "A transition succeeds with the tracker unreachable" is the explicit spec
-# requirement (flow-local-transitions). This test used to pin the opposite
-# (a stubbed get_issue failure propagating to a non-zero approve.sh exit),
-# which is now a structurally impossible outcome: nothing in the approve
-# path reads the tracker any more. Repurposed to pin the new, correct
-# behavior — ensure_ticket_manifest ad-hoc-provisions the ticket and the
-# approval succeeds — rather than deleted outright, since "approve an
-# untracked ticket ID" is still a real, exercised path (the ad-hoc-manifest
-# test below covers the identical shape; this one is kept for the explicit
-# non-existent-ticket framing a future reader would otherwise wonder about).
-test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
+# ── approve: no manifest under the resolved root is refused (GitHub #818) ────
+# A ticket held at the entry gate always has a manifest: flow.sh wrote it on
+# the way there. So approve.sh no longer creates one: a missing manifest means
+# REPOS_ROOT names the wrong project, and creating a fresh _adhoc manifest
+# there recorded the approval where the ticket's own pipeline never looks.
+test_approve_refused_without_manifest() {
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs" "$tmpdir/repos"
@@ -186,15 +180,111 @@ test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
   out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
     human_pty NOPE-1 bash "$APPROVE_SH" NOPE-1 2>&1) || rc=$?
-  local manifest="$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/NOPE-1/planner/manifest.json"
-  local approved
-  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  local created=false
+  [ ! -e "$tmpdir/repos/.ticket-auto" ] || created=true
   rm -rf "$tmpdir"
 
-  if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && grep -q "approved=true" <<<"$out"; then
-    _pass "approve.sh: a ticket ID absent from the tracker still approves (ad-hoc manifest)"
+  if [ "$rc" -eq 3 ] && [ "$created" = "false" ] && grep -q "no manifest under REPOS_ROOT=" <<<"$out" &&
+    ! grep -q "approved=true" <<<"$out"; then
+    _pass "approve.sh: a ticket with no manifest under REPOS_ROOT is refused, nothing created"
   else
-    _fail "approve.sh: should ad-hoc-approve regardless of tracker presence (rc=$rc approved=$approved out=$out)"
+    _fail "approve.sh: should refuse a ticket with no manifest (rc=$rc created=$created out=$out)"
+  fi
+}
+
+# ── approve: an exported REPOS_ROOT that disagrees with ./CLAUDE.md (#818) ───
+# The person runs the command from project A's tickets root while their shell
+# still exports project B's REPOS_ROOT. Both projects hold a manifest for the
+# ticket. Nothing may be written to either; both roots are named.
+test_approve_refused_on_repos_root_mismatch() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/A/tickets/logs" "$tmpdir/A/repos" "$tmpdir/B/repos"
+  _seed_manifest "$tmpdir/A/repos" WIL-1
+  _seed_manifest "$tmpdir/B/repos" WIL-1
+  _seed_plan "$tmpdir/A/tickets" WIL-1
+  printf '# Project A\n\n`REPOS_ROOT` = `%s`\n' "$tmpdir/A/repos" >"$tmpdir/A/tickets/CLAUDE.md"
+  local before_a before_b
+  before_a=$(cat "$tmpdir/A/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  before_b=$(cat "$tmpdir/B/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+
+  local rc=0 out
+  out=$(cd "$tmpdir/A/tickets" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/A/tickets/logs" REPOS_ROOT="$tmpdir/B/repos" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  local after_a after_b
+  after_a=$(cat "$tmpdir/A/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  after_b=$(cat "$tmpdir/B/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  local a_root="$tmpdir/A/repos" b_root="$tmpdir/B/repos"
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ "$before_a" = "$after_a" ] && [ "$before_b" = "$after_b" ] &&
+    grep -qF "environment: $b_root" <<<"$out" && grep -qF "CLAUDE.md: $a_root" <<<"$out" &&
+    ! grep -q "approved=true" <<<"$out"; then
+    _pass "approve.sh: an exported REPOS_ROOT that disagrees with ./CLAUDE.md is refused, both named"
+  else
+    _fail "approve.sh: should refuse a REPOS_ROOT mismatch (rc=$rc out=$out)"
+  fi
+}
+
+# ── approve: a REPOS_ROOT that is not plain text is refused, never shown ─────
+# The root and the manifest path are printed beside the prompt; an escape
+# sequence in them could rewrite what the person reads (#818 review).
+test_approve_refused_on_non_plain_repos_root() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  local root="$tmpdir/r"$'\e[2J\e[H'"Approve WIL-1"
+  mkdir -p "$root"
+  _seed_manifest "$root" WIL-1
+  _seed_plan "$tmpdir" WIL-1
+
+  local rc=0 out
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$root" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  local approved
+  approved=$(jq -r '.approved // empty' "$root/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null)
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ -z "$approved" ] && [[ "$out" != *$'\e'* ]] &&
+    grep -q "is not plain text" <<<"$out"; then
+    _pass "approve.sh: a REPOS_ROOT holding an escape sequence is refused and never printed"
+  else
+    _fail "approve.sh: should refuse a non-plain REPOS_ROOT (rc=$rc approved=$approved out=$(cat -v <<<"$out"))"
+  fi
+}
+
+# ── approve: the prompt names the manifest before the id is typed (#818) ─────
+# REPOS_ROOT from ./CLAUDE.md alone (nothing exported), and an exported one
+# that names the same directory (trailing slash) is not a mismatch.
+test_approve_prompt_names_target_manifest() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/tickets/logs" "$tmpdir/repos"
+  _seed_manifest "$tmpdir/repos" WIL-1
+  _seed_plan "$tmpdir/tickets" WIL-1
+  printf 'REPOS_ROOT = %s\n' "$tmpdir/repos" >"$tmpdir/tickets/CLAUDE.md"
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json"
+
+  local rc=0 out rc2=0 out2
+  out=$(cd "$tmpdir/tickets" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/tickets/logs" FLOW_SH="$FLOW_SH_REAL" TICKET_TMP_DIR="$tmpdir/scratch" \
+    human_pty WIL-1 env -u REPOS_ROOT bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  local approved
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  # Same directory, spelled with a trailing slash: agrees, already approved.
+  out2=$(cd "$tmpdir/tickets" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/tickets/logs" REPOS_ROOT="$tmpdir/repos/" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$APPROVE_SH" WIL-1 2>&1) || rc2=$?
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] &&
+    grep -qF "Recording in: $manifest (REPOS_ROOT from the ./CLAUDE.md)" <<<"$out" &&
+    [ "$rc2" -eq 0 ] && grep -q "already_approved=true" <<<"$out2"; then
+    _pass "approve.sh: the prompt names the manifest; REPOS_ROOT from ./CLAUDE.md; same dir is no mismatch"
+  else
+    _fail "approve.sh: prompt should name the target manifest (rc=$rc approved=$approved rc2=$rc2 out=$out out2=$out2)"
   fi
 }
 
@@ -663,7 +753,10 @@ test_operator_text_names_terminal_command() {
 test_approve_planned_ticket
 test_approve_adhoc_ticket
 test_reject_clears_approval
-test_approve_well_formed_ticket_with_no_tracker_presence_succeeds
+test_approve_refused_without_manifest
+test_approve_refused_on_repos_root_mismatch
+test_approve_prompt_names_target_manifest
+test_approve_refused_on_non_plain_repos_root
 test_approve_clears_needs_info_flag
 test_approve_noop_when_needs_info_absent
 test_approve_usage_error_on_missing_arg
