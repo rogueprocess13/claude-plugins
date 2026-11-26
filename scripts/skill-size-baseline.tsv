@@ -5,9 +5,11 @@ grill-me/skills/grill-me/SKILL.md	14428	282
 # allow-growth: seam-gate-safety G6 — the agent must know a format retry reads no file and changes no finding, code, quote or verdict (0.120.0)
 ticket-auto-pipeline/agents/dor-semantic-agent.md	1711	10
 ticket-auto-pipeline/agents/guidance-extractor-agent.md	898	2
-ticket-auto-pipeline/agents/ticket-appraise-agent.md	659	2
+# allow-growth: #816 — the appraise agent names the commit, comment and app-knowledge.md writes ticket-appraise-exec requires, and its self-review and failure rules (0.146.0)
+ticket-auto-pipeline/agents/ticket-appraise-agent.md	1577	9
 ticket-auto-pipeline/agents/ticket-gate-reconcile-agent.md	818	2
-ticket-auto-pipeline/agents/ticket-implement-agent.md	694	2
+# allow-growth: #816 — the implement agent names the save_comment feedback comment its skill posts (0.146.0)
+ticket-auto-pipeline/agents/ticket-implement-agent.md	783	2
 ticket-auto-pipeline/agents/ticket-maintenance-agent.md	2627	28
 ticket-auto-pipeline/agents/ticket-plan-review-agent.md	1394	8
 ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
@@ -59,7 +61,7 @@ ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	7073	97
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26130	456
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26086	453
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	34911	511
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	1318	25
