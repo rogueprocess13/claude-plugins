@@ -711,7 +711,7 @@ test_gate_held_no_manifest_logs_distinct_reason() {
 # (lib/plan-binding.sh) unless `unbound`; the plan is then changed as named.
 # Prints RESUME_STEP; with DR_KEEP_LOG set, the log after the run too.
 _gate_held_resume() {
-  local prov="$1" plan="${2:-bound}" tmpdir tid="GHA-1" extra='{}' rec
+  local prov="$1" plan="${2:-bound}" hold="${3:-entry}" tmpdir tid="GHA-1" extra='{}' rec
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs" "$tmpdir/repos/.ticket-auto/initiatives/_index" \
     "$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/$tid/planner" "$tmpdir/$tid--test"
@@ -733,9 +733,22 @@ _gate_held_resume() {
     echo "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex"
     echo "2026-07-05T10:00:02Z|GATE|gate|fail|held: complex ticket"
   } >"$tmpdir/logs/${tid}-pipeline.log"
+  # GitHub #820: the reapprove gate held the pr-iterate loop instead.
+  [ "$hold" != "reapprove" ] || {
+    echo "2026-07-05T10:00:03Z|GATE|gate|done|approved"
+    echo "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|Smooth"
+    echo "2026-07-05T10:00:05Z|VERIFY|verify|done|PASS"
+    echo "2026-07-05T10:00:06Z|PR-REVIEW|pr-review|done|WARN"
+    echo "2026-07-05T10:00:07Z|PR-REVIEW|iterate-linear|done|Ready; policy approval in manifest"
+    echo "2026-07-05T10:00:08Z|GATE|reapprove|fail|held: the amended plan needs a person's approval"
+  } >>"$tmpdir/logs/${tid}-pipeline.log"
   local out
   out=$(cd "$tmpdir" && REPOS_ROOT="$tmpdir/repos" bash "$DETECT_SH" "$tid" 2>/dev/null)
   _field "$out" RESUME_STEP
+  if [ -n "${DR_RERUN:-}" ]; then
+    out=$(cd "$tmpdir" && REPOS_ROOT="$tmpdir/repos" bash "$DETECT_SH" "$tid" 2>/dev/null)
+    _field "$out" RESUME_STEP
+  fi
   [ -z "${DR_KEEP_LOG:-}" ] || cat "$tmpdir/logs/${tid}-pipeline.log"
   rm -rf "$tmpdir"
 }
@@ -785,6 +798,41 @@ test_gate_held_policy_approval_stays_held() {
     echo "expected GATE_STILL_HELD with no approval, got $step"
     return 1
   }
+}
+
+# GitHub #820: a reapprove hold (ticket-pr-iterate's policy approval of a
+# ticket that needs a person) is lifted by a person's approval of the
+# amended plan only, and resumes at the re-implement, not gate-reconcile.
+test_reapprove_held_human_approval_resumes_at_reimplement() {
+  local out
+  out=$(DR_KEEP_LOG=1 DR_RERUN=1 _gate_held_resume human bound reapprove)
+  [ "$(sed -n 1p <<<"$out")" = "STEP_4" ] && [ "$(sed -n 2p <<<"$out")" = "STEP_4" ] &&
+    [ "$(grep -c '|GATE|reapprove|done|released' <<<"$out")" = "1" ] || {
+    echo "expected STEP_4 twice and one release line, got: $out"
+    return 1
+  }
+}
+test_reapprove_held_policy_or_edited_plan_stays_held() {
+  local step args
+  for args in "policy bound" "none bound" "human edited" "human unbound"; do
+    # shellcheck disable=SC2086
+    step=$(_gate_held_resume $args reapprove)
+    [ "$step" = "GATE_STILL_HELD" ] || {
+      echo "$args: expected GATE_STILL_HELD, got $step"
+      return 1
+    }
+  done
+}
+test_reapprove_passed_resumes_at_reimplement() {
+  local out
+  out=$(_detect_resume_with_log "RA-1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|GATE|gate|done|approved" \
+    "2026-07-05T10:00:02Z|IMPLEMENT|implement|done|Smooth" \
+    "2026-07-05T10:00:03Z|VERIFY|verify|done|PASS" \
+    "2026-07-05T10:00:04Z|PR-REVIEW|pr-review|done|WARN" \
+    "2026-07-05T10:00:05Z|GATE|reapprove|done|")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_4" ]
 }
 
 test_gate_gate_done_still_advances_past_gate_held() {
@@ -1591,6 +1639,9 @@ for fn in \
   test_merge_policy_empty_on_log_without_field \
   test_branch_context_empty_on_legacy_log \
   test_resume_pr_warn_routes_to_step_4_6 \
+  test_reapprove_held_human_approval_resumes_at_reimplement \
+  test_reapprove_held_policy_or_edited_plan_stays_held \
+  test_reapprove_passed_resumes_at_reimplement \
   test_resume_reimplement_after_verify_routes_to_step_4_5 \
   test_resume_pr_ok_not_rerouted_by_warn_branch \
   test_resume_step_done_on_completed_outcome \

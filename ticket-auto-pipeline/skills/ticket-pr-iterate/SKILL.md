@@ -183,7 +183,7 @@ Append to `{ticket-dir}/notes.md` session log:
 ### {today's date} — PR review iteration #{N}
 - Source: PR #{PR_NUMBER} | Gaps: {N}
 - Updated {ARTIFACT} with PR Review #{N} section
-- Linear → Ready, `approved` label added
+- Stage → Ready, policy approval in manifest
 ```
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-notes done "notes.md updated"
@@ -201,9 +201,9 @@ _rc=$?
 # pr-iterate carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
-This sets state → `Ready`, adds `approved`, and clears `reviewed`/`rejected`. All other labels (`simple`/`complex`, `Smooth`/`Rough`/`Hard`) are preserved.
+Stage → `Ready`, a `policy` approval in the manifest, `reviewed`/`rejected` cleared; no label added (complex: needs `approve.sh`).
 
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-linear done "Ready + approved"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-linear done "Ready + policy approval"
 
 ---
 
@@ -217,7 +217,7 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW plan-iterate-done done "Iteration #{
 **Source:** PR #{PR_NUMBER} ({PR_URL})
 **Gaps found:** {N} (see details below)
 **Plan updated:** {ARTIFACT} — `## PR Review #{N}` section appended
-**Linear:** Ready + `approved`
+**Stage:** Ready (policy approval)
 
 ### Gaps from review
 
