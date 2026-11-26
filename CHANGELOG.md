@@ -17,6 +17,13 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.145.0 (2026-11-26) — an exported BASE_BRANCH is the default base again
+
+GitHub #817. `config.sh` documents `BASE_BRANCH=main /ticket-auto <ID>`, but a run started through the preamble opened on `develop` anyway: `ticket_preamble_run` declared `local BASE_BRANCH` (empty, from the log) before sourcing `branch-resolve.sh`, so `config.sh`'s `${BASE_BRANCH:-develop}` saw the empty local and fell back. The decision was then recorded in `META|branch-context` and rehydrated on every retry.
+
+- **`lib/ticket-preamble.sh`** saves the caller's `BASE_BRANCH` before the local declaration and restores it before resolving. It is still only the default (precedence 3): `--branch` and an epic Branch Directive win as before, and a recorded branch context is still rehydrated, never re-resolved.
+- **Tests.** `lib/tests/test-ticket-preamble.sh` covers the exported value, the `develop` fallback and `--branch` winning over the variable.
+
 ## 0.144.0 (2026-11-26) — typed test passwords are redacted from Playwright MCP snapshots
 
 GitHub #819. Playwright MCP writes every `browser_snapshot` as YAML under `.playwright-mcp/` in the tickets root, and a filled password field is recorded in clear text. Every browser verify that signed in left the test password on disk.

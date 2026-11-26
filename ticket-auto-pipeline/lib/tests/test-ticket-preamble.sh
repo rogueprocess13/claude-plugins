@@ -119,6 +119,69 @@ test_writes_env_file_log_and_branch_context() {
   return $ok
 }
 
+# #817: with no --branch flag and no epic directive, an exported BASE_BRANCH
+# is the default base. The stub below does what branch-resolve.sh does at
+# precedence 3 — source config.sh and read ${BASE_BRANCH:-develop} — so the
+# preamble's own local BASE_BRANCH must not hide the caller's value.
+_stub_default_resolver() {
+  cat >"$_SANDBOX/lib/branch-resolve.sh" <<'STUB'
+#!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+resolve_branch_context() {
+  echo "$*" >>"${BRANCH_RESOLVE_CALLS:-/dev/null}"
+  local base="${BASE_BRANCH:-develop}" src=default
+  if [ "$2" = "--branch" ]; then base="$3"; src=flag; fi
+  cat <<BLOCK
+BRANCH_CONTEXT_RESULT:
+  TICKET_BRANCH: feat/test-1
+  BASE_BRANCH: ${base}
+  INTEGRATION_BRANCH: ${base}
+  BRANCH_SOURCE: ${src}
+  UAT_POLICY: per-ticket
+  MERGE_POLICY:
+BLOCK
+}
+STUB
+}
+
+test_env_base_branch_is_the_default() {
+  _sandbox_new
+  _stub_default_resolver
+  local out rc=0
+  out=$(BASE_BRANCH=main _preamble TEST-PRE-B1) || rc=$?
+  local log="$_SANDBOX/logs/TEST-PRE-B1-pipeline.log"
+  [ "$rc" -eq 0 ] &&
+    [ "$(_field "$out" BASE_BRANCH)" = "main" ] &&
+    grep -q '|META|branch-context|info|base=main;integration=main;source=default;' "$log"
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_no_env_base_branch_falls_back_to_develop() {
+  _sandbox_new
+  _stub_default_resolver
+  local out rc=0
+  out=$(unset BASE_BRANCH && _preamble TEST-PRE-B2) || rc=$?
+  [ "$rc" -eq 0 ] && [ "$(_field "$out" BASE_BRANCH)" = "develop" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_branch_flag_wins_over_env_base_branch() {
+  _sandbox_new
+  _stub_default_resolver
+  local out rc=0
+  out=$(BASE_BRANCH=main _preamble TEST-PRE-B3 BRANCH_FLAG=release/x) || rc=$?
+  [ "$rc" -eq 0 ] &&
+    [ "$(_field "$out" BASE_BRANCH)" = "release/x" ] &&
+    [ "$(_field "$out" BRANCH_SOURCE)" = "flag" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
 # The schema line must be the log's first line. If a gate-stop lands in an
 # empty log first, detect-resume.sh reads the file as a v0 log and applies
 # grace — silently, and with the gate-stop no longer first in the cascade.
@@ -602,6 +665,9 @@ test_preflight_numeric_guard_is_in_the_script() {
 }
 
 _run "writes env file, log and branch context" test_writes_env_file_log_and_branch_context
+_run "env BASE_BRANCH is the default base (#817)" test_env_base_branch_is_the_default
+_run "no env BASE_BRANCH falls back to develop" test_no_env_base_branch_falls_back_to_develop
+_run "--branch flag wins over env BASE_BRANCH" test_branch_flag_wins_over_env_base_branch
 _run "schema line precedes a branch gate-stop" test_schema_line_precedes_a_branch_gate_stop
 _run "non-directive branch failure is not a gate-stop" test_non_directive_branch_failure_is_not_a_gate_stop
 _run "re-entry rehydrates and does not re-resolve" test_reentry_rehydrates_and_does_not_re_resolve
