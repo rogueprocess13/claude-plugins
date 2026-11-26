@@ -35,16 +35,38 @@
 # firing on real evidence is now visible in the log it fired against,
 # instead of only in this function's return value.
 
-# ── Exit-path derivation (SC1 — verbatim from pipeline-postmortem.sh) ──────────
+# ── Current-run window (#821) ──────────────────────────────────────────────────
+
+# _exitpath_run_window LOG_FILE
+# Prints the current run's lines: from the last `META|run-id` line
+# (inclusive) to EOF, the same boundary run-summary.sh's
+# `run_summary_window` and pr-evidence.sh's `_pe_window` use. A log with no
+# run-id line (pre-run-identity) is printed whole. Without this window a
+# gate-stop from an earlier, held run was reported as the exit path of a
+# later run that completed normally (#821).
+_exitpath_run_window() {
+  local log_file="$1" start
+  [ -f "$log_file" ] || return 0
+  start=$(grep -n '|META|run-id|info|' "$log_file" 2>/dev/null | tail -1 | cut -d: -f1) || start=""
+  if [ -n "$start" ]; then
+    tail -n "+${start}" "$log_file" 2>/dev/null
+  else
+    cat "$log_file" 2>/dev/null
+  fi
+}
+
+# ── Exit-path derivation (SC1 — from pipeline-postmortem.sh) ──────────────────
+# Reads only the current run's window of $LOG_FILE (#821).
 
 _derive_exit_path() {
-  local tmp="$1"
+  local tmp="$1" _win
+  _win=$(_exitpath_run_window "$LOG_FILE")
 
   # Gate-stop takes priority, but detect exhaustion wrapped as gate-stop
   # (F15: production writes exhaustion as META|gate-stop|fail|VERIFY_EXHAUSTED)
-  if grep -q '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null; then
+  if grep -q '|META|gate-stop|fail|' <<<"$_win" 2>/dev/null; then
     local _code
-    _code=$(grep '|META|gate-stop|fail|' "$LOG_FILE" | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
+    _code=$(grep '|META|gate-stop|fail|' <<<"$_win" | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
     case "$_code" in
     VERIFY_EXHAUSTED) echo "verify-exhausted" ;;
     PR_FEEDBACK_EXHAUSTED) echo "pr-feedback-exhausted" ;;
@@ -55,13 +77,13 @@ _derive_exit_path() {
   fi
 
   # Router error
-  if grep -q '|META|router-error|' "$LOG_FILE" 2>/dev/null; then
+  if grep -q '|META|router-error|' <<<"$_win" 2>/dev/null; then
     echo "router-error"
     return
   fi
 
   # Fleet kill
-  if grep -q 'stopped: fleet-kill' "$LOG_FILE" 2>/dev/null; then
+  if grep -q 'stopped: fleet-kill' <<<"$_win" 2>/dev/null; then
     echo "fleet-kill"
     return
   fi

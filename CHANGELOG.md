@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.147.0 (2026-11-26) — the reapprove gate asks whose approval it is
+## 0.148.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
 
@@ -25,6 +25,14 @@ GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan a
 - **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
 - **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
 - **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+## 0.147.0 (2026-11-26) — the post-mortem reads only the current run
+
+GitHub #821. `_derive_exit_path` grepped the whole ticket log for `META|gate-stop|fail`, so a gate-stop from an earlier, held run became the exit path of a later run that completed normally, and `_detect_mislabel` then flagged a Smooth outcome as `mislabeled_outcome: true`.
+
+- **`lib/exit-path.sh`.** New `_exitpath_run_window LOG` prints the lines from the last `META|run-id` to EOF (the boundary `run_summary_window` and `pr-evidence.sh` already use; the whole log when there is no run-id). `_derive_exit_path` reads its gate-stop, router-error and fleet-kill checks from that window.
+- **`lib/pipeline-postmortem.sh`.** Signal collection, the mislabel check and the issue body's gate-stop text read the same window (a copy in the post-mortem's temp dir). Heartbeat-file signals are unchanged.
+- Tests: two-run cases in `lib/tests/test-exit-path.sh` and `lib/tests/test-pipeline-postmortem.sh`.
+
 ## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
 
 GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
