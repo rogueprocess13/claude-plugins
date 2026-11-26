@@ -203,6 +203,31 @@ if [ -s "$LOG_FILE" ] && declare -f plan_review_state >/dev/null 2>&1; then
   PLAN_REVIEW=$(plan_review_state "$LOG_FILE" 2>/dev/null || echo off)
 fi
 
+# _reapprove_since_review <LOG> — the reapprove gate's latest result after
+# the last PR-review terminal: `held` (GATE|reapprove|fail|held: …),
+# `passed` (GATE|reapprove|done|) or `none`. Never fails (set -e/pipefail).
+_REAPPROVE_HELD=0
+_reapprove_since_review() {
+  local log="$1" ln_pr ln_held ln_done
+  ln_pr=$(grep -n '^[^|]*|PR-REVIEW|pr-review|done|' "$log" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  if [ -z "$ln_pr" ]; then
+    echo none
+    return 0
+  fi
+  ln_held=$(grep -n '^[^|]*|GATE|reapprove|fail|held' "$log" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  ln_done=$(grep -n '^[^|]*|GATE|reapprove|done|' "$log" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  ln_held=${ln_held:-0}
+  ln_done=${ln_done:-0}
+  if [ "$ln_held" -gt "$ln_pr" ] && [ "$ln_held" -gt "$ln_done" ]; then
+    echo held
+  elif [ "$ln_done" -gt "$ln_pr" ]; then
+    echo passed
+  else
+    echo none
+  fi
+  return 0
+}
+
 if [ ! -s "$LOG_FILE" ]; then
   RESUME_STEP="STEP_1"
 else
@@ -250,6 +275,18 @@ else
     # again (#407). Without this, the stale VERIFY PASS / PR-REVIEW WARN lines
     # below still match and resume skips straight to STEP_5.
     RESUME_STEP="STEP_4_5"
+  elif _ra_since_review=$(_reapprove_since_review "$LOG_FILE") &&
+    [ "$_ra_since_review" = "held" ]; then
+    # GitHub #820: the reapprove gate held the pr-iterate loop for a
+    # person's approval of the amended plan. Resolved like an entry-gate
+    # hold below, but a release resumes at the re-implement (STEP_4), not at
+    # gate-reconcile.
+    RESUME_STEP="GATE_HELD"
+    _REAPPROVE_HELD=1
+  elif [ "$_ra_since_review" = "passed" ]; then
+    # The reapprove gate passed after the last PR review and nothing was
+    # implemented since: the loop body's next step is the re-implement.
+    RESUME_STEP="STEP_4"
   elif _last_pr=$(grep '^[^|]*|PR-REVIEW|pr-review|done|' "$LOG_FILE" | tail -1) &&
     [[ "$_last_pr" == *'|pr-review|done|WARN'* ]]; then
     # Latest PR-review verdict is WARN and nothing was re-implemented since:
@@ -648,7 +685,14 @@ if [ "$RESUME_STEP" = "GATE_HELD" ]; then
       fi
     fi
   fi
-  if [ "$GATE_HELD_PLAN" = "match" ]; then
+  if [ "$GATE_HELD_PLAN" = "match" ] && [ "$_REAPPROVE_HELD" = "1" ]; then
+    # A person approved the amended plan: the reapprove gate's hold is over.
+    # The release line closes the hold for pipeline-finalize.sh and for the
+    # next resume (`passed` above), which re-implements.
+    RESUME_STEP="STEP_4"
+    _plog "$LOG_FILE" "GATE" "reapprove" "done" "released: a person's approval (resume)"
+    hb_gate "resume-point" "ok" "reapprove gate was held but a person approved the amended plan — resuming at STEP_4 (re-implement)"
+  elif [ "$GATE_HELD_PLAN" = "match" ]; then
     RESUME_STEP="STEP_3_5"
     hb_gate "resume-point" "ok" "gate was held but manifest records approval — resuming at STEP_3_5 (comment reconciliation)"
   else
