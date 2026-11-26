@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.146.0 (2026-11-26) — the reapprove gate asks whose approval it is
+## 0.147.0 (2026-11-26) — the reapprove gate asks whose approval it is
 
 GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan and fires `pr-iterate --provenance policy`. The reapprove gate that follows accepted that policy approval for any ticket and released it as `human`, so a complex ticket's amended plan went back to IMPLEMENT with no person looking at it, and every consumer saw a human release no person made.
 
@@ -25,6 +25,15 @@ GitHub #820 and #824. On a PR-review WARN, `ticket-pr-iterate` amends the plan a
 - **`--mode implement`** loses its rework exception (a `policy` approval let through when the log had a completed implementation), so `/ticket-implement` without the router agrees with the reapprove gate.
 - **`detect-resume.sh`** resumes a reapprove hold once a person's approval of the plan on disk is recorded: `RESUME_STEP=STEP_4` (re-implement, not gate-reconcile), with one `GATE|reapprove|done|released: …` line. A reapprove pass after the last PR review with nothing implemented since also resumes at STEP_4 instead of re-reviewing. `pipeline-finalize.sh` counts `GATE|reapprove|done|` as closing a gate hold.
 - **Docs (#824).** `ticket-pr-iterate` and the `ticket-auto` router said the `pr-iterate` trigger adds the `approved` label; it adds none (`adds: []`). They now say it moves the stage to Ready and records a policy approval in the manifest, and the router text says what to do on a reapprove hold.
+## 0.146.0 (2026-11-26) — an exported REPOS_ROOT from another project no longer records an approval there
+
+GitHub #818. `approve.sh` and `regression-ack.sh` took `REPOS_ROOT` from the environment first and never checked it. A shell that still exported another project's root got the approval (and the regression acknowledgement) written into a fresh `_adhoc` manifest in that other project, both scripts reported success, and the ticket's own manifest stayed held.
+
+- **`lib/operator-root.sh`.** `operator_resolve_repos_root` keeps the order (environment, ticket env file, `./CLAUDE.md`) but, when `./CLAUDE.md` declares a `REPOS_ROOT` and the root came from somewhere else, the two must name the same directory (compared by physical path). A mismatch exits 3, prints both values and records nothing. `operator_require_manifest` requires the ticket's manifest to exist under the root: a ticket held at a gate always has one, so a missing manifest is exit 3, never a create.
+- **Both scripts** use it and name the target in the prompt, before the id is typed: `Recording in: <manifest path> (REPOS_ROOT from the <source>)`.
+- **Nothing unplain reaches the terminal.** Both roots and the manifest path are printed beside the prompt, so each must pass `regression_risk_plain` (no control characters, ANSI escapes, C1, zero-width or direction marks; valid UTF-8) first. A value that does not is exit 3 and is never printed; a host where the check cannot run (no `iconv`) is refused the same way.
+- `approve.sh` no longer calls `ensure_ticket_manifest`; a ticket with no manifest anywhere (never run through `flow.sh`) is now refused instead of ad-hoc-provisioned. `reject.sh` is unchanged.
+
 ## 0.145.0 (2026-11-26) — an exported BASE_BRANCH is the default base again
 
 GitHub #817. `config.sh` documents `BASE_BRANCH=main /ticket-auto <ID>`, but a run started through the preamble opened on `develop` anyway: `ticket_preamble_run` declared `local BASE_BRANCH` (empty, from the log) before sourcing `branch-resolve.sh`, so `config.sh`'s `${BASE_BRANCH:-develop}` saw the empty local and fell back. The decision was then recorded in `META|branch-context` and rehydrated on every retry.
