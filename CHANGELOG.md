@@ -25,6 +25,15 @@ Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright
 - **Supervisor.** After a phase-dispatch VERIFY worker is reaped, the scrub runs on its own when post-spawn did not run or returned `ok=False`. It never changes the phase transition; an exception is logged and ignored.
 - **Tests.** `tests/test_router_step_parity.py` `PlaywrightScrubParityTest` runs `router-step.sh post-spawn VERIFY` and the Python call over the same fixtures (real script, and stubbed outputs: non-zero exit, empty, `redacted=0`, no prefix, stderr only) and asserts the same files and log line. `tests/test_router_step.py` `PlaywrightScrubTest` and `tests/test_router_step_supervisor.py` `PlaywrightScrubWiringTest` cover the call and the wiring. Fake credentials only.
 
+## 0.156.0 (2026-11-27) — stale flow.sh, approval and gate-reconcile text corrected
+
+Follow-up to #667, #818 and #820. Text only, plus one stderr message.
+
+- **`flow.sh` description.** README's Determinism Boundary, `plugin-overview.md`'s debugging tips and `docs/skills/ticket-flow.md` still said `flow.sh` re-fetches the issue after a mutation and exits 7 on a mismatch. `flow.sh` does no tracker I/O; the board driver projects the outbox to Linear best-effort, and exit 7 (`STATE_ASSERTION_FAILED`) is retired. A stale comment in `gate-check.sh` is removed.
+- **`APPROVAL_REVOKED` retro template.** Rewritten to the manifest approval model: `approval_provenance` human/policy, `approve.sh` as the only human actuator, the reapprove gate in STEP_4_6, held (exit 1, since #831) versus `APPROVAL_REVOKED` (exit 2). The Linear `approved` label check and the nonexistent "Step 5d" are gone.
+- **`gate-reconcile-prep.sh` exit 4.** The message pointed at `mcp__linear-server__list_comments`, removed in #838. It now says the comments cannot be fetched, that an agent stops there, and that an operator sets `LINEAR_API_KEY` or passes `--comments-file`.
+- **Tests.** `lib/tests/test-gate-reconcile.sh` asserts the exit-4 message names no MCP tool.
+
 ## 0.155.0 (2026-11-27) — reject.sh checks REPOS_ROOT the way approve.sh does
 
 Follow-up to GitHub #818 and #820.

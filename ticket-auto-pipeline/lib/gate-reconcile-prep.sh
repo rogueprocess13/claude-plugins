@@ -16,10 +16,12 @@
 #    and exits 1: never amend another change's tasks.md.
 # 3. hb_init + the `reconcile` gate-start heartbeat.
 # 4. RECONCILE_N = distinct `GATE|reconcile|done|cycle#N` numbers + 1.
-# 5. Comments: F when given (the MCP list_comments JSON), else get_comments
-#    with LINEAR_API_KEY; neither -> exit 4. Normalized, then run through
-#    reconcile-comments.sh. With LINEAR_API_KEY the tracker description is
-#    written to <ticket-dir>/artifacts/tracker-description.md for Step 8.
+# 5. Comments: F when given (an operator-saved comments JSON, interactive
+#    runs only), else get_comments with LINEAR_API_KEY; neither -> exit 4
+#    (no Linear MCP fallback since #838: an agent stops and reports it).
+#    Normalized, then run through reconcile-comments.sh. With
+#    LINEAR_API_KEY the tracker description is written to
+#    <ticket-dir>/artifacts/tracker-description.md for Step 8.
 # 6. The unstruck `- [needs-human]` bullets of notes.md `## Open Questions`.
 #
 # Prints TICKET_DIR, NOTES_PATH, ARTIFACT_TYPE, ARTIFACT_PATH, COMPLEXITY,
@@ -114,7 +116,7 @@ if [ -n "$_comments_file" ]; then
 elif [ -n "${LINEAR_API_KEY:-}" ]; then
   COMMENTS_JSON=$(bash -c 'source "$1/linear-api.sh"; get_comments "$2"' _ "$_GR_DIR" "$TID")
 else
-  echo "gate-reconcile-prep: LINEAR_API_KEY unset — fetch the comments with mcp__linear-server__list_comments, save the JSON to a file and re-run with --comments-file <file>" >&2
+  echo "gate-reconcile-prep: LINEAR_API_KEY unset and no --comments-file — cannot fetch the ticket comments (exit 4). An agent stops here and reports it. An operator sets LINEAR_API_KEY, or saves the comments JSON to a file and re-runs with --comments-file <file>" >&2
   exit 4
 fi
 COMMENTS_JSON=$(bash -c 'source "$1/linear-api.sh"; normalize_comments' _ "$_GR_DIR" <<<"$COMMENTS_JSON")

@@ -418,7 +418,7 @@ AI (named agent types)       Deterministic (flow.sh + lib/*.sh)
 └─ ticket-auto (thin router)  └─ notes-parse.sh
 ```
 
-Skills plan, reason, and navigate code. `flow.sh` executes mutations with idempotency checks and post-trigger state assertions — if the live Linear state doesn't match expectations after a mutation, it exits 7.
+Skills plan, reason, and navigate code. `flow.sh` is a local state machine and does no tracker I/O: it checks the trigger against the ticket's local manifest, writes the new stage and flags there, and emits one event to the ticket's outbox. A board driver (`lib/board-drivers/linear.sh`) drains the outbox later and projects the column and labels to Linear, best-effort. A failed projection is logged (`META|board-projection|fail`, or `META|board-dead-letter` after repeated transient failures); it never changes the pipeline's own state. Exit 7 (`STATE_ASSERTION_FAILED`) is retired.
 
 ### Shared Libraries (`lib/`)
 

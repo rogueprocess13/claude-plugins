@@ -2480,9 +2480,10 @@ backfill seeds tracker-label approvals as `policy`, operator text names `approve
       symlink/unresolvable log record fails closed. Live check on the tickets host pending.
 - [ ] #773 remainder: promote the advisory DoR codes after a rehearsal (record dor-advisory rows in X1).
       Done in #805: all-`[unit]` verify build-only; Verify Mode on synthesised test-data specs.
-- [ ] #667 remainder: KNOWN_GAPS in `test-agent-tool-coverage.sh` (appraise / appraise-exec subagents and
-      Task tools, reproduce, verify, pr-review, gate-reconcile MCP fallbacks); fleetd phase-dispatch support
-      for STEP_2_2.
+- [x] #667 remainder: KNOWN_GAPS in `test-agent-tool-coverage.sh` (appraise / appraise-exec subagents and
+      Task tools, reproduce, verify, pr-review, gate-reconcile MCP fallbacks) — DONE 2026-11-27, #838
+      (0.154.0): every gap closed, `KNOWN_GAPS` empty, #667 closed. Still open: fleetd phase-dispatch
+      support for STEP_2_2 (fleetd still treats it as `manual-pickup`).
 - [ ] #770: dependents of a cancelled ticket keep waiting (agent recommends keep); Linear reason comment.
 - [ ] Old issue body revisions (#761–#774, one #667 comment) still show internal ticket ids in the public
       edit history. GitHub has no API for it: delete in the web UI ("edited" dropdown).
