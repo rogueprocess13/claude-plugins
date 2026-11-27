@@ -14,7 +14,8 @@ everything at this checkout and a scratch dir instead:
   it sources come from the same tree.
 - `TICKET_FLOW_LOCK_DIR`, `REPOS_ROOT`, `FLEET_PIPELINE_LOG_DIR` -> scratch,
   so a real `flow.sh` run writes its lock, manifest and log nowhere real.
-- `LINEAR_API_KEY` removed, so no test can reach the real tracker.
+- `LINEAR_API_KEY` removed, so no test can reach the real tracker, and
+  `SLACK_BOT_TOKEN`/`SLACK_CHANNEL` removed, so no test can post to Slack.
 
 Call `isolate()` from `setUpModule` and the returned function from
 `tearDownModule`. A test that needs its own value still sets it as before.
@@ -35,7 +36,7 @@ REAL_HOME = Path.home()
 
 _KEYS = ('HOME', 'FLEET_TICKET_FLOW_SH', 'CLAUDE_SKILLS_LIB',
          'TICKET_FLOW_LOCK_DIR', 'REPOS_ROOT', 'FLEET_PIPELINE_LOG_DIR',
-         'LINEAR_API_KEY')
+         'LINEAR_API_KEY', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL')
 
 
 def isolate():
@@ -52,7 +53,8 @@ def isolate():
         'REPOS_ROOT': str(root / 'repos'),
         'FLEET_PIPELINE_LOG_DIR': str(root / 'logs'),
     })
-    os.environ.pop('LINEAR_API_KEY', None)
+    for key in ('LINEAR_API_KEY', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL'):
+        os.environ.pop(key, None)
 
     def restore():
         for key, value in saved.items():

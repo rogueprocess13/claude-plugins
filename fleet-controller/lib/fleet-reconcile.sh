@@ -475,6 +475,12 @@ fleet_reconcile_orphans() {
           held_line=$(command grep -E '\|META\|outcome\|info\|held: ' "$log_file" 2>/dev/null | tail -1)
           held_msg=$(printf '%s' "$held_line" | awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}')
           held_at=$(printf '%s' "$held_line" | cut -d'|' -f1)
+          # Key on the hold's own `gate-held` outbox record when there is
+          # one: fleetd's gate-hold intake keys the same record the same
+          # way, so the shared sidecar sends one message per hold.
+          local held_key
+          held_key=$(_fleet_gate_held_key "$(dirname "$log_file")/${tid}-outbox.jsonl")
+          if [ -n "$held_key" ]; then held_at="$held_key"; fi
           case "$held_msg" in
           "held: gate"*)
             fleet_notify_gate_held "$tid" "$state_dir" "$held_at" || true

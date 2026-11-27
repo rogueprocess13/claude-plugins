@@ -90,6 +90,22 @@
       "docs": "fleet-controller/CLAUDE.md#configuration"
     },
     {
+      "name": "FLEET_GATE_HOLD_NOTIFY",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "When fleetd creates a gate-hold row for a ticket waiting on approval, it posts one tracker comment and sends one Slack message saying why and giving the approve.sh command.",
+      "requires": [
+        {
+          "env": "SLACK_BOT_TOKEN"
+        }
+      ],
+      "recommend": "on",
+      "why": "Without it a ticket waiting for approve.sh is visible only on the dashboard. The comment and message are sent once per hold. Slack is optional: with no SLACK_BOT_TOKEN only the comment is posted.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
       "name": "FLEET_BOARD_PUSHER_ENABLE",
       "plugin": "fleet-controller",
       "default": "true",
