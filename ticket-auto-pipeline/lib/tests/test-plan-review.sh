@@ -468,7 +468,7 @@ test_skill_text_turns_the_inline_review_off() {
   # The skip condition is read before the round count and the spawn.
   grep -n 'plan-review.sh mode` prints `router`, skip to Step 3.7' <<<"$sec" | head -1 | grep -q '^[1-4]:' || return 1
   # The inline review is still there for flag off.
-  grep -qF 'Spawn a `general-purpose` agent' <<<"$sec" || return 1
+  grep -qF 'run the reviewer prompt yourself' <<<"$sec" || return 1
   grep -qF 'ADVERSARIAL_BLOCKED — round {ADV_ROUND}' <<<"$sec" || return 1
   # The router reads its reference only when the state asks for it.
   grep -F 'references/plan-review.md' "$auto_md" | grep -F 'skill-ref.sh ticket-auto' |

@@ -51,23 +51,8 @@ _bad() {
 }
 
 # skill<TAB>tool — gaps that predate this test. Remove a line when it is fixed.
-KNOWN_GAPS="ticket-appraise	Agent
-ticket-appraise	Skill
-ticket-appraise	TaskCreate
-ticket-appraise	TaskUpdate
-ticket-appraise	mcp__plugin_claude-mem_mcp-search__prime_corpus
-ticket-appraise	mcp__plugin_claude-mem_mcp-search__query_corpus
-ticket-appraise-exec	Agent
-ticket-appraise-exec	Skill
-ticket-gate-reconcile	mcp__linear-server__list_comments
-ticket-pr-review	TaskCreate
-ticket-pr-review	TaskUpdate
-ticket-reproduce	Skill
-ticket-reproduce	TaskCreate
-ticket-reproduce	TaskUpdate
-ticket-reproduce	mcp__linear-server__save_comment
-ticket-verify	TaskCreate
-ticket-verify	TaskUpdate"
+# Empty since #667 closed the last ones: keep it empty.
+KNOWN_GAPS=""
 
 # required_tools <file>... — one tool name per line, sorted, unique.
 required_tools() {
@@ -213,17 +198,54 @@ else
   sed 's/^/  /' <<<"$stale"
 fi
 
-if grep -q '^ticket-implement	' <<<"$KNOWN_GAPS"; then
-  _bad "ticket-implement must not be in KNOWN_GAPS (#667)"
+if [ -z "$KNOWN_GAPS" ]; then
+  _ok "KNOWN_GAPS is empty: no phase skill has a tolerated gap (#667)"
 else
-  _ok "ticket-implement has no tolerated gap"
+  _bad "KNOWN_GAPS must stay empty (#667); fix the step instead: $KNOWN_GAPS"
 fi
 
+# ── How the #667 gaps were closed ────────────────────────────────────────────
+# A scan for tool names cannot tell a removed step from a reworded one, so pin
+# each replacement: the setup script instead of /ticket-setup, the openspec CLI
+# instead of /opsx:propose, and a logged fallback for each review or search a
+# phase agent now does itself.
+skill_md() {
+  local f
+  for f in "$PLUGIN_DIR/skills/$1/SKILL.md" "$PLUGIN_DIR/skills/$1"/references/*.md; do
+    [ -f "$f" ] && cat "$f"
+  done
+  return 0
+}
+SETUP="$PLUGIN_DIR/skills/ticket-setup/setup.sh"
+for s in ticket-appraise ticket-reproduce; do
+  if [ -f "$SETUP" ] && skill_md "$s" | grep -qF 'bash ~/.claude/skills/ticket-setup/setup.sh "{TICKET-ID}"' &&
+    grep -qF 'skills/ticket-setup/setup.sh' "$PLUGIN_DIR/.claude-plugin/plugin.json"; then
+    _ok "$s runs the synced ticket-setup script, not /ticket-setup"
+  else
+    _bad "$s does not call ~/.claude/skills/ticket-setup/setup.sh, or the hook no longer syncs it"
+  fi
+done
+if skill_md ticket-appraise-exec | grep -qF 'openspec new change "{change-name}"' &&
+  skill_md ticket-appraise-exec | grep -qF 'openspec instructions <id> --change "{change-name}" --json'; then
+  _ok "ticket-appraise-exec creates the change with the openspec CLI, not /opsx:propose"
+else
+  _bad "ticket-appraise-exec lost its openspec CLI steps"
+fi
+for pair in "ticket-appraise CLAIM_VERIFY_SELF_CHECK" "ticket-appraise INVESTIGATION_INLINE" \
+  "ticket-appraise PRIOR_ART_NO_CLAUDE_MEM" "ticket-appraise-exec ADVERSARIAL_SELF_REVIEW"; do
+  read -r s code <<<"$pair"
+  if skill_md "$s" | grep -qE "plog\.sh META gate-warn (warn|info) \"$code"; then
+    _ok "$s logs $code when it does the step itself"
+  else
+    _bad "$s has no logged $code fallback"
+  fi
+done
+
 # ── The router's independent plan reviewer (STEP_2_2, #667) ──────────────────
-# `ticket-appraise-exec	Agent` stays in KNOWN_GAPS: Step 3.6's inline review
-# text is kept for TICKET_ROUTER_PLAN_REVIEW=false. With the flag on that step
-# is skipped and this agent does the review, so it must be read-only: it can
-# write its one result file and nothing else, and cannot spawn or run a skill.
+# With TICKET_ROUTER_PLAN_REVIEW=false Step 3.6 is a logged self-review; with
+# it on that step is skipped and this agent does the review, so it must be
+# read-only: it can write its one result file and nothing else, and cannot
+# spawn or run a skill.
 reviewer="$PLUGIN_DIR/agents/ticket-plan-review-agent.md"
 got=$(agent_tools "$reviewer" | sort | tr '\n' ' ')
 if [ "$got" = "Glob Grep Read Write " ]; then

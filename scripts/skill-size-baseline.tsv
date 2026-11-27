@@ -62,9 +62,9 @@ ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	7073	97
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26081	446
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	26066	446
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	34911	511
+ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	34849	507
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	1318	25
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	8285	185
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
@@ -82,22 +82,22 @@ ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	5412	86
 # allow-growth: cancel transition (#770) — exit code 14 row (+77 bytes, 0.129.0)
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7366	125
-ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5932	114
+ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	5919	114
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-implement/SKILL.md	33001	463
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
 ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8129	200
 ticket-auto-pipeline/skills/ticket-plan-review/SKILL.md	4079	67
 ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	9891	226
-ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	19540	360
+ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	19476	360
 ticket-auto-pipeline/skills/ticket-prescan/SKILL.md	17107	265
 ticket-auto-pipeline/skills/ticket-record-stitch/SKILL.md	1905	31
 ticket-auto-pipeline/skills/ticket-reject/SKILL.md	980	23
-ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14166	373
+ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14073	370
 ticket-auto-pipeline/skills/ticket-retro/SKILL.md	18240	356
 ticket-auto-pipeline/skills/ticket-setup/SKILL.md	4615	86
 # exception: floor ~45-60 KB (REMEDIATION_BRIEF contract, browser flow)
-ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58276	935
+ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58212	935
 ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	19979	345
 # allow-growth: the agent may read the neighbour specs its prompt lists, read-only, so assumptions match them (rehearsal F84)
 ticket-planner/agents/draft-revise-agent.md	1671	8

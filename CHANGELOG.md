@@ -17,13 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.154.0 (2026-11-27) — reject.sh checks REPOS_ROOT the way approve.sh does
+## 0.155.0 (2026-11-27) — reject.sh checks REPOS_ROOT the way approve.sh does
 
 Follow-up to GitHub #818 and #820.
 
 - **`skills/ticket-reject/reject.sh` uses `lib/operator-root.sh`.** It took `REPOS_ROOT` from the environment on trust, then called `ensure_ticket_manifest`, so a root left exported from another project created a fresh `_adhoc` manifest there and recorded the rejection in it, while this project's ticket kept its approval. It now refuses with exit 3 and records nothing when `./CLAUDE.md` declares a different root (compared by physical path) or when the ticket has no manifest under the root, and never creates one. The prompt shows `Recording in: <manifest path> (REPOS_ROOT from the <source>)`; both roots and that path must pass `regression_risk_plain` first, so a value holding an escape sequence is refused and never printed.
 - **Docs.** README's `gate-check.sh` row said `--mode reapprove` "checks live Linear state". Since 0.149.0 it reads the local manifest and applies the entry gate's approval rule. The row, the `APPROVAL_REVOKED` retro template, and the `REPOS_ROOT` notes that said `approve.sh`/`reject.sh` read only the environment are corrected.
 - **Tests.** `lib/tests/test-ticket-approve.sh`: `test_reject_refused_without_manifest`, `test_reject_refused_on_repos_root_mismatch`, `test_reject_refused_on_non_plain_repos_root`, `test_reject_prompt_names_target_manifest`. All four fail on the old script.
+
+## 0.154.0 (2026-11-27) — no phase skill asks for a tool its agent lacks
+
+GitHub #667. `lib/tests/test-agent-tool-coverage.sh` kept 17 tolerated (skill, tool) gaps in `KNOWN_GAPS`: steps that told a phase agent to spawn a subagent, run a slash command, use the task tools or call an MCP tool it does not hold. The agent then improvised or skipped the step. Every gap is now closed and `KNOWN_GAPS` is empty. No agent was granted a tool.
+
+- **`/ticket-setup` → its script.** `ticket-appraise` Step 1 and `ticket-reproduce` Step 1 call `~/.claude/skills/ticket-setup/setup.sh` (already synced by the SessionStart hook) and read its JSON (`ticket_dir`, `existing`) and `context.md`.
+- **`/opsx:propose` → the openspec CLI.** `ticket-appraise-exec` Step 3-Complex runs `openspec new change`, `openspec status --json` and `openspec instructions <id> --json` and writes each artifact itself.
+- **Subagent steps → inline, with a logged fallback.** `ticket-appraise` Step 3.5c (claim check) logs `META|gate-warn|warn|CLAIM_VERIFY_SELF_CHECK`; Step 3-Agent-b (delegated investigation) logs `META|gate-warn|info|INVESTIGATION_INLINE`; `ticket-appraise-exec` Step 3.6 keeps its `ADVERSARIAL_SELF_REVIEW` self-review (the independent review is the router's STEP_2_2).
+- **claude-mem → interactive only.** `ticket-appraise` Step 2.6 prior-art search and the Step 3a.2 corpus tier run only in an interactive session; a phase agent logs `META|gate-warn|info|PRIOR_ART_NO_CLAUDE_MEM` and goes on to the local-ticket search.
+- **Task tracker → interactive only.** `ticket-appraise`, `ticket-reproduce`, `ticket-verify` and `ticket-pr-review` create tracker tasks only in an interactive run; every run still writes its trace file.
+- **Linear MCP fallbacks removed.** `ticket-reproduce` with no `LINEAR_API_KEY` reports the blocked-reproduction comment instead of posting it; `ticket-gate-reconcile` stops on `gate-reconcile-prep.sh` exit 4.
+- **Tests.** `test-agent-tool-coverage.sh` requires `KNOWN_GAPS` to stay empty and pins each replacement (setup script, openspec CLI, the four logged fallbacks); `test-plan-review.sh` follows the Step 3.6 wording.
 
 ## 0.153.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 

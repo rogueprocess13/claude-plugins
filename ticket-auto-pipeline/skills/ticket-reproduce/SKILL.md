@@ -53,10 +53,7 @@ Read `$HOME/.claude/skills/ticket-reproduce/credentials.md` to look up the passw
 
 ## Step 1 — Set up local workspace
 
-Run `/ticket-setup {TICKET-ID}` and wait for it to complete.
-
-- If ticket-setup reports **workspace created** → use the directory path and ticket data it outputs; continue to Step 2.
-- If ticket-setup reports **workspace already exists** → read `context.md` from the existing directory; continue to Step 2.
+Call ticket-setup's script, never the slash command (no phase agent holds the Skill tool, #667): `bash ~/.claude/skills/ticket-setup/setup.sh "{TICKET-ID}"`. A non-zero exit is a broken workspace: stop. Otherwise read `context.md` in its JSON's `ticket_dir`; continue to Step 2.
 
 ### Sub-step log (--from-auto)
 ```bash
@@ -67,7 +64,7 @@ bash ~/.claude/skills/lib/plog.sh REPRODUCE setup done
 
 ## Step 1.5 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 2 through 8). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file:
+Interactive runs only (no phase agent holds a task tool): one tracker task per step, 2 to 8. Every run writes this trace file at session end:
 
 ```bash
 cat > {ticket-dir}/reproduce-session.md << 'TRACE'
@@ -147,7 +144,7 @@ Before writing the plan, assess whether the ticket provides enough detail to act
 1. List every gap clearly.
 2. Post a comment on the Linear ticket. Use the standard Linear access strategy:
    - If `$LINEAR_API_KEY` is set: `source ~/.claude/skills/lib/linear-api.sh && save_comment "{TICKET-ID}" "<comment body>"`
-   - Otherwise: `mcp__linear-server__save_comment` with `{ "issueId": "{TICKET-ID}", "body": "<comment body>" }`
+   - Otherwise (no Linear MCP tool in a phase agent): put the comment body in your report and say it was not posted
 
    Comment body:
    ```
