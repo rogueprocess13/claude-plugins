@@ -242,8 +242,8 @@ for pair in "ticket-appraise CLAIM_VERIFY_SELF_CHECK" "ticket-appraise INVESTIGA
 done
 
 # ── The router's independent plan reviewer (STEP_2_2, #667) ──────────────────
-# With TICKET_ROUTER_PLAN_REVIEW=false Step 3.6 is a logged self-review; with
-# it on that step is skipped and this agent does the review, so it must be
+# With TICKET_ROUTER_PLAN_REVIEW=false (or under fleetd phase dispatch) Step
+# 3.6 is a logged self-review; otherwise that step is skipped and this agent does the review, so it must be
 # read-only: it can write its one result file and nothing else, and cannot
 # spawn or run a skill.
 reviewer="$PLUGIN_DIR/agents/ticket-plan-review-agent.md"
