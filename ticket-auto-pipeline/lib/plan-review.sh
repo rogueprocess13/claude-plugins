@@ -3,18 +3,21 @@
 #
 # Under the router a phase runs as a subagent and cannot spawn another agent,
 # so ticket-appraise-exec Step 3.6's "adversarial reviewer" ran inline, in the
-# context that wrote the plan. With TICKET_ROUTER_PLAN_REVIEW=true the router
-# runs the review itself, after EXEC, as a fresh read-only agent
+# context that wrote the plan. With TICKET_ROUTER_PLAN_REVIEW=complex (the
+# default; `true` = every ticket, `false` = never) the router runs the review itself, after EXEC, as a fresh read-only agent
 # (ticket-plan-review-agent) that sees the ticket workspace and the repos but
 # not the producing phase's context. Everything around that spawn is here:
 # no step of this file asks a model anything.
 #
 # The decision is per ticket, recorded once by ticket-preamble.sh:
-#   META|plan-review|info|router        the router runs STEP_2_2; Step 3.6 skips
+#   META|plan-review|info|router        the router runs STEP_2_2 for a complex
+#                                       ticket (flag `complex`); Step 3.6 skips
+#   META|plan-review|info|router — every ticket
+#                                       the same for every ticket (flag `true`)
 #   META|plan-review|info|inline — …    the flag was on but this orchestrator
 #                                       (fleetd phase dispatch) does not run
 #                                       STEP_2_2; Step 3.6 runs inline as before
-# No line: the flag was off. Every reader asks this file, never the env var.
+# No line: the flag was `false`. Every reader asks this file, never the env var.
 #
 # Verdict records are the ones Step 3.6 writes, so adversarial-rounds.sh,
 # adversarial-override.sh, flow.sh's verdict gate and exit-path.sh need no
@@ -28,6 +31,7 @@
 # Usage:
 #   plan-review.sh mode [--log-file F]        router | inline   (F, else TAP_LOG/LOG_FILE)
 #   plan-review.sh state <LOG>                off | review | revise | resolved | stopped
+#   plan-review.sh scope <LOG>                complex | every   (which tickets are reviewed)
 #   plan-review.sh prepare <TID> --log-file F [--ticket-dir D] [--repos-root R] [--out P]
 #   plan-review.sh done <TID> --log-file F [--ticket-dir D] [--return-file P]
 #   plan-review.sh revise <TID> --log-file F [--ticket-dir D] [--out P]
@@ -43,7 +47,8 @@
 #   resolved  latest verdict PASS/WARNINGS, or the review was skipped
 #
 # prepare — before the spawn. Prints PLAN_REVIEW_READY=skip when there is
-# nothing to review (state is not `review`; a simple ticket; no plan artifact:
+# nothing to review (state is not `review`; a simple ticket unless the marker
+# is `router — every ticket`; no plan artifact:
 # the entry gate reports that), else removes any earlier result file, writes
 # the reviewer's instructions to --out (default
 # ./logs/<TID>-plan-review-instructions.txt) and prints
@@ -92,6 +97,18 @@ plan_review_mode() {
   case "$last" in
   router | "router "*) echo router ;;
   *) echo inline ;;
+  esac
+}
+
+# plan_review_scope <LOG> — every | complex: which tickets the router reviews.
+plan_review_scope() {
+  local log="${1:-}" last=""
+  if [ -n "$log" ] && [ -r "$log" ]; then
+    last=$(awk -F'|' '$2 == "META" && $3 == "plan-review" && $4 == "info" { m = $5 } END { print m }' "$log" 2>/dev/null) || last=""
+  fi
+  case "$last" in
+  "router — every ticket"*) echo every ;;
+  *) echo complex ;;
   esac
 }
 
@@ -219,7 +236,7 @@ plan_review_parse() {
 }
 
 _prv_usage() {
-  sed -n '28,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '31,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -270,7 +287,7 @@ _prv_prepare() {
     )
     plan=$(_prv_plan_paths "$dir")
   fi
-  if [ "$complexity" != complex ]; then
+  if [ "$complexity" != complex ] && [ "$(plan_review_scope "$_prv_log")" != every ]; then
     _prv_plog EXEC plan-review skip "complexity=${complexity:-unknown} — plan review runs for complex tickets only"
     echo "PLAN_REVIEW_READY=skip"
     return 0
@@ -460,6 +477,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   state)
     [ $# -eq 1 ] || _prv_usage
     plan_review_state "$1"
+    exit 0
+    ;;
+  scope)
+    [ $# -eq 1 ] || _prv_usage
+    plan_review_scope "$1"
     exit 0
     ;;
   prepare | done | revise)
