@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.62.0 (2026-11-27) — gate-hold notifications: phase-dispatch holds and one shared key
+
+Follow-up to PR #845. Two edge cases it left open.
+
+- **Phase-dispatch holds now tell a person.** A gate row created by `_create_phase_dispatch_hold` (used when `FLEET_PHASE_DISPATCH_ENABLE=true`) got no comment and no notification. Both creators now call one helper, `supervisor._announce_gate_hold_created` (comment + Slack, `FLEET_GATE_HOLD_NOTIFY`-gated), and only after their own `set_hold` returned a rowcount. A row created by one path is never created again by the other (`WHERE held = 0`), so it is never announced twice. The comment uses the ticket's unreleased approval-type `gate-held` record's reason when there is one, else phase dispatch's own detail (the generic sentence).
+- **One key derivation.** The Slack sidecar key is now derived in one place, bash `fleet_gate_held_key` (`fleet-notify.sh`): the latest `gate-held` outbox record `{seq}@{ts}`, else the `META|outcome|info|held: gate` line's timestamp. fleetd's `_notify_gate_held` runs it too (falling back to `hold:{hold_id}` only when it prints nothing, a case where reconcile sends nothing), replacing the Python `gate_hold_notify_key`. `fleet-reconcile.sh` now reads the outbox from `FLEET_PIPELINE_LOG_DIR` (the resolved dir fleetd hands it and reads itself), not beside the pipeline log in the state dir, so a host whose log dir differs from the state dir no longer falls back to a different key and sends a second message.
+- **Tests.** `fleetd/tests/test_gate_hold.py`: `TestPhaseDispatchGateHoldNotify` (one comment + one notify; phase-dispatch then intake, and intake then phase dispatch, still one; no outbox record; flag off; no lib dir; the `NEXT_HOLD` branch passes the lib dir) and `TestGateHoldNotifySharedSidecar` (no-outbox: reconcile and fleetd in either order send one message; hold-id fallback). `lib/tests/test-fleet-reconcile.sh`: a no-outbox hold and an outbox in the resolved log dir each get one Slack message across fleetd and reconcile.
+
 ## fleet-controller 0.61.0 (2026-11-27) — fleetd tells a person when a ticket is held for approval
 
 Follow-up to #820 (PRs #831, #840). fleetd's gate-hold intake created a `hold_kind='gate'` row for an approval-type `gate-held` event (entry-gate reasons, plus `reapprove-needs-human`/`reapprove-plan-changed`), but posted no comment and sent no notification, so a ticket waiting for `approve.sh` was visible only on the dashboard. Human holds already told a person.
