@@ -1140,6 +1140,43 @@ STUB
   return 0
 )
 
+# gate-hold-notify: fleetd's gate-hold intake already notified this hold
+# (sidecar keyed on the outbox record's `{seq}@{ts}`). The reconcile pass keys
+# the same record the same way, so it sends nothing more.
+test_unscoped_gate_held_skips_hold_fleetd_notified() (
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+
+  _plog_line "${ws}/CRE-52-pipeline.log" "META" "gate-held" "info" "held"
+  _plog_line "${ws}/CRE-52-pipeline.log" "META" "outcome" "info" "held: gate"
+  echo '{"seq":5,"ts":"2026-08-17T09:59:00Z","event":"gate-held","data":{"reason":"complex-ticket"}}' \
+    >"${ws}/CRE-52-outbox.jsonl"
+  key=$(printf '%s' "5@2026-08-17T09:59:00Z" | sha256sum | awk '{print $1}')
+  printf '{"key": "%s", "notify_state": "sent"}' "$key" >"${ws}/CRE-52-gate-held-notify.json"
+
+  bindir=$(mktemp -d)
+  cat >"$bindir/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_CURL_LOG"
+printf '{"ok": true, "ts": "1700000000.000100"}'
+STUB
+  chmod +x "$bindir/curl"
+  export FAKE_CURL_LOG="$ws/.curl-calls"
+  : >"$FAKE_CURL_LOG"
+  export SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts"
+  export PATH="$bindir:$PATH"
+  source "$LIB_DIR/fleet-notify.sh"
+
+  fleet_reconcile_orphans "$ws" "$queue_file" "" >/dev/null 2>&1
+
+  [ ! -s "$FAKE_CURL_LOG" ] || {
+    echo "expected no Slack call for an already-notified hold, got: $(cat "$FAKE_CURL_LOG")" >&2
+    return 1
+  }
+)
+
 # A still-broken gate-stop is bounded by the existing restart cap: it retries,
 # then dead-letters, and further scoped resumes leave it alone. No new counter,
 # no infinite-retry surface. Also covers VERIFY_EXHAUSTED, whose retry can never
@@ -1265,6 +1302,7 @@ _run "scoped resume re-enqueues gate-stopped" test_scoped_resume_reenqueues_gate
 _run "scoped resume re-enqueues gate-held" test_scoped_resume_reenqueues_gate_held
 _run "unscoped leaves gate-stopped and gate-held alone" test_unscoped_leaves_gate_stopped_and_gate_held_alone
 _run "unscoped gate-held notifies only for held:gate" test_unscoped_gate_held_notifies_only_for_held_gate
+_run "unscoped gate-held skips a hold fleetd notified" test_unscoped_gate_held_skips_hold_fleetd_notified
 _run "scoped resume gate-stopped caps then dead-letters" test_scoped_resume_gate_stopped_caps_then_dead_letters
 _run "empty tids global behavior unchanged" test_empty_tids_global_behavior_unchanged
 

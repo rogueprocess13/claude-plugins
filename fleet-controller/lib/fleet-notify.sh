@@ -542,8 +542,27 @@ with open(path, 'w') as f:
 # line (its content-key input) — a fresh hold (re-approved, re-held on a
 # later generation) carries a new timestamp and notifies again; the same
 # hold instance re-observed on a later reconcile pass does not.
+#
+# Two callers since gate-hold-notify: fleet-reconcile.sh (above) and
+# fleetd's `_gate_hold_intake_pass`, which calls it once when it creates
+# the `hold_kind='gate'` row. Both pass the same key when the ticket has a
+# `gate-held` outbox record — `{seq}@{ts}` of the latest one
+# (`_fleet_gate_held_key`) — so the shared sidecar sends one message per
+# hold, whichever caller is first. `why` (optional, 4th arg) is fleetd's
+# plain sentence for the hold reason; without it the original complex-
+# ticket line is used.
+_fleet_gate_held_key() {
+  # _fleet_gate_held_key <outbox_file> — `{seq}@{ts}` of the latest
+  # `gate-held` record, or nothing. Same key as fleetd's
+  # `supervisor.gate_hold_notify_key`. A malformed line is skipped.
+  local outbox="$1"
+  [ -f "$outbox" ] || return 0
+  jq -rR 'fromjson? | select(.event == "gate-held") | "\(.seq)@\(.ts)"' \
+    "$outbox" 2>/dev/null | tail -1
+}
+
 fleet_notify_gate_held() {
-  local tid="$1" state_dir="$2" held_at="${3:-}"
+  local tid="$1" state_dir="$2" held_at="${3:-}" why="${4:-}"
 
   local content_key
   if command -v sha256sum >/dev/null 2>&1; then
@@ -565,9 +584,10 @@ fleet_notify_gate_held() {
     return 0
   fi
 
+  [ -n "$why" ] || why="Complex ticket held at the Approve gate — appraise/exec are done, waiting on approval."
   local text
-  text=$(printf ':raised_hand: *%s* needs your approval\nComplex ticket held at the Approve gate — appraise/exec are done, waiting on approval.\n\nApprove in your own terminal, from the tickets root:\n`bash ~/.claude/skills/ticket-approve/approve.sh %s`\nThen re-dispatch the epic.' \
-    "$tid" "$tid")
+  text=$(printf ':raised_hand: *%s* needs your approval\n%s\n\nApprove in your own terminal, from the tickets root:\n`bash ~/.claude/skills/ticket-approve/approve.sh %s`\nThen re-dispatch the epic.' \
+    "$tid" "$why" "$tid")
 
   local out
   out=$(fleet_slack_post "$tid" "$state_dir" "$text" 2>&1)

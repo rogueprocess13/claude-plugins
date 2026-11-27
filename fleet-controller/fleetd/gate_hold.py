@@ -756,6 +756,96 @@ def post_human_hold_comment(tid, hold_id, blocks, questions, lib_dir=None,
     return comment_posted, label_applied
 
 
+# One plain sentence per approval-type `gate-held` reason — the same set as
+# `supervisor._GATE_HOLD_APPROVAL_REASONS`, the only reasons the gate-hold
+# intake pass turns into a row. A reason outside this table gets
+# `_GATE_HOLD_REASON_FALLBACK`; the raw reason string is never echoed.
+GATE_HOLD_REASON_TEXT = {
+    'complex-ticket':
+        'This is a complex ticket, so a person must approve the plan '
+        'before implementation starts.',
+    'manual-mode':
+        'The pipeline runs in manual mode, so every ticket waits for a '
+        "person's approval.",
+    'default-fallback':
+        'The gate could not approve this ticket automatically, so it waits '
+        "for a person's approval.",
+    'plan-changed-since-approval':
+        'The plan changed after it was approved, so a person must approve '
+        'the current plan.',
+    'reapprove-needs-human':
+        'The plan was amended after review, and only an automatic approval '
+        'covers it. A person must approve the amended plan.',
+    'reapprove-plan-changed':
+        "The plan changed after a person approved it, so a person must "
+        'approve the current plan.',
+}
+_GATE_HOLD_REASON_FALLBACK = "The ticket is waiting for a person's approval."
+
+
+def gate_hold_reason_text(reason):
+    """The plain sentence for one `gate-held` reason (never the raw value)."""
+    return GATE_HOLD_REASON_TEXT.get(reason, _GATE_HOLD_REASON_FALLBACK)
+
+
+def gate_hold_approve_command(tid):
+    """The exact command a person runs to release an approval-type hold."""
+    return f'bash ~/.claude/skills/ticket-approve/approve.sh {tid}'
+
+
+def gate_hold_comment_body(tid, hold_id, reason):
+    """The tracker comment for a newly created approval-type gate hold.
+
+    Built only from the ticket id, fleetd's own minted `hold_id`, and a
+    fixed sentence chosen by `reason` — no log text, no environment value,
+    so nothing secret can reach it.
+    """
+    return '\n'.join([
+        f'🔒 **Pipeline held — waiting for approval** · `{hold_id}`',
+        '',
+        f'**Why:** {gate_hold_reason_text(reason)}',
+        '',
+        'To approve, a person runs this in their own terminal, from the '
+        'tickets root:',
+        '',
+        '```',
+        gate_hold_approve_command(tid),
+        '```',
+        '',
+        'fleetd sees the approval on its next gate check.',
+    ])
+
+
+def post_gate_hold_comment(tid, hold_id, reason, lib_dir=None, timeout=30):
+    """Post fleetd's one tracker comment for a newly created approval-type
+    gate hold. Same transport as `post_human_hold_comment` (`linear-api.sh`
+    `save_comment`), but no label: approval is a manifest fact recorded by
+    `approve.sh`, never a tracker label, so there is no flag to set.
+
+    Fail-soft like `post_human_hold_comment`: the row exists regardless.
+    Returns True when the comment was posted.
+    """
+    lib = Path(lib_dir) if lib_dir else phase_dispatch.ticket_auto_lib_dir()
+    linear_api = lib / 'linear-api.sh'
+    if not linear_api.is_file():
+        print(f'fleetd: post_gate_hold_comment: linear-api.sh not found at '
+              f'{linear_api}; hold comment for {tid} not posted',
+              file=sys.stderr)
+        return False
+    body = gate_hold_comment_body(tid, hold_id, reason)
+    try:
+        proc = subprocess.run(
+            ['bash', '-c',
+             "source \"$LINEAR_API\"; save_comment \"$TID\" \"$BODY\""],
+            env={**os.environ, 'LINEAR_API': str(linear_api),
+                 'TID': tid, 'BODY': body},
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
 def clear_needs_info_on_release(tid, lib_dir=None, timeout=30, env=None):
     """Clear the `needs-info` flag a released human hold left behind.
 

@@ -3362,10 +3362,25 @@ class GateHoldIntakePassTest(unittest.TestCase):
     """
 
     def setUp(self):
+        import fleetd.gate_hold as gate_hold_mod
+        import fleetd.supervisor as supervisor_mod
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
+        # Never reach the real tracker or Slack from this class.
+        self.comment_calls = []
+        self.notify_calls = []
+        self._real_comment = gate_hold_mod.post_gate_hold_comment
+        self._real_notify = supervisor_mod._notify_gate_held
+        gate_hold_mod.post_gate_hold_comment = (
+            lambda *a, **k: self.comment_calls.append((a, k)) or True)
+        supervisor_mod._notify_gate_held = (
+            lambda *a, **k: self.notify_calls.append((a, k)))
 
     def tearDown(self):
+        import fleetd.gate_hold as gate_hold_mod
+        import fleetd.supervisor as supervisor_mod
+        gate_hold_mod.post_gate_hold_comment = self._real_comment
+        supervisor_mod._notify_gate_held = self._real_notify
         _safe_tmp_cleanup(self._tmp)
 
     def _supervisor(self):
@@ -3542,10 +3557,10 @@ class GateHoldIntakePassTest(unittest.TestCase):
         self.assertEqual(row['hold_id'], hold_id,
                          'the original phase-dispatch hold_id must survive')
 
-    def test_no_comment_or_notify_called(self):
-        """Non-Goals: a gate hold has no free-form question — neither
-        post_human_hold_comment nor fleet_notify_hold is ever called from
-        this pass."""
+    def test_gate_comment_and_notify_once_never_the_human_ones(self):
+        """gate-hold-notify: a new gate row gets one gate comment and one
+        gate notification across two passes, and never the human-hold
+        comment or `fleet_notify_hold` (which reads a human-hold record)."""
         import fleetd.gate_hold as gate_hold_mod
         import fleetd.supervisor as supervisor_mod
 
@@ -3553,25 +3568,28 @@ class GateHoldIntakePassTest(unittest.TestCase):
         self._write_pipeline_log(tid)
         self._write_outbox(tid, [('gate-held', {'reason': 'manual-mode'})])
 
-        comment_calls = []
-        notify_calls = []
+        human_calls = []
         real_comment = gate_hold_mod.post_human_hold_comment
         real_notify = supervisor_mod._notify_hold
         gate_hold_mod.post_human_hold_comment = (
-            lambda *a, **k: comment_calls.append((a, k)) or (True, True))
+            lambda *a, **k: human_calls.append((a, k)) or (True, True))
         supervisor_mod._notify_hold = (
-            lambda *a, **k: notify_calls.append((a, k)))
+            lambda *a, **k: human_calls.append((a, k)))
         sup = self._supervisor()
         sup.acquire_lock()
         try:
+            sup._gate_hold_intake_pass()
             sup._gate_hold_intake_pass()
         finally:
             gate_hold_mod.post_human_hold_comment = real_comment
             supervisor_mod._notify_hold = real_notify
             sup.release_lock()
 
-        self.assertEqual(comment_calls, [])
-        self.assertEqual(notify_calls, [])
+        self.assertEqual(human_calls, [])
+        self.assertEqual(len(self.comment_calls), 1)
+        self.assertEqual(self.comment_calls[0][0][0], tid)
+        self.assertEqual(self.comment_calls[0][0][2], 'manual-mode')
+        self.assertEqual(len(self.notify_calls), 1)
 
 
 class DualInvocationInterlockTest(unittest.TestCase):
