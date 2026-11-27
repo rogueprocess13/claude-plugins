@@ -2,11 +2,11 @@
 
 > ticket-flow
 
-**Private helper** -- not intended for direct invocation. Called internally by every pipeline skill that mutates Linear state.
+**Private helper** -- not intended for direct invocation. Called internally by every pipeline skill that changes a ticket's workflow state.
 
 ## What it does
 
-Centralized Linear state and label executor. Wraps the deterministic `flow.sh` bash script which reads the state machine definition from `workflow.json`, computes the desired end state from the ticket's local manifest plus requested additions and removals, writes it to the manifest and emits one outbox event. `flow.sh` does no tracker I/O: a board driver (`lib/board-drivers/linear.sh`) projects the outbox to Linear later, best-effort. There is no post-trigger assertion any more (exit 7, `STATE_ASSERTION_FAILED`, is retired). Every pipeline skill delegates state transitions and label changes here -- no skill calls Linear mutation endpoints directly.
+Local workflow state machine. Wraps the deterministic `flow.sh` bash script which reads the state machine definition from `workflow.json`, computes the desired end state from the ticket's local manifest plus requested additions and removals, writes it to the manifest and emits one outbox event. `flow.sh` does no tracker I/O: a board driver (`lib/board-drivers/linear.sh`) projects the outbox to Linear later, best-effort. There is no post-trigger assertion any more (exit 7, `STATE_ASSERTION_FAILED`, is retired). Every pipeline skill delegates state transitions and label changes here -- no skill calls Linear mutation endpoints directly.
 
 ## Trigger
 
@@ -29,9 +29,9 @@ Centralized Linear state and label executor. Wraps the deterministic `flow.sh` b
 
 | Artifact | Location | Description |
 |----------|----------|-------------|
-| State transition | Linear | Ticket state changed per state machine rules |
-| Label changes | Linear | Labels added/removed per transition definition |
-| Assignee change | Linear | Assignee set on appraise-start |
+| Manifest transition | Ticket's local manifest | `stage`, `flags`, `rev` and `pending_event` written per state machine rules |
+| Outbox event | Per-ticket log dir, `{tid}-outbox.jsonl` | Exactly one event appended per invocation |
+| Board projection | Linear (best-effort) | `lib/board-drivers/linear.sh`, run by `outbox-drain.sh` at every flow.sh exit and by fleetd's pusher, sets the column, at most four human-signal labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`) and the assignee on appraise-start. A failure never fails the transition |
 | Sentinel file | ~/.claude/state/ticket-flow/validated-{TEAM_ID} | Config validation cache |
 
 ## How it works
