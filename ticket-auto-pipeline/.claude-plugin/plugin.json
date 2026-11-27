@@ -32,6 +32,12 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/playwright-scrub-sweep.sh",
+            "timeout": 15,
+            "statusMessage": "Redacting passwords in leftover Playwright snapshots..."
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/unshadow-skills.sh",
             "timeout": 5,
             "statusMessage": "Moving stale user-level ticket skill copies aside..."

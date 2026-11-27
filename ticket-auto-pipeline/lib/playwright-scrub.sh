@@ -86,10 +86,17 @@ BEGIN { sec = ENVIRON["_PS_SECRET"]; red = "[REDACTED]" }
 _ps_files=0
 _ps_redacted=0
 for _d in "${_ps_dirs[@]}"; do
-  [ -d "$_d" ] || continue
+  # A snapshot dir that is a symlink is refused: it could point anywhere.
+  _d="${_d%/}"
+  [ -n "$_d" ] && [ -d "$_d" ] && [ ! -L "$_d" ] || continue
   while IFS= read -r -d '' _f; do
+    # Only a regular file this user owns, never through a symlink, is
+    # rewritten (a planted link must not get its target overwritten).
+    [ -f "$_f" ] && [ ! -L "$_f" ] && [ -O "$_f" ] || continue
     _ps_files=$((_ps_files + 1))
-    _tmp="$_f.scrub.$$"
+    # Unpredictable temp name in the file's own dir: same filesystem, so the
+    # mv below is an atomic rename.
+    _tmp=$(mktemp "$(dirname "$_f")/.scrub.XXXXXX" 2>/dev/null) || continue
     if ! _PS_SECRET="$_ps_secret" awk "$_ps_awk" "$_f" >"$_tmp" 2>/dev/null; then
       rm -f "$_tmp"
       continue
@@ -104,7 +111,7 @@ for _d in "${_ps_dirs[@]}"; do
     else
       rm -f "$_tmp"
     fi
-  done < <(find "$_d" -type f ! -name '*.scrub.*' -print0 2>/dev/null)
+  done < <(find "$_d" -type f ! -name '*.scrub.*' ! -name '.scrub.*' -print0 2>/dev/null)
 done
 
 echo "PLAYWRIGHT_SCRUB files=$_ps_files redacted=$_ps_redacted"
