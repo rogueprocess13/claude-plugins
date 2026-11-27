@@ -24,6 +24,17 @@ Three things here are decisions rather than mechanics:
   written by /ticket-approve on a complex ticket (`gate-check.sh` Checks
   2.8b/2.8c/4).
 
+  The one exception is a hold the reapprove gate itself set
+  (`REAPPROVE_HOLD_REASONS`, GitHub #820): its release rule is the
+  reapprove gate's, so its probe runs `--mode reapprove`
+  (`run_reapprove_gate`). That is safe there because such a hold exists
+  only after the manifest recorded an approval at Ready, so
+  `APPROVAL_REVOKED` fires only when the approval was really withdrawn
+  (reject or re-claim), never for a person who has not looked yet. `entry`
+  would judge the wrong thing for it: the entry gate re-runs Checks 1-5
+  over the whole ticket instead of asking "has a person approved the
+  amended plan".
+
 * **A poll that changes nothing writes nothing.** `entry` logs a
   `GATE|gate|fail|held: …` line every time it holds. Run on its own cadence
   against a ticket waiting over a weekend, that is a few hundred identical
@@ -87,6 +98,14 @@ GATE_ENTRY_STOP = 2
 # The step a released hold dispatches: gate reconcile, which is also where the
 # `RECONCILE_CYCLE` cap lives.
 GATE_RECONCILE_STEP = 'STEP_3_5'
+
+# `gate-held` reasons `gate-check.sh --mode reapprove` emits (GitHub #820):
+# the amended plan needs a person's approval, or a person's approval is of
+# a plan that changed since. A row carrying one of these as `hold_reason`
+# is probed with `--mode reapprove`, which returns the same 0/1/2 exit
+# codes as the entry gate (released / still held / APPROVAL_REVOKED).
+REAPPROVE_HOLD_REASONS = frozenset(
+    {'reapprove-needs-human', 'reapprove-plan-changed'})
 
 RELEASE = 'release'
 HOLD = 'hold'
@@ -158,6 +177,30 @@ def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120,
                    log_file=''):
     """Run `gate-check.sh --mode entry` against a scratch log.
 
+    See `_run_gate_probe` for the contract.
+    """
+    return _run_gate_probe(tid, 'entry', hb_log_file=hb_log_file,
+                           lib_dir=lib_dir, timeout=timeout,
+                           log_file=log_file)
+
+
+def run_reapprove_gate(tid, hb_log_file='', lib_dir=None, timeout=120,
+                       log_file=''):
+    """Run `gate-check.sh --mode reapprove` against a scratch log.
+
+    The probe for a hold the reapprove gate set (`REAPPROVE_HOLD_REASONS`).
+    The approval rule stays in bash (`_gate_reapprove`): this only reads
+    the exit code, the same way `run_entry_gate` does.
+    """
+    return _run_gate_probe(tid, 'reapprove', hb_log_file=hb_log_file,
+                           lib_dir=lib_dir, timeout=timeout,
+                           log_file=log_file)
+
+
+def _run_gate_probe(tid, mode, hb_log_file='', lib_dir=None, timeout=120,
+                    log_file=''):
+    """Run `gate-check.sh --mode <mode>` against a scratch log.
+
     The scratch log is seeded with a copy of `log_file` (the ticket's real
     pipeline log) so the gate evaluates the same facts the in-session gate
     would (#529). Returns `(exit_code, log_lines)` — only the lines the gate
@@ -189,7 +232,7 @@ def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120,
         try:
             proc = subprocess.run(
                 ['bash', str(script), tid, str(scratch), str(hb_log_file),
-                 '--mode', 'entry'],
+                 '--mode', mode],
                 capture_output=True, text=True, timeout=timeout,
             )
             code = proc.returncode
@@ -234,7 +277,8 @@ def _gate_stop_recorded_for_hold(log_file, hold_id, held_at):
 
 
 def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
-                   lib_dir=None, entry_gate=None, answer_probe=None):
+                   lib_dir=None, entry_gate=None, answer_probe=None,
+                   reapprove_gate=None):
     """Decide the fate of one held ticket, dispatched by its `hold_kind`.
 
     An unregistered kind resolves to `UNAVAILABLE` rather than a guess —
@@ -250,6 +294,8 @@ def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
     Linear account, and both default to their real implementation
     (`run_entry_gate` / `probe_human_answer`) — every predicate receives
     both kwargs regardless of which one it actually uses.
+    `reapprove_gate` is the `'gate'` predicate's probe for a reapprove hold
+    (`REAPPROVE_HOLD_REASONS`), defaulting to `run_reapprove_gate`.
     """
     kind = (ticket_row or {}).get('hold_kind') or ''
     hold_id = (ticket_row or {}).get('hold_id') or ''
@@ -258,6 +304,7 @@ def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
     position = (ticket_row or {}).get('position') or ''
     held_at = (ticket_row or {}).get('held_at') or ''
     fenced_generation = (ticket_row or {}).get('fenced_generation')
+    hold_reason = (ticket_row or {}).get('hold_reason') or ''
 
     # One-shot gate-stop (#529): this hold already gate-stopped and is
     # waiting on a human. Neither probe again nor write again.
@@ -279,14 +326,22 @@ def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
         hold_id=hold_id, hold_generation=hold_generation,
         log_file=log_file, hb_log_file=hb_log_file, lib_dir=lib_dir,
         entry_gate=entry_gate, held_at=held_at,
-        fenced_generation=fenced_generation, answer_probe=answer_probe)
+        fenced_generation=fenced_generation, answer_probe=answer_probe,
+        hold_reason=hold_reason, reapprove_gate=reapprove_gate)
 
 
 def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
                          hold_generation, log_file, hb_log_file='',
                          lib_dir=None, entry_gate=None, held_at='',
-                         fenced_generation=None, answer_probe=None):
+                         fenced_generation=None, answer_probe=None,
+                         hold_reason='', reapprove_gate=None):
     """The `'gate'` release predicate: today's `run_entry_gate`, unchanged.
+
+    A hold the reapprove gate set (`hold_reason` in
+    `REAPPROVE_HOLD_REASONS`, GitHub #820) is probed with
+    `run_reapprove_gate` instead, so it releases on the reapprove rule: a
+    person's approval of the current plan. Its exit codes mean the same
+    things, so everything below is shared.
 
     `gate-check.sh` remains the only authority on "is this approved" — this
     still runs `--mode entry` (never `--mode reapprove`, which writes
@@ -312,7 +367,13 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
                                 loop.gate_stop_code, position, loop.detail,
                                 hold_id, hold_generation)
 
-    probe = entry_gate or run_entry_gate
+    reapprove = hold_reason in REAPPROVE_HOLD_REASONS
+    if reapprove:
+        probe = reapprove_gate or run_reapprove_gate
+        gate_name = 'reapprove gate'
+    else:
+        probe = entry_gate or run_entry_gate
+        gate_name = 'entry gate'
     exit_code, lines = probe(tid, hb_log_file=hb_log_file, lib_dir=lib_dir,
                              log_file=log_file)
 
@@ -327,7 +388,7 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
         # The gate wrote its own reason; those lines are the record.
         _append(log_file, lines)
         return GateHoldDecision(GATE_STOP, tid, cycle, exit_code, '', position,
-                                'entry gate returned a structural failure',
+                                f'{gate_name} returned a structural failure',
                                 hold_id, hold_generation)
 
     if exit_code == GATE_ENTRY_HELD:
@@ -344,7 +405,7 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
         # would hold and silently re-probe forever instead of eventually
         # gate-stopping — the same silent-hold failure shape as the CRE-9
         # 160-hour incident, just with a different root cause.
-        if _is_gate_fetch_failure_hold(lines):
+        if not reapprove and _is_gate_fetch_failure_hold(lines):
             attempts = _count_gate_fetch_probe_attempts(log_file) + 1
             if attempts >= gate_fetch_hold_max_attempts():
                 stop_lines = [
@@ -375,7 +436,7 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
     # is and try again next pass.
     return GateHoldDecision(
         UNAVAILABLE, tid, cycle, exit_code, '', position,
-        f'entry gate did not answer (exit {exit_code!r})',
+        f'{gate_name} did not answer (exit {exit_code!r})',
         hold_id, hold_generation)
 
 
@@ -577,7 +638,8 @@ def _emit_human_hold_released(tid, lib_dir=None, timeout=15):
 def _reconcile_human_hold(table, tid, cycle, position, hold_id,
                           hold_generation, log_file, hb_log_file='',
                           lib_dir=None, entry_gate=None, held_at='',
-                          fenced_generation=None, answer_probe=None):
+                          fenced_generation=None, answer_probe=None,
+                          hold_reason='', reapprove_gate=None):
     """The `'human'` release predicate (human-hold-protocol).
 
     Mirrors `_reconcile_gate_hold`'s shape for the cap and the resume
@@ -587,9 +649,9 @@ def _reconcile_human_hold(table, tid, cycle, position, hold_id,
     path. What differs is the probe: `probe_human_answer` reads Linear
     comments rather than re-running a bash gate.
 
-    `entry_gate` is accepted but unused — it is only meaningful for the
-    `'gate'` kind's probe; `reconcile_hold` passes it to every predicate
-    uniformly. `answer_probe` is this predicate's own injection point for
+    `entry_gate`, `reapprove_gate` and `hold_reason` are accepted but
+    unused — they are only meaningful for the `'gate'` kind's probe;
+    `reconcile_hold` passes them to every predicate uniformly. `answer_probe` is this predicate's own injection point for
     tests, defaulting to `probe_human_answer`.
     """
     loop = phase_dispatch.evaluate_loop(
