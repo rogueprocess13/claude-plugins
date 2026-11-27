@@ -299,7 +299,7 @@ The state machine JSON structure:
 ## Debugging tips
 
 - **Pipeline stuck in a state**: Check the pipeline log at `tickets/{ID}--*/pipeline.log`. Look for `|waiting|` entries (agent never completed) or `|fail|` entries (agent reported failure).
-- **State assertion failures (exit 7)**: flow.sh mutated state but post-trigger re-fetch didn't match expectations. Check Linear for conflicting automations or manual changes.
+- **Linear card out of step with the pipeline**: flow.sh does no tracker I/O and has no post-trigger assertion (exit 7, `STATE_ASSERTION_FAILED`, is retired). The board driver projects the outbox to Linear best-effort. Look for `META|board-projection|fail` (permanent driver failure) or `META|board-dead-letter` (repeated transient failures) in the pipeline log; the manifest, not Linear, is the pipeline's state.
 - **Silent agent failures**: If an agent spawn shows `|waiting|` with no matching `|done|` or `|fail|`, check the heartbeat log for the agent's last decision or fallback entry.
 - **MCP auth issues**: Run `/ticket-env-check` in validate mode to isolate which server is failing. Check `~/.claude.json` MCP server env blocks.
 - **Log corruption**: Schema version mismatches or manual edits can break parsing. Schema version is line 1 of every log. Delete and restart if corrupted.

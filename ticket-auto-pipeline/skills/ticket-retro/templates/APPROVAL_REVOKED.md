@@ -2,38 +2,34 @@
 
 ## Pattern
 
-The pipeline halted because the manifest recorded no approval at the reapprove gate, between the PR iteration phase and the re-implement phase. `gate-check.sh --mode reapprove` reads the local manifest, not Linear: it gate-stops when the manifest shows no approval at stage `Ready`. Only re-claim or `reject.sh` clears an approval.
+The pipeline halted because the manifest recorded no approval at the reapprove gate, between the PR iteration phase and the re-implement phase. `gate-check.sh --mode reapprove` reads the local manifest, not Linear: it gate-stops (exit 2) when the manifest shows no approval at stage `Ready`. Only re-claim or `reject.sh` clears an approval.
+
+Approval is a local manifest fact (`approved`, `approval_provenance` = `human` or `policy`), never a tracker label. A `human` approval is recorded only by a person running `bash ~/.claude/skills/ticket-approve/approve.sh {ID}` in their own terminal. `ticket-pr-iterate` records a `policy` approval when it moves the ticket `Review -> Ready`.
 
 ## What to Look For
 
-In `~/.claude/skills/ticket-auto/SKILL.md` Step 5d:
+In `~/.claude/skills/ticket-auto/SKILL.md` STEP_4_6 (PR Review iteration sub-loop, the `ROUTE_VERDICT=WARN` row):
 
-1. **Re-approval gate logic**: the check reads the local manifest and asserts `stage=Ready` with an approval recorded. Is this check happening before every re-implement spawn?
-2. **Label lifecycle**: What removes the `approved` label? Check `ticket-pr-iterate` — does it strip labels? Does `ticket-flow`'s state transitions clear labels unexpectedly?
-3. **Race condition**: Between `ticket-pr-iterate` posting findings and `ticket-auto` re-spawning implement, could a concurrent action (manual Linear edit, webhook) remove the label?
+1. **Loop order**: the loop body must be `pr-review -> pr-iterate -> gate-check.sh --mode reapprove -> implement ...`. Does the reapprove gate run after `pr-iterate` on every iteration?
+2. **What cleared the approval**: look in the pipeline log and the ticket outbox for a `re-claim` or `human-reject` transition between `pr-iterate` and the gate-stop. Either one legitimately clears `approved`.
+3. **Stage**: the gate also stops when the manifest stage is not `Ready`. Check that `pr-iterate`'s `flow.sh` trigger ran and did not fail (`META|flow-error`, `META|flow-warn`).
 
 In `~/.claude/skills/ticket-pr-iterate/SKILL.md`:
 
-4. **State transition**: After posting findings, does the skill move the ticket to `Ready` AND ensure `approved` is still present?
+4. **State transition**: after posting findings, does the skill fire `pr-iterate` with `--provenance policy`, so the manifest shows stage `Ready` with a policy approval?
+
+Not this code: a held reapprove gate (exit 1, `GATE|reapprove|fail|held: ...`) is not `APPROVAL_REVOKED`. Since PR #831 the reapprove gate applies the entry gate's approval rule: a complex, manual-mode or open-`[needs-human]` ticket waits for a person's `approve.sh` on the amended plan, because `pr-iterate`'s policy approval does not count for it.
 
 ## Order-of-operations artifact (check first)
 
-Before chasing a label-race hypothesis, check whether a `pr-iterate` trigger-def line follows the gate-stop within a minute or two, with `GATE|reapprove|done` shortly after. If so, the reapprove gate ran before `pr-iterate` on a PR-review WARN. A WARN legitimately leaves the ticket in `Review` with no approval in the manifest; only `pr-iterate` moves it `Review -> Ready` and records a (policy) approval. The reapprove gate must run AFTER `pr-iterate` (loop body: `pr-review -> pr-iterate -> gate-check.sh --mode reapprove -> implement ...`). A gate-stop with reason `manifest records no approval` right before a `pr-iterate` line is this ordering bug, not a revoked approval.
+Before chasing a cleared-approval hypothesis, check whether a `pr-iterate` trigger-def line follows the gate-stop within a minute or two, with `GATE|reapprove|done` shortly after. If so, the reapprove gate ran before `pr-iterate` on a PR-review WARN. A WARN legitimately leaves the ticket in `Review` with no approval in the manifest; only `pr-iterate` moves it `Review -> Ready` and records a (policy) approval. A gate-stop with reason `manifest records no approval` right before a `pr-iterate` line is this ordering bug, not a revoked approval.
 
 ## Minimal Fix Pattern
 
-The fix typically adds a label-verification step in `ticket-pr-iterate` after the Linear update:
-
-```bash
-# Verify approved label survived the state transition
-LABELS=$(linear_api "query { issue(id: \"$TICKET_ID\") { labels { nodes { name } } } }")
-echo "$LABELS" | jq -e '.data.issue.labels.nodes[].name | select(. == "approved")' || {
-  echo "FATAL: approved label lost during pr-iterate"
-  exit 1
-}
-```
+Fix the order in the router, not the approval. The reapprove gate must run after `pr-iterate` returns and its `flow.sh` trigger succeeds. Never add a tracker label check: the tracker label is not read by any gate.
 
 ## Related
 
-- See `ticket-auto/SKILL.md` Step 5d for the re-approval gate logic.
-- See `ticket-flow/workflow.json` for label-to-state mappings.
+- `ticket-auto/SKILL.md` STEP_4_6 for the iteration loop and the reapprove gate call.
+- `lib/gate-check.sh` `_gate_reapprove` for the gate itself.
+- `ticket-flow/workflow.json` for the `pr-iterate`, `re-claim` and `human-reject` triggers.
