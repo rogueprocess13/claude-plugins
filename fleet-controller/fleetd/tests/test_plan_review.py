@@ -47,6 +47,8 @@ _TS = '2026-11-20T10:00:00Z'
 _MODE_CASES = [
     ('no line', ['META|schema|info|1'], False),
     ('router', ['META|schema|info|1', 'META|plan-review|info|router'], True),
+    ('router, every ticket (flag true)',
+     ['META|plan-review|info|router — every ticket'], True),
     ('inline, fleetd phase dispatch',
      ['META|plan-review|info|inline — fleetd phase dispatch does not run '
       'STEP_2_2; the review stays in ticket-appraise-exec Step 3.6'], False),

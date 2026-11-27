@@ -226,6 +226,36 @@ test_prepare_simple_ticket_skips_with_a_log_line() {
   return $ok
 }
 
+# TICKET_ROUTER_PLAN_REVIEW=true: the router reviews every ticket, so a
+# simple ticket's plan is reviewed too.
+test_prepare_every_ticket_scope_reviews_a_simple_ticket() {
+  _ws_new simple
+  _log 'META|plan-review|info|router — every ticket' 'EXEC|create-artifact|done|simple-fix' 'EXEC|exec|done|agent done'
+  local out
+  out=$(_prepare)
+  grep -qx 'PLAN_REVIEW_READY=spawn' <<<"$out" &&
+    ! grep -q '|EXEC|plan-review|skip|' "$LOG" &&
+    grep -qF "Plan artifact under review: $TDIR/simple-fix.md" "$WS/logs/$TID-plan-review-instructions.txt" &&
+    [ "$(bash "$PR" scope "$LOG")" = every ]
+  local ok=$?
+  _ws_rm
+  return $ok
+}
+
+# The default `complex` marker is `router`: a complex ticket is reviewed, a
+# simple one skipped (test_prepare_simple_ticket_skips_with_a_log_line).
+test_scope_reads_the_marker() {
+  _ws_new
+  local ok=0
+  [ "$(bash "$PR" scope "$LOG")" = complex ] || ok=1
+  _log 'META|plan-review|info|router'
+  [ "$(bash "$PR" scope "$LOG")" = complex ] || ok=1
+  _log 'META|plan-review|info|router — every ticket'
+  [ "$(bash "$PR" scope "$LOG")" = every ] || ok=1
+  _ws_rm
+  return $ok
+}
+
 test_prepare_complex_ticket_writes_reviewer_instructions() {
   _ws_new
   _exec_done
@@ -488,6 +518,8 @@ _run "flag off: detect-resume goes to the gate" test_flag_off_detect_resume_goes
 _run "flag on: detect-resume routes to STEP_2_2 after EXEC" test_router_mode_detect_resume_routes_to_step_2_2
 _run "flag on: EXEC still runs first" test_router_mode_before_exec_still_runs_exec
 _run "prepare: a simple ticket skips with a log line" test_prepare_simple_ticket_skips_with_a_log_line
+_run "prepare: every-ticket scope reviews a simple ticket" test_prepare_every_ticket_scope_reviews_a_simple_ticket
+_run "scope: complex by default, every from the true marker" test_scope_reads_the_marker
 _run "prepare: a complex ticket gets reviewer instructions" test_prepare_complex_ticket_writes_reviewer_instructions
 _run "done: PASS advances" test_pass_advances
 _run "done: WARNINGS advance and are carried forward" test_warnings_advance_and_are_carried_forward

@@ -466,13 +466,14 @@
     {
       "name": "TICKET_ROUTER_PLAN_REVIEW",
       "plugin": "ticket-auto-pipeline",
-      "default": "false",
-      "on_value": "true",
+      "default": "complex",
+      "on_value": "complex",
+      "values": ["complex", "true", "false"],
       "category": "feature",
-      "summary": "The ticket-auto router reviews a complex ticket's plan itself, after EXEC, with a fresh read-only agent (STEP_2_2) that did not write the plan; ticket-appraise-exec then skips its inline adversarial review. A blocker sends the plan back to EXEC once, then stops with ADVERSARIAL_BLOCKED.",
+      "summary": "The ticket-auto router reviews a ticket's plan itself, after EXEC, with a fresh read-only agent (STEP_2_2) that did not write the plan; ticket-appraise-exec then skips its inline adversarial review. complex (the default) reviews complex tickets only, true every ticket, false none (Step 3.6 self-review, logged ADVERSARIAL_SELF_REVIEW). Any other value counts as complex, with a warning. A blocker sends the plan back to EXEC once, then stops with ADVERSARIAL_BLOCKED.",
       "requires": [],
-      "recommend": "situational",
-      "why": "Opt-in until one complex ticket has run with it on: it adds one agent spawn per review round and can add one EXEC re-run. Decided per ticket when its preamble first runs. fleetd phase dispatch does not run the step and keeps the inline review.",
+      "recommend": "on",
+      "why": "Leave at complex: one extra read-only agent spawn per review round on a complex ticket (and at most one EXEC re-run) buys a review by a context that did not write the plan. true adds that cost to simple tickets too; false falls back to the inline self-review. Decided per ticket when its preamble first runs. fleetd phase dispatch does not run the step and keeps the inline review.",
       "docs": "ticket-auto-pipeline/docs/plan-review.md"
     },
     {

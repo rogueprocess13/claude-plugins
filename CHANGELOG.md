@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## fleet-controller 0.60.0 (2026-11-27) — fleetd tells a person when a ticket is held for approval
+## fleet-controller 0.61.0 (2026-11-27) — fleetd tells a person when a ticket is held for approval
 
 Follow-up to #820 (PRs #831, #840). fleetd's gate-hold intake created a `hold_kind='gate'` row for an approval-type `gate-held` event (entry-gate reasons, plus `reapprove-needs-human`/`reapprove-plan-changed`), but posted no comment and sent no notification, so a ticket waiting for `approve.sh` was visible only on the dashboard. Human holds already told a person.
 
@@ -27,7 +27,17 @@ Follow-up to #820 (PRs #831, #840). fleetd's gate-hold intake created a `hold_ki
 - **Flag.** `FLEET_GATE_HOLD_NOTIFY` (default `true`, catalogued in `features.json`); `false` keeps the row and posts nothing.
 - **Tests.** `fleetd/tests/test_gate_hold.py`: `TestGateHoldReasonText`, `TestPostGateHoldComment`, `TestGateHoldIntakeNotify` (first intake posts and notifies once; second pass, restart and repeated event post nothing; each reason; content holds and the flag off post nothing; human holds unchanged) and `TestGateHoldNotifySharedSidecar` (real `fleet-notify.sh` with a stub `curl`). `test_supervisor.py`'s gate intake test now expects one gate comment and notification and no human ones. `lib/tests/test-fleet-notify.sh` and `test-fleet-reconcile.sh` cover the reason sentence, the key, and the reconcile path skipping a hold fleetd already notified. The fleetd test harness (`_hermetic.isolate`) now also clears `SLACK_BOT_TOKEN`/`SLACK_CHANNEL`.
 
-## 0.156.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
+## 0.158.0 (2026-11-27) — independent plan review on by default for complex tickets
+
+fleet-controller 0.60.0 (catalog entry and parity case). Follow-up to #816 (PR #833) and #667 (PR #838). Since those PRs ticket-appraise-exec Step 3.6 can only review a plan inside the phase agent that wrote it (logged `ADVERSARIAL_SELF_REVIEW`); the independent reviewer at STEP_2_2 ran only with `TICKET_ROUTER_PLAN_REVIEW=true`.
+
+- **New value `complex`, now the default.** `TICKET_ROUTER_PLAN_REVIEW` takes `complex` (default, also when unset: complex tickets get the independent review), `true` (every ticket, simple ones included) or `false` (never; Step 3.6's inline self-review as before). Any other value warns on stderr and counts as `complex`. Cost: one extra read-only agent spawn per review round on each complex ticket, plus at most one EXEC re-run after a blocker.
+- **Same deterministic complexity source.** "Complex" is the notes.md `## Complexity` score through `notes-parse.sh` `get_complexity`, the value the entry gate reads; nothing is re-scored. The preamble records the scope once (`META|plan-review|info|router` for `complex`, `router — every ticket` for `true`, no line for `false`), and `plan-review.sh prepare` applies it after EXEC. New `plan-review.sh scope <LOG>` (`complex`\|`every`). fleetd's `plan_review_router` needs no change: it already treats any `router …` line as router mode; `fleetd/tests/test_plan_review.py` gains the `router — every ticket` parity case.
+- **Note on `true`.** Before this release `true` reviewed complex tickets only (prepare skipped simple ones). It now means every ticket; `complex` is the old `true` behaviour. A ticket keeps whatever line its log already has.
+- **Step 3.6 unchanged.** STEP_2_2 runs after EXEC, so Step 3.6 cannot report a finished independent review; in router mode it already skips itself, and `ADVERSARIAL_SELF_REVIEW` is logged only when no independent review follows (`false`, or fleetd phase dispatch). Documented in docs/plan-review.md.
+- **Tests.** `test-ticket-preamble.sh` (false, unset, true, invalid, fleetd phase dispatch), `test-plan-review.sh` (every-ticket scope reviews a simple ticket; scope reader), `fleetd/tests/test_plan_review.py`.
+
+## 0.157.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
 
 Follow-up to #819 (PRs #828, #841). `playwright-scrub.sh` ran after a VERIFY agent (router post-spawn, ticket-verify, fleetd's phase-dispatch reap). A worker killed in the middle of VERIFY (fleetd KILL or KILL+RESTART, `fleet-stop.sh`, the watchdog, a crash, a person's Ctrl-C) reached none of them, so its snapshots kept the typed password in clear text until a later VERIFY ran.
 
