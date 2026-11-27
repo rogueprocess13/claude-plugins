@@ -1177,6 +1177,78 @@ STUB
   }
 )
 
+# Shared setup for the two key-derivation tests below: a stub curl that logs
+# every call, Slack configured, fleet-notify.sh sourced.
+_gate_key_curl_stub() {
+  local ws="$1" bindir
+  bindir=$(mktemp -d)
+  cat >"$bindir/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_CURL_LOG"
+printf '{"ok": true, "ts": "1700000000.000100"}'
+STUB
+  chmod +x "$bindir/curl"
+  export FAKE_CURL_LOG="$ws/.curl-calls"
+  : >"$FAKE_CURL_LOG"
+  export SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts"
+  export PATH="$bindir:$PATH"
+  source "$LIB_DIR/fleet-notify.sh"
+}
+
+# The ticket has no outbox file. fleetd and reconcile both fall back to the
+# `held: gate` outcome line's timestamp (`fleet_gate_held_key`), so a hold
+# fleetd already notified gets no second message from reconcile.
+test_unscoped_gate_held_no_outbox_shares_fleetd_key() (
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+  _plog_line "${ws}/CRE-53-pipeline.log" "META" "outcome" "info" "held: gate"
+  _gate_key_curl_stub "$ws"
+
+  # fleetd's call: the same derivation, run first.
+  key=$(fleet_gate_held_key CRE-53 "${ws}/CRE-53-pipeline.log")
+  [ "$key" = "2026-08-17T10:00:00Z" ] || {
+    echo "expected the outcome line timestamp as the key, got: $key" >&2
+    return 1
+  }
+  fleet_notify_gate_held CRE-53 "$ws" "$key" >/dev/null 2>&1
+
+  fleet_reconcile_orphans "$ws" "$queue_file" "" >/dev/null 2>&1
+
+  n=$(wc -l <"$FAKE_CURL_LOG")
+  [ "$n" -eq 1 ] || {
+    echo "expected exactly one Slack call for a no-outbox hold, got $n" >&2
+    return 1
+  }
+)
+
+# The outbox lives in the resolved log dir (FLEET_PIPELINE_LOG_DIR), not
+# beside the pipeline log in the state dir. Reconcile reads it from there,
+# the same dir fleetd's intake reads, so the keys still match.
+test_unscoped_gate_held_reads_outbox_from_resolved_log_dir() (
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  logdir=$(mktemp -d)
+  export FLEET_PIPELINE_LOG_DIR="$logdir"
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+  _plog_line "${ws}/CRE-54-pipeline.log" "META" "outcome" "info" "held: gate"
+  echo '{"seq":7,"ts":"2026-08-17T09:59:00Z","event":"gate-held","data":{"reason":"complex-ticket"}}' \
+    >"${logdir}/CRE-54-outbox.jsonl"
+  _gate_key_curl_stub "$ws"
+  fleet_notify_gate_held CRE-54 "$ws" "7@2026-08-17T09:59:00Z" >/dev/null 2>&1
+
+  fleet_reconcile_orphans "$ws" "$queue_file" "" >/dev/null 2>&1
+
+  n=$(wc -l <"$FAKE_CURL_LOG")
+  rm -rf "$logdir"
+  [ "$n" -eq 1 ] || {
+    echo "expected exactly one Slack call, got $n" >&2
+    return 1
+  }
+)
+
 # A still-broken gate-stop is bounded by the existing restart cap: it retries,
 # then dead-letters, and further scoped resumes leave it alone. No new counter,
 # no infinite-retry surface. Also covers VERIFY_EXHAUSTED, whose retry can never
@@ -1303,6 +1375,8 @@ _run "scoped resume re-enqueues gate-held" test_scoped_resume_reenqueues_gate_he
 _run "unscoped leaves gate-stopped and gate-held alone" test_unscoped_leaves_gate_stopped_and_gate_held_alone
 _run "unscoped gate-held notifies only for held:gate" test_unscoped_gate_held_notifies_only_for_held_gate
 _run "unscoped gate-held skips a hold fleetd notified" test_unscoped_gate_held_skips_hold_fleetd_notified
+_run "unscoped gate-held with no outbox shares fleetd's key" test_unscoped_gate_held_no_outbox_shares_fleetd_key
+_run "unscoped gate-held reads the outbox from the resolved log dir" test_unscoped_gate_held_reads_outbox_from_resolved_log_dir
 _run "scoped resume gate-stopped caps then dead-letters" test_scoped_resume_gate_stopped_caps_then_dead_letters
 _run "empty tids global behavior unchanged" test_empty_tids_global_behavior_unchanged
 

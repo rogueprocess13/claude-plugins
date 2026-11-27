@@ -544,21 +544,46 @@ with open(path, 'w') as f:
 # hold instance re-observed on a later reconcile pass does not.
 #
 # Two callers since gate-hold-notify: fleet-reconcile.sh (above) and
-# fleetd's `_gate_hold_intake_pass`, which calls it once when it creates
-# the `hold_kind='gate'` row. Both pass the same key when the ticket has a
-# `gate-held` outbox record — `{seq}@{ts}` of the latest one
-# (`_fleet_gate_held_key`) — so the shared sidecar sends one message per
-# hold, whichever caller is first. `why` (optional, 4th arg) is fleetd's
-# plain sentence for the hold reason; without it the original complex-
-# ticket line is used.
+# fleetd (`supervisor._announce_gate_hold_created`, called once when either
+# the gate-hold intake or phase dispatch creates the `hold_kind='gate'`
+# row). Both derive the key with `fleet_gate_held_key` below, the one
+# derivation, so the shared sidecar sends one message per hold, whichever
+# caller is first. `why` (optional, 4th arg) is fleetd's plain sentence for
+# the hold reason; without it the original complex-ticket line is used.
 _fleet_gate_held_key() {
   # _fleet_gate_held_key <outbox_file> — `{seq}@{ts}` of the latest
-  # `gate-held` record, or nothing. Same key as fleetd's
-  # `supervisor.gate_hold_notify_key`. A malformed line is skipped.
+  # `gate-held` record, or nothing. A malformed line is skipped.
   local outbox="$1"
   [ -f "$outbox" ] || return 0
   jq -rR 'fromjson? | select(.event == "gate-held") | "\(.seq)@\(.ts)"' \
     "$outbox" 2>/dev/null | tail -1
+}
+
+# fleet_gate_held_key <tid> <log_file> [outbox_file]
+#
+# The sidecar key of a ticket's current gate hold: the one derivation both
+# fleet-reconcile.sh and fleetd use.
+#   1. `{seq}@{ts}` of the latest `gate-held` outbox record;
+#   2. else the timestamp of the latest `META|outcome|info|held: gate` log
+#      line (no outbox file, or an outbox with no `gate-held` record);
+#   3. else nothing. The caller picks its own fallback then. Reconcile
+#      sends nothing in that case, because it notifies only for a
+#      `held: gate` line, so fleetd's `hold:{hold_id}` cannot collide.
+# `outbox_file` defaults to `{tid}-outbox.jsonl` in FLEET_PIPELINE_LOG_DIR
+# (the resolved dir fleetd hands reconcile), else beside the log file.
+fleet_gate_held_key() {
+  local tid="$1" log_file="$2" outbox="${3:-}"
+  if [ -z "$outbox" ]; then
+    outbox="${FLEET_PIPELINE_LOG_DIR:-$(dirname "$log_file")}/${tid}-outbox.jsonl"
+  fi
+  local key
+  key=$(_fleet_gate_held_key "$outbox")
+  if [ -z "$key" ] && [ -f "$log_file" ]; then
+    key=$(command grep -E '\|META\|outcome\|info\|held: gate' "$log_file" 2>/dev/null |
+      tail -1 | cut -d'|' -f1)
+  fi
+  printf '%s' "$key"
+  return 0
 }
 
 fleet_notify_gate_held() {

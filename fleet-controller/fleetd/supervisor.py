@@ -1449,7 +1449,7 @@ def _store_set_hold(state_dir, tid, kind, hold_id, reason='', generation=0):
 
 
 def _create_phase_dispatch_hold(state_dir, tid, generation, reconcile_cycle,
-                                reason=''):
+                                reason='', fleet_lib_dir=None):
     """Park a phase-dispatched ticket at a `gate` hold (task 10.1.4, D22).
 
     The one live caller of `store.set_hold` for `hold_kind='gate'` —
@@ -1469,6 +1469,16 @@ def _create_phase_dispatch_hold(state_dir, tid, generation, reconcile_cycle,
     plain release resumes at. Both hold sites (a fresh hold from `STEP_2_5`
     and a re-hold from `STEP_3_5` itself) resume at the reconcile agent,
     never straight back to the bash gate.
+
+    A row this call creates (a `set_hold` rowcount) is announced through
+    `_announce_gate_hold_created`, the same helper `_gate_hold_intake_pass`
+    calls, so a phase-dispatched hold gets the one comment and one Slack
+    message an intake-created hold gets. `fleet_lib_dir=None` (the default,
+    used by callers that only want the row) announces nothing. The comment's
+    reason is the ticket's unreleased approval-type `gate-held` outbox
+    record's reason when there is one (that is the reason a person can act
+    on); `reason` here is phase dispatch's own log detail, which gets the
+    generic sentence.
     """
     hold_id = _store_mint_hold_id(state_dir, tid, generation, reconcile_cycle)
     if not hold_id:
@@ -1477,6 +1487,13 @@ def _create_phase_dispatch_hold(state_dir, tid, generation, reconcile_cycle,
         state_dir, tid, 'gate', hold_id, reason=reason, generation=generation)
     if rowcount:
         _store_record_position(state_dir, tid, 'STEP_3_5', source='dispatch')
+        if fleet_lib_dir is not None:
+            record = _find_unreleased_gate_hold(state_dir, tid)
+            announce_reason = (
+                (record.get('data') or {}).get('reason', '') if record
+                else reason)
+            _announce_gate_hold_created(
+                fleet_lib_dir, state_dir, tid, hold_id, announce_reason)
     return hold_id
 
 
@@ -2027,42 +2044,64 @@ def _notify_hold(fleet_lib_dir, state_dir, tid, transition):
         pass
 
 
-def _notify_gate_held(fleet_lib_dir, state_dir, tid, hold_key, why):
-    """Fire `fleet_notify_gate_held <tid> <state_dir> <hold_key> <why>`.
+def _notify_gate_held(fleet_lib_dir, state_dir, tid, hold_id, why):
+    """Fire `fleet_notify_gate_held` for one gate hold, keyed by bash.
 
     Same shell-out shape as `_notify_hold` just above, and the same bash
     notifier `fleet-reconcile.sh` already calls for a `held: gate` outcome,
-    so both callers share one sidecar (`{tid}-gate-held-notify.json`) and
-    one key (`gate_hold_notify_key`): a hold notified by one is not
-    notified again by the other. Fail-soft.
+    so both callers share one sidecar (`{tid}-gate-held-notify.json`). The
+    key is derived in one place, bash `fleet_gate_held_key`, which both
+    callers run: the latest `gate-held` outbox record (`{seq}@{ts}`), else
+    the `META|outcome|info|held: gate` line's timestamp, else nothing. Only
+    when it prints nothing does fleetd fall back to `hold:{hold_id}`; with
+    no outbox record and no `held: gate` line, reconcile sends nothing for
+    the ticket, so that key cannot collide. The outbox is read from fleetd's
+    resolved log dir, the same `FLEET_PIPELINE_LOG_DIR` fleetd hands to
+    reconcile. Fail-soft.
     """
     notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
     if not notify_script.is_file():
         return
+    log_file = Path(state_dir) / f'{tid}-pipeline.log'
+    outbox = Path(_resolved_log_dir(state_dir)) / f'{tid}-outbox.jsonl'
     try:
         subprocess.run(
             ['bash', '-c',
-             f'source {shlex.quote(str(notify_script))} && '
-             f'fleet_notify_gate_held {shlex.quote(tid)} '
-             f'{shlex.quote(str(state_dir))} {shlex.quote(hold_key)} '
-             f'{shlex.quote(why)}'],
+             'source "$1" && '
+             'key=$(fleet_gate_held_key "$2" "$4" "$5"); '
+             '[ -n "$key" ] || key="hold:$6"; '
+             'fleet_notify_gate_held "$2" "$3" "$key" "$7"',
+             '_', str(notify_script), tid, str(state_dir), str(log_file),
+             str(outbox), hold_id or '', why],
             timeout=15, capture_output=True,
         )
     except (OSError, subprocess.SubprocessError):
         pass
 
 
-def gate_hold_notify_key(record):
-    """`{seq}@{ts}` of one `gate-held` outbox record: the identity of one
-    gate hold, shared with `fleet-reconcile.sh`'s own call to
-    `fleet_notify_gate_held`, which reads the same record from the outbox."""
-    return f"{record.get('seq', '')}@{record.get('ts', '')}"
-
-
 def gate_hold_notify_enabled():
     """`FLEET_GATE_HOLD_NOTIFY` (default on): post a comment and send a
     notification when a gate hold row is first created."""
     return os.environ.get('FLEET_GATE_HOLD_NOTIFY', 'true') != 'false'
+
+
+def _announce_gate_hold_created(fleet_lib_dir, state_dir, tid, hold_id,
+                                reason):
+    """Tell a person, once, that a `hold_kind='gate'` row now exists.
+
+    The one helper both gate-row creators call — `_gate_hold_intake_pass`
+    and `_create_phase_dispatch_hold` — and only after their own `set_hold`
+    returned a rowcount, so the two paths cannot drift: a row created by one
+    and later seen by the other is not created again (`WHERE held = 0`) and
+    so is not announced again. Posts `gate_hold.post_gate_hold_comment` and
+    sends `_notify_gate_held`. `FLEET_GATE_HOLD_NOTIFY=false` turns both off.
+    """
+    if _gate_hold_mod is None or not gate_hold_notify_enabled():
+        return
+    _gate_hold_mod.post_gate_hold_comment(tid, hold_id, reason)
+    _notify_gate_held(
+        fleet_lib_dir, state_dir, tid, hold_id,
+        _gate_hold_mod.gate_hold_reason_text(reason))
 
 
 def _sweep_stale_generation_files(state_dir, tid, current_generation,
@@ -4996,7 +5035,7 @@ class Supervisor:
             reconcile_cycle = int((counters or {}).get('RECONCILE_CYCLE', 0))
             hold_id = _create_phase_dispatch_hold(
                 str(self._state_dir), tid, generation, reconcile_cycle,
-                reason=decision.detail)
+                reason=decision.detail, fleet_lib_dir=self._fleet_lib_dir)
             print(
                 f"fleetd[{os.getpid()}]: {tid} held ({decision.detail}, "
                 f"hold_id={hold_id})"
@@ -5874,7 +5913,9 @@ class Supervisor:
         it creates the row: `gate_hold.post_gate_hold_comment` (the same
         `save_comment` path `post_human_hold_comment` uses, with the reason
         as a plain sentence and the exact `approve.sh` command) and
-        `_notify_gate_held` (Slack through `fleet-notify.sh`). Only a
+        `_notify_gate_held` (Slack through `fleet-notify.sh`), both through
+        `_announce_gate_hold_created`, which phase dispatch's
+        `_create_phase_dispatch_hold` calls too. Only a
         `set_hold` that returned a rowcount reaches them, the same
         idempotency proof the human path relies on: a second pass, a
         restart, or a repeated `gate-held` event while the row is still
@@ -5929,13 +5970,8 @@ class Supervisor:
                 # path (idempotent), or the store went away between mint
                 # and set — either way, no duplicate row.
                 continue
-            if not gate_hold_notify_enabled():
-                continue
-            _gate_hold_mod.post_gate_hold_comment(tid, hold_id, reason)
-            _notify_gate_held(
-                self._fleet_lib_dir, self._state_dir, tid,
-                gate_hold_notify_key(record),
-                _gate_hold_mod.gate_hold_reason_text(reason))
+            _announce_gate_hold_created(
+                self._fleet_lib_dir, self._state_dir, tid, hold_id, reason)
 
     # ── run ─────────────────────────────────────────────────────────────────
 

@@ -1496,10 +1496,10 @@ class TestGateHoldIntakeNotify(_IntakeBase):
         self.assertEqual((tid, reason), ('TST-N1', 'complex-ticket'))
         self.assertEqual(hold_id, row['hold_id'])
         self.assertEqual(len(self.notifies), 1)
-        _lib, state_dir, ntid, key, why = self.notifies[0]
+        _lib, state_dir, ntid, nhold_id, why = self.notifies[0]
         self.assertEqual(ntid, 'TST-N1')
         self.assertEqual(Path(state_dir), self.workspace)
-        self.assertEqual(key, '1@2026-09-23T00:01:00Z')
+        self.assertEqual(nhold_id, row['hold_id'])
         self.assertEqual(why, gate_hold.GATE_HOLD_REASON_TEXT['complex-ticket'])
         self.assertEqual(self.human, [])
 
@@ -1580,8 +1580,10 @@ class TestGateHoldNotifySharedSidecar(unittest.TestCase):
         (bindir / 'curl').chmod(0o755)
         self.curl_log = self.dir / 'curl.log'
         self._saved = {k: os.environ.get(k) for k in (
-            'PATH', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL', 'FAKE_CURL_LOG')}
+            'PATH', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL', 'FAKE_CURL_LOG',
+            'FLEET_PIPELINE_LOG_DIR')}
         os.environ.update({
+            'FLEET_PIPELINE_LOG_DIR': str(self.dir),
             'PATH': f"{bindir}:{os.environ.get('PATH', '')}",
             'SLACK_BOT_TOKEN': 'xoxb-test', 'SLACK_CHANNEL': '#t',
             'FAKE_CURL_LOG': str(self.curl_log)})
@@ -1604,32 +1606,157 @@ class TestGateHoldNotifySharedSidecar(unittest.TestCase):
             return []
         return self.curl_log.read_text().splitlines()
 
-    def test_one_message_per_hold_across_both_callers(self):
+    def _reconcile_key(self, tid):
+        """The key fleet-reconcile.sh derives for `tid` (same function)."""
         import subprocess
+        proc = subprocess.run(
+            ['bash', '-c',
+             'source "$1/fleet-notify.sh"; '
+             'fleet_gate_held_key "$3" "$2/$3-pipeline.log"',
+             '_', str(FLEET_LIB), str(self.dir), tid],
+            capture_output=True, text=True, timeout=30)
+        return proc.stdout
+
+    def _reconcile_notify(self, tid):
+        """What fleet-reconcile.sh runs for a `held: gate` outcome."""
+        import subprocess
+        subprocess.run(
+            ['bash', '-c',
+             'source "$1/fleet-notify.sh"; '
+             'key=$(fleet_gate_held_key "$3" "$2/$3-pipeline.log"); '
+             'fleet_notify_gate_held "$3" "$2" "$key"',
+             '_', str(FLEET_LIB), str(self.dir), tid],
+            capture_output=True, text=True, timeout=30)
+
+    def test_one_message_per_hold_across_both_callers(self):
         from fleetd import supervisor
-        rec = {'seq': 4, 'ts': '2026-09-23T00:01:00Z'}
         why = gate_hold.GATE_HOLD_REASON_TEXT['reapprove-needs-human']
         for _ in range(2):
             supervisor._notify_gate_held(
-                FLEET_LIB, self.dir, 'TST-S1',
-                supervisor.gate_hold_notify_key(rec), why)
+                FLEET_LIB, self.dir, 'TST-S1', 'hold:TST-S1:g0:a0', why)
         sends = self._sends()
         self.assertEqual(len(sends), 1)
         text = json.loads(sends[0])['text']
         self.assertIn(why, text)
         self.assertIn(APPROVE_CMD.format(tid='TST-S1'), text)
 
-        # The reconcile path: same key from the outbox, so no second send.
-        proc = subprocess.run(
-            ['bash', '-c',
-             'source "$1/fleet-notify.sh"; '
-             'key=$(_fleet_gate_held_key "$2/TST-S1-outbox.jsonl"); '
-             'echo "$key"; fleet_notify_gate_held TST-S1 "$2" "$key"',
-             '_', str(FLEET_LIB), str(self.dir)],
-            capture_output=True, text=True, timeout=30)
-        self.assertEqual(proc.stdout.splitlines()[0],
-                         supervisor.gate_hold_notify_key(rec))
+        # The reconcile path: the same key from the outbox, so no second send.
+        self.assertEqual(self._reconcile_key('TST-S1'),
+                         '4@2026-09-23T00:01:00Z')
+        self._reconcile_notify('TST-S1')
         self.assertEqual(len(self._sends()), 1)
+
+    def test_no_outbox_both_callers_send_one_message(self):
+        """No outbox file: both sides key on the `held: gate` outcome
+        line's timestamp, whichever fires first."""
+        from fleetd import supervisor
+        (self.dir / 'TST-S2-pipeline.log').write_text(
+            '2026-09-23T00:00:00Z|META|schema|info|1\n'
+            '2026-09-23T00:02:00Z|META|outcome|info|held: gate\n')
+        self.assertEqual(self._reconcile_key('TST-S2'),
+                         '2026-09-23T00:02:00Z')
+        # Reconcile first, then fleetd.
+        self._reconcile_notify('TST-S2')
+        supervisor._notify_gate_held(
+            FLEET_LIB, self.dir, 'TST-S2', 'hold:TST-S2:g0:a0', 'why')
+        self.assertEqual(len(self._sends()), 1)
+        # fleetd first, then reconcile, for a second ticket.
+        (self.dir / 'TST-S3-pipeline.log').write_text(
+            '2026-09-23T00:03:00Z|META|outcome|info|held: gate\n')
+        supervisor._notify_gate_held(
+            FLEET_LIB, self.dir, 'TST-S3', 'hold:TST-S3:g0:a0', 'why')
+        self._reconcile_notify('TST-S3')
+        self.assertEqual(len(self._sends()), 2)
+
+    def test_no_outbox_and_no_outcome_line_falls_back_to_hold_id(self):
+        import hashlib
+        from fleetd import supervisor
+        self.assertEqual(self._reconcile_key('TST-S4'), '')
+        for _ in range(2):
+            supervisor._notify_gate_held(
+                FLEET_LIB, self.dir, 'TST-S4', 'hold:TST-S4:g0:a0', 'why')
+        self.assertEqual(len(self._sends()), 1)
+        sidecar = json.loads(
+            (self.dir / 'TST-S4-gate-held-notify.json').read_text())
+        self.assertEqual(
+            sidecar['key'],
+            hashlib.sha256(b'hold:hold:TST-S4:g0:a0').hexdigest())
+
+
+class TestPhaseDispatchGateHoldNotify(_IntakeBase):
+    """A gate row created by phase dispatch (`_create_phase_dispatch_hold`)
+    is announced once through the same helper as the intake, and the two
+    paths never announce one hold twice."""
+
+    def _create(self, tid, cycle=0, lib=FLEET_LIB):
+        return self.supervisor_mod._create_phase_dispatch_hold(
+            str(self.workspace), tid, 0, cycle,
+            reason='gate held for approval', fleet_lib_dir=lib)
+
+    def test_phase_dispatch_hold_comments_and_notifies_once(self):
+        self._seed_gate('TST-P1', 'complex-ticket')
+        hold_id = self._create('TST-P1')
+        self.assertEqual(self._row('TST-P1').get('hold_id'), hold_id)
+        self.assertEqual(self.comments,
+                         [('TST-P1', hold_id, 'complex-ticket')])
+        self.assertEqual(len(self.notifies), 1)
+        _lib, _sd, tid, nhold_id, why = self.notifies[0]
+        self.assertEqual((tid, nhold_id), ('TST-P1', hold_id))
+        self.assertEqual(why,
+                         gate_hold.GATE_HOLD_REASON_TEXT['complex-ticket'])
+        # A retried creation call is a no-op.
+        self._create('TST-P1')
+        self.assertEqual((len(self.comments), len(self.notifies)), (1, 1))
+
+    def test_phase_dispatch_row_then_intake_pass_still_one(self):
+        self._seed_gate('TST-P2', 'manual-mode')
+        self._create('TST-P2')
+        self._sup()._gate_hold_intake_pass()
+        self._sup()._gate_hold_intake_pass()
+        self.assertEqual((len(self.comments), len(self.notifies)), (1, 1))
+
+    def test_intake_row_then_phase_dispatch_still_one(self):
+        self._seed_gate('TST-P3', 'complex-ticket')
+        self._sup()._gate_hold_intake_pass()
+        self._create('TST-P3')
+        self.assertEqual((len(self.comments), len(self.notifies)), (1, 1))
+
+    def test_no_outbox_record_uses_the_row_reason(self):
+        (self.workspace / 'TST-P4-pipeline.log').write_text(
+            '2026-09-23T00:00:00Z|META|schema|info|1\n')
+        hold_id = self._create('TST-P4')
+        self.assertEqual(self.comments,
+                         [('TST-P4', hold_id, 'gate held for approval')])
+        self.assertEqual(self.notifies[0][4],
+                         gate_hold.gate_hold_reason_text('x-unknown'))
+
+    def test_flag_off_creates_row_but_posts_nothing(self):
+        os.environ['FLEET_GATE_HOLD_NOTIFY'] = 'false'
+        self._seed_gate('TST-P5', 'complex-ticket')
+        self._create('TST-P5')
+        self.assertEqual(self._row('TST-P5').get('held'), 1)
+        self.assertEqual((self.comments, self.notifies), ([], []))
+
+    def test_no_lib_dir_posts_nothing(self):
+        self._seed_gate('TST-P6', 'complex-ticket')
+        self._create('TST-P6', lib=None)
+        self.assertEqual(self._row('TST-P6').get('held'), 1)
+        self.assertEqual((self.comments, self.notifies), ([], []))
+
+    def test_next_hold_decision_passes_the_lib_dir(self):
+        from unittest import mock
+        from fleetd import phase_dispatch as phase_mod
+        sup = self._sup()
+        decision = phase_mod.NextStep(
+            phase_mod.NEXT_HOLD, '', None, '', 'gate', 'STEP_3_5',
+            'gate held for approval')
+        with mock.patch.object(self.supervisor_mod,
+                               '_create_phase_dispatch_hold',
+                               return_value='h') as create:
+            sup._act_on_next_step_locked(
+                'TST-P7', decision, None, '', '', '', 'r', {})
+        self.assertEqual(create.call_args.kwargs.get('fleet_lib_dir'),
+                         sup._fleet_lib_dir)
 
 
 if __name__ == '__main__':
