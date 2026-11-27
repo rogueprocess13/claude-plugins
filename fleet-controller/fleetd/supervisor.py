@@ -3411,10 +3411,16 @@ def _find_unreleased_human_hold(state_dir, tid):
 #: and are out of scope for `_gate_hold_intake_pass` (tracker-inbound-
 #: approval, design.md Non-Goals). `plan-changed-since-approval` (a person's
 #: approval whose plan changed, lib/plan-binding.sh) is released only by a
-#: person running approve.sh again, so it is an approval hold too.
+#: person running approve.sh again, so it is an approval hold too. So are
+#: the two reapprove-gate holds (GitHub #820, `gate_hold.REAPPROVE_HOLD_REASONS`):
+#: `reapprove-needs-human` (an amended plan only a policy approval covers)
+#: and `reapprove-plan-changed`. The reconcile pass probes those with
+#: `gate-check.sh --mode reapprove`, not `--mode entry`, keyed on the row's
+#: `hold_reason`.
 _GATE_HOLD_APPROVAL_REASONS = frozenset(
     {'complex-ticket', 'manual-mode', 'default-fallback',
-     'plan-changed-since-approval'})
+     'plan-changed-since-approval',
+     'reapprove-needs-human', 'reapprove-plan-changed'})
 
 
 def _find_unreleased_gate_hold(state_dir, tid):
@@ -5820,7 +5826,8 @@ class Supervisor:
 
         Scoped to the approval-type `gate-held` reasons
         (`complex-ticket`/`manual-mode`/`default-fallback`/
-        `plan-changed-since-approval`) via
+        `plan-changed-since-approval`, plus the reapprove gate's
+        `reapprove-needs-human`/`reapprove-plan-changed`) via
         `_find_unreleased_gate_hold` — the other 5 `_gate_emit_held` call
         sites are content/fetch holds that resolve by a subsequent gate
         re-run, not an approval decision, and get no row from this pass

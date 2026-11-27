@@ -20,7 +20,9 @@ The gate itself is never invoked here; it is injected. What is under test is
 the decision made from its exit code, not Linear.
 """
 
+import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -1053,6 +1055,267 @@ class ApprovalHoldReasonsTest(unittest.TestCase):
                       supervisor._GATE_HOLD_APPROVAL_REASONS)
         self.assertNotIn('linear-fetch-failed',
                          supervisor._GATE_HOLD_APPROVAL_REASONS)
+
+    def test_reapprove_holds_are_approval_holds(self):
+        """GitHub #820 follow-up: the reapprove gate's two hold reasons get
+        a row too; before, such a ticket was invisible to the fleet."""
+        from fleetd import supervisor
+        self.assertTrue(gate_hold.REAPPROVE_HOLD_REASONS
+                        <= supervisor._GATE_HOLD_APPROVAL_REASONS)
+
+
+
+# ── Reapprove-gate holds (GitHub #820 follow-up) ────────────────────────────
+# `gate-check.sh --mode reapprove` holds with `reapprove-needs-human` or
+# `reapprove-plan-changed`. fleetd must make a row for those holds and probe
+# them with `--mode reapprove`, so they release on the reapprove rule (a
+# person's approval of the current plan), never on the entry gate's.
+
+REAPPROVE_HELD_LINE = (
+    '2026-09-03T10:00:00Z|GATE|reapprove|fail|held: the amended plan needs '
+    "a person's approval")
+REAPPROVE_DONE_LINE = '2026-09-03T10:00:00Z|GATE|reapprove|done|'
+
+
+class TestReapproveHoldProbe(GateHoldTestBase):
+    """The 'gate' predicate picks its probe by the row's hold_reason."""
+
+    def _probes(self, entry_code, reapprove_code):
+        calls = []
+
+        def entry(tid, hb_log_file='', lib_dir=None, log_file=''):
+            calls.append('entry')
+            return entry_code, [HELD_LINE]
+
+        def reapprove(tid, hb_log_file='', lib_dir=None, log_file=''):
+            calls.append('reapprove')
+            lines = ([REAPPROVE_DONE_LINE]
+                     if reapprove_code == gate_hold.GATE_ENTRY_PASS
+                     else [REAPPROVE_HELD_LINE])
+            return reapprove_code, lines
+
+        return calls, entry, reapprove
+
+    def _run(self, reason, entry_code, reapprove_code):
+        calls, entry, reapprove = self._probes(entry_code, reapprove_code)
+        d = gate_hold.reconcile_hold(
+            self.table, 'CRE-9',
+            {'hold_kind': 'gate', 'hold_reason': reason,
+             'position': 'STEP_4'},
+            str(self.log), entry_gate=entry, reapprove_gate=reapprove)
+        return d, calls
+
+    def test_reapprove_reasons_are_the_ones_gate_check_emits(self):
+        self.assertEqual(
+            gate_hold.REAPPROVE_HOLD_REASONS,
+            {'reapprove-needs-human', 'reapprove-plan-changed'})
+
+    def test_reapprove_hold_is_probed_with_the_reapprove_gate(self):
+        for reason in sorted(gate_hold.REAPPROVE_HOLD_REASONS):
+            d, calls = self._run(reason, gate_hold.GATE_ENTRY_PASS,
+                                 gate_hold.GATE_ENTRY_HELD)
+            self.assertEqual(calls, ['reapprove'], reason)
+            self.assertEqual(d.action, gate_hold.HOLD, reason)
+
+    def test_still_held_reapprove_poll_writes_nothing(self):
+        before = self._log_lines()
+        self._run('reapprove-needs-human', gate_hold.GATE_ENTRY_PASS,
+                  gate_hold.GATE_ENTRY_HELD)
+        self.assertEqual(self._log_lines(), before)
+
+    def test_reapprove_pass_releases_and_records_the_release_line(self):
+        d, calls = self._run('reapprove-plan-changed',
+                             gate_hold.GATE_ENTRY_HELD,
+                             gate_hold.GATE_ENTRY_PASS)
+        self.assertEqual(calls, ['reapprove'])
+        self.assertEqual(d.action, gate_hold.RELEASE)
+        self.assertIn(REAPPROVE_DONE_LINE, self._log_lines())
+
+    def test_reapprove_revoked_is_a_gate_stop(self):
+        d, _ = self._run('reapprove-needs-human', gate_hold.GATE_ENTRY_PASS,
+                         gate_hold.GATE_ENTRY_STOP)
+        self.assertEqual(d.action, gate_hold.GATE_STOP)
+        self.assertIn('reapprove gate', d.detail)
+
+    def test_entry_gate_hold_still_uses_the_entry_gate(self):
+        for reason in ('complex-ticket', 'manual-mode', 'default-fallback',
+                       'plan-changed-since-approval', ''):
+            d, calls = self._run(reason, gate_hold.GATE_ENTRY_HELD,
+                                 gate_hold.GATE_ENTRY_PASS)
+            self.assertEqual(calls, ['entry'], reason)
+            self.assertEqual(d.action, gate_hold.HOLD, reason)
+            self.assertEqual(d.detail, 'still held', reason)
+
+    def test_run_reapprove_gate_passes_mode_reapprove(self):
+        captured = {}
+        real_run = gate_hold.subprocess.run
+
+        def _capture(argv, **kwargs):
+            captured['argv'] = argv
+            raise gate_hold.subprocess.TimeoutExpired(cmd=argv, timeout=1)
+
+        gate_hold.subprocess.run = _capture
+        lib_dir = REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
+        try:
+            code, _ = gate_hold.run_reapprove_gate(
+                'CRE-9', lib_dir=str(lib_dir))
+        finally:
+            gate_hold.subprocess.run = real_run
+        self.assertIsNone(code)
+        self.assertEqual(captured.get('argv', [])[-2:],
+                         ['--mode', 'reapprove'])
+
+
+# A stand-in gate-check.sh for the end-to-end test below. The approval rule
+# itself is gate-check.sh's and is tested in lib/tests/test-gate-check.sh;
+# this stand-in answers from a file so the test can play "a person ran
+# approve.sh". Like the real gate it emits gate-released to the outbox on a
+# pass. Every probe appends its mode to $FAKE_GATE_CALLS.
+_FAKE_MODE_GATE_SH = r"""#!/usr/bin/env bash
+TID="$1"; LOG="$2"; MODE="$5"
+echo "$MODE" >> "$FAKE_GATE_CALLS"
+if [ "$MODE" = "reapprove" ]; then
+  if [ "$(cat "$FAKE_APPROVAL" 2>/dev/null)" = "human" ]; then
+    echo "2026-09-23T01:00:00Z|GATE|reapprove|done|" >> "$LOG"
+    printf '%s\n' '{"seq":99,"tid":"'"$TID"'","ts":"2026-09-23T01:00:00Z","gen":0,"event":"gate-released","data":{"provenance":"human"}}' >> "$FAKE_OUTBOX"
+    exit 0
+  fi
+  echo "2026-09-23T01:00:00Z|GATE|reapprove|fail|held: needs a person" >> "$LOG"
+  exit 1
+fi
+echo "2026-09-23T01:00:00Z|GATE|gate|fail|held: complex ticket" >> "$LOG"
+exit 1
+"""
+
+
+class TestReapproveHoldIntakeToRelease(unittest.TestCase):
+    """Intake creates the row, the reconcile pass probes `--mode reapprove`,
+    and the row releases only once a person's approval exists."""
+
+    TID = 'TST-RA1'
+
+    def setUp(self):
+        self.workspace = Path(tempfile.mkdtemp(prefix='fleetd-reapprove-'))
+        self.lib = self.workspace / 'lib'
+        self.lib.mkdir()
+        (self.lib / 'gate-check.sh').write_text(_FAKE_MODE_GATE_SH)
+        self.calls = self.workspace / 'gate-calls.txt'
+        self.approval = self.workspace / 'approval.txt'
+        self.approval.write_text('policy')
+        self._saved = {k: os.environ.get(k) for k in (
+            'CLAUDE_SKILLS_LIB', 'FLEET_PIPELINE_LOG_DIR', 'FAKE_GATE_CALLS',
+            'FAKE_APPROVAL', 'FAKE_OUTBOX')}
+        os.environ['CLAUDE_SKILLS_LIB'] = str(self.lib)
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = str(self.workspace)
+        os.environ['FAKE_GATE_CALLS'] = str(self.calls)
+        os.environ['FAKE_APPROVAL'] = str(self.approval)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.workspace, ignore_errors=True)
+
+    def _seed(self, tid, reason, held_line):
+        log = self.workspace / f'{tid}-pipeline.log'
+        log.write_text('\n'.join([
+            '2026-09-23T00:00:00Z|META|schema|info|1',
+            held_line,
+            '2026-09-23T00:02:00Z|META|outcome|info|held: gate',
+        ]) + '\n')
+        outbox = self.workspace / f'{tid}-outbox.jsonl'
+        outbox.write_text(json.dumps({
+            'seq': 1, 'tid': tid, 'ts': '2026-09-23T00:01:00Z', 'gen': 0,
+            'event': 'gate-held', 'data': {'reason': reason}}) + '\n')
+        os.environ['FAKE_OUTBOX'] = str(outbox)
+        return log
+
+    def _supervisor(self):
+        from fleetd.supervisor import Supervisor
+        return Supervisor(state_dir=str(self.workspace),
+                          pidfile=str(self.workspace / 'test.pid'),
+                          spawn_enabled=False)
+
+    def _row(self, tid):
+        from fleetd import store
+        with store.open_store(self.workspace) as st:
+            return st.get_ticket(tid) or {}
+
+    def _modes(self):
+        if not self.calls.exists():
+            return []
+        return self.calls.read_text().split()
+
+    def test_reapprove_hold_row_created_then_released_on_human_approval(self):
+        log = self._seed(self.TID, 'reapprove-needs-human',
+                         '2026-09-23T00:01:00Z|GATE|reapprove|fail|held: the '
+                         "amended plan needs a person's approval")
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+            row = self._row(self.TID)
+            self.assertEqual(row.get('held'), 1)
+            self.assertEqual(row.get('hold_kind'), 'gate')
+            self.assertEqual(row.get('hold_reason'), 'reapprove-needs-human')
+
+            # Only a policy approval: still held, nothing written.
+            before = log.read_text()
+            sup._hold_reconcile_pass()
+            self.assertEqual(self._modes(), ['reapprove'])
+            self.assertEqual(self._row(self.TID).get('held'), 1)
+            self.assertEqual(log.read_text(), before)
+
+            # A person runs approve.sh: the next pass releases the row.
+            self.approval.write_text('human')
+            sup._hold_reconcile_pass()
+            self.assertEqual(self._modes(), ['reapprove', 'reapprove'])
+            self.assertEqual(self._row(self.TID).get('held'), 0)
+            self.assertIn('|GATE|reapprove|done|', log.read_text())
+
+            # The released hold is not re-created by a later intake pass.
+            sup._gate_hold_intake_pass()
+            self.assertEqual(self._row(self.TID).get('held'), 0)
+        finally:
+            sup.release_lock()
+
+    def test_plan_changed_reapprove_hold_gets_a_row(self):
+        self._seed(self.TID, 'reapprove-plan-changed',
+                   '2026-09-23T00:01:00Z|GATE|reapprove|fail|held: '
+                   'PLAN_CHANGED_SINCE_APPROVAL')
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            sup.release_lock()
+        row = self._row(self.TID)
+        self.assertEqual(row.get('held'), 1)
+        self.assertEqual(row.get('hold_reason'), 'reapprove-plan-changed')
+
+    def test_entry_gate_hold_unchanged(self):
+        """A complex-ticket entry hold still gets its row and is still
+        probed with `--mode entry`, never `--mode reapprove`."""
+        tid = 'TST-RA2'
+        log = self._seed(tid, 'complex-ticket',
+                         '2026-09-23T00:01:00Z|GATE|gate|fail|held: complex '
+                         'ticket')
+        self.approval.write_text('human')
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+            self.assertEqual(self._row(tid).get('hold_reason'),
+                             'complex-ticket')
+            before = log.read_text()
+            sup._hold_reconcile_pass()
+        finally:
+            sup.release_lock()
+        self.assertEqual(self._modes(), ['entry'])
+        self.assertEqual(self._row(tid).get('held'), 1)
+        self.assertEqual(log.read_text(), before)
 
 
 if __name__ == '__main__':
