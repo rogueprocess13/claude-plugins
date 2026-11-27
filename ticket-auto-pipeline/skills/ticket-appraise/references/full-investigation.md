@@ -8,7 +8,7 @@ Read only under the condition in SKILL.md Step 1.3e. These are the steps an elig
 - Step 2.5 — Complexity sweep (persona, scoring run, routing, `## Complexity` record; the scoring rubric stays in SKILL.md)
 - Step 2.6 — Prior-art search (claude-mem, local tickets, ai-context.md)
 - Step 3 — Investigate the codebase (inline path): 3a prescan and wiki loading (3a.0–3a.4), 3b service CLAUDE.md, 3c call chain (Paths P, A, B and conflict resolution), 3d data availability, 3e validation pass, 3f root cause hypothesis
-- Step 3-Agent — Investigate the codebase (delegated path): 3-Agent-a loading, 3-Agent-b Explore agent prompt
+- Step 3-Agent — Investigate the codebase (delegated path): 3-Agent-a loading, 3-Agent-b investigation prompt
 
 ---
 
@@ -79,7 +79,7 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "$(bash ~/.clau
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE prior-art start "Searching claude-mem"
 
-Run the `/claude-mem:mem-search` skill with 2–3 keywords derived from the ticket title and description (e.g. component name, feature area, error message fragment). Keep the query tight — one focused search, not multiple.
+Interactive runs only: one focused claude-mem mem-search, 2–3 keywords from the ticket title and description. A phase agent has no Skill or claude-mem tool (#667): log `plog.sh META gate-warn info "PRIOR_ART_NO_CLAUDE_MEM"`, go on to local tickets.
 
 **Evaluate each hit:**
 
@@ -271,8 +271,8 @@ substring match of the ticket text against its Lookup tables — zero LLM varian
 
 **If Tier 1 returned no matches**, attempt semantic search via the prescan knowledge corpus:
 
-1. Prime the corpus: `mcp__plugin_claude-mem_mcp-search__prime_corpus(name="prescan-<repo-slug>")`
-2. Query semantically: `mcp__plugin_claude-mem_mcp-search__query_corpus(name="prescan-<repo-slug>", question="{ticket title + description}")`
+1. Interactive runs only (no phase agent has a claude-mem tool, #667): prime corpus `prescan-<repo-slug>` (`prime_corpus`).
+2. Query it with the ticket title and description (`query_corpus`).
 3. If the corpus returns relevant doc references → load and verify those files (same verification as Tier 1 step 3).
 4. If corpus query returns nothing, or claude-mem MCP is unavailable → this repo's per-repo search is exhausted; 3a.3 below is where the wiki picks up, either because it was already routed to (3a.0b) or as the fallback here.
 5. Record: `**Prescan corpus:** <repo-slug> — {matches found | no match | unavailable}`
@@ -461,7 +461,7 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation done "{N} file
 
 ## Step 3-Agent — Investigate the codebase (delegated path — complex tickets)
 
-bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Delegating to Explore agent"
+bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Delegated-path investigation"
 
 ### 3-Agent-a — Load prescan knowledge and wiki context
 
@@ -475,11 +475,11 @@ Run exactly the same loading logic as Step 3a above — wiki alongside prescan, 
 
 Record all findings in notes.md. This runs for BOTH paths — simple (3a) and complex (here).
 
-### 3-Agent-b — Spawn the Explore agent
+### 3-Agent-b — Run the isolated investigation
 
-Spawn an `Explore` subagent to perform the investigation in isolation. Give it **no opinion** about where the fix should be — only facts and questions.
+No phase agent holds the Agent tool (#667): answer this prompt yourself, read-only, with no opinion on where the fix belongs. Log `plog.sh META gate-warn info "INVESTIGATION_INLINE"`.
 
-**Prompt the agent with:**
+**The prompt:**
 
 ```
 You are investigating a codebase for a ticket. Your job is to trace the code and report only confirmed evidence — no speculation.
@@ -510,11 +510,10 @@ Answer each question below with specific file paths and line numbers. If you can
 5. List anything you searched for but could not locate.
 ```
 
-**When the agent returns:**
+**When done:**
 
-- Copy its findings verbatim into the **Initial Investigation** section of notes.md
-- Append a `**Source:** Explore agent (isolated run)` note
-- Do NOT re-interpret or summarise — use the raw evidence as-is
-- If Step 2.5 printed a non-empty `PERSONA_DEBUG`, then write the `### Root cause hypothesis` subsection exactly as Step 3f describes, citing only file:line evidence the agent returned
+- Write the answers into the **Initial Investigation** section of notes.md as raw evidence
+- Append a `**Source:** delegated-path investigation (inline)` note
+- If Step 2.5 printed a non-empty `PERSONA_DEBUG`, then write the `### Root cause hypothesis` subsection exactly as Step 3f describes, citing only file:line evidence found above
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation done "{N} files traced"
