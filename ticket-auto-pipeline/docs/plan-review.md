@@ -60,5 +60,5 @@ A ticket-level fleetd worker is the router, so it runs STEP_2_2. fleetd **phase 
 
 ## Not covered
 
-- The appraise claim verifier (`ticket-appraise` Step 3.5c) and the implement code review still run inline.
+- The appraise claim check (`ticket-appraise` Step 3.5c, logged `CLAIM_VERIFY_SELF_CHECK`) and the implement code review still run inline: no phase agent can spawn a reviewer.
 - With the flag on, the appraisal comment is posted before the review, so it carries no adversarial summary on a first-pass PASS or WARNINGS. The findings are in `notes.md` and `plan-review.md`.

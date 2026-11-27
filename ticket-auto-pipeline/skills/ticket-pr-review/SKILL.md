@@ -30,7 +30,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 ## Step 0.6 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 1 through 7). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file to the ticket directory:
+Interactive runs only (no phase agent holds a task tool): one tracker task per step, 1 to 7. Every run writes this trace file to the ticket directory at session end:
 
 ```bash
 cat > {ticket-dir}/pr-review-session.md << 'TRACE'
