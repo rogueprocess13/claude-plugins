@@ -189,8 +189,11 @@ grep -qx -- '- \[needs-human\] Which API version?' <<<"$out" && ! grep -q 'Old o
 grep -q '^- 2026-11-02T10:00:00Z|alice|Use the v2 API\|alice' <<<"$out" && _ok "prep: unprocessed comment listed" || _ko "prep: comments: $out"
 head -1 "$WS/logs/$TID-heartbeat.log" | grep -q '|META|schema|info|' && _ok "prep: heartbeat log initialised" || _ko "prep: hb_init"
 rc=0
-(cd "$WS" && bash "$GR_LIB_DIR/gate-reconcile-prep.sh" "$TID" >/dev/null 2>&1) || rc=$?
+err=$(cd "$WS" && bash "$GR_LIB_DIR/gate-reconcile-prep.sh" "$TID" 2>&1 >/dev/null) || rc=$?
 _same "prep: no key and no --comments-file exits 4" 4 "$rc"
+# #838 removed the Linear MCP fallback: the message must not point at it.
+! grep -q 'mcp__linear-server' <<<"$err" && grep -q 'comments-file' <<<"$err" &&
+  _ok "prep: exit-4 message names no MCP fallback" || _ko "prep: exit-4 message: $err"
 rc=0
 bash "$GR_LIB_DIR/gate-reconcile-prep.sh" >/dev/null 2>&1 || rc=$?
 _same "prep: usage exits 2" 2 "$rc"

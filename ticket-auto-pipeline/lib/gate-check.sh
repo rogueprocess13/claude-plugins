@@ -1037,7 +1037,6 @@ _gate_entry() {
       _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved (complex + $autonomy + approved)"
       hb_gate "entry-gate" "ok" "complex auto-approved" "{\"complexity\":\"$complexity\",\"autonomy\":\"$autonomy\",\"approved\":true}"
       _write_gate_verdict PASS
-      # Pass through to verify flow.sh's post-trigger assertion still holds
       return 0
     fi
   fi
