@@ -16,10 +16,11 @@
 # any pipeline log. Its one line goes to stderr, and only when a file was
 # rewritten (SessionStart stdout is injected into the session's context).
 #
-# Dirs: ./.playwright-mcp under the session's project dir
-# (CLAUDE_PROJECT_DIR, else the hook's cwd), plus $REPOS_ROOT/.playwright-mcp
-# when REPOS_ROOT is set — the same two the scrub picks by default. When
-# neither dir exists the scrub is not started at all.
+# Dirs: the scrub's own defaults, ./.playwright-mcp plus
+# $REPOS_ROOT/.playwright-mcp, run from a tickets root only: the session's
+# project dir (CLAUDE_PROJECT_DIR, else the hook's cwd) when it holds the
+# `.ticket-auto/` marker, else $REPOS_ROOT when set. In any other dir the hook
+# does nothing. When no snapshot dir exists the scrub is not started at all.
 #
 # The scrub is idempotent, never prints a secret, and this hook exits 0 on
 # every path. PLAYWRIGHT_SCRUB_SWEEP_TIMEOUT (seconds, default 12) bounds the
@@ -31,12 +32,25 @@ set -o pipefail
 _pss_scrub="${BASH_SOURCE[0]%/*}/../lib/playwright-scrub.sh"
 [ -f "$_pss_scrub" ] || exit 0
 
-if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -d "$CLAUDE_PROJECT_DIR" ]; then
-  cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
+# Only ever inside a tickets root, never an arbitrary project dir: the
+# session's project dir when it carries the `.ticket-auto/` marker, else
+# $REPOS_ROOT itself when set. Anything else is a no-op.
+_pss_proj="${CLAUDE_PROJECT_DIR:-$PWD}"
+_pss_root=""
+if [ -d "$_pss_proj/.ticket-auto" ] && [ ! -L "$_pss_proj/.ticket-auto" ]; then
+  _pss_root="$_pss_proj"
+elif [ -n "${REPOS_ROOT:-}" ] && [ -d "$REPOS_ROOT" ]; then
+  _pss_root="$REPOS_ROOT"
 fi
+[ -n "$_pss_root" ] || exit 0
+cd "$_pss_root" 2>/dev/null || exit 0
 
-if [ ! -d ./.playwright-mcp ] &&
-  { [ -z "${REPOS_ROOT:-}" ] || [ ! -d "$REPOS_ROOT/.playwright-mcp" ]; }; then
+# Nothing to do (and the scrub is not started) without a real snapshot dir.
+# playwright-scrub.sh itself refuses a symlinked dir and any file that is not
+# a regular, non-symlink file this user owns.
+_pss_has() { [ -d "$1" ] && [ ! -L "$1" ]; }
+if ! _pss_has ./.playwright-mcp &&
+  { [ -z "${REPOS_ROOT:-}" ] || ! _pss_has "$REPOS_ROOT/.playwright-mcp"; }; then
   exit 0
 fi
 

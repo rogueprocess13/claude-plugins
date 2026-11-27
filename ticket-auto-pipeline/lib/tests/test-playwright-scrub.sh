@@ -137,7 +137,7 @@ t_sweep_registered() {
 
 t_sweep_project_dir() {
   local d="$WORK/t8" o="$WORK/t8.out" e="$WORK/t8.err"
-  mkdir -p "$d/.playwright-mcp" "$d/logs"
+  mkdir -p "$d/.playwright-mcp" "$d/logs" "$d/.ticket-auto"
   _snapshot >"$d/.playwright-mcp/killed.yml"
   printf '2026-01-01T00:00:00Z|META|outcome|info|stopped: killed\n' >"$d/logs/T-9-pipeline.log"
   printf 'UAT_TEST_PASSWORD: `%s`\n' "$FAKE_PW" >"$d/CLAUDE.md"
@@ -168,11 +168,56 @@ t_sweep_noop_paths() {
   [ "$rc" = 0 ] && [ -z "$o" ] || return 1
   # The scrub missing (a partial install) is a silent exit 0, too.
   local h="$WORK/t10hook/hooks"
-  mkdir -p "$h" "$d/.playwright-mcp"
+  mkdir -p "$h" "$d/.playwright-mcp" "$d/.ticket-auto"
   cp "$SWEEP" "$h/"
   _snapshot >"$d/.playwright-mcp/x.yml"
   o=$(cd "$d" && env -u CLAUDE_PROJECT_DIR bash "$h/playwright-scrub-sweep.sh" </dev/null 2>&1) || rc=$?
   [ "$rc" = 0 ] && [ -z "$o" ]
+}
+
+# 11. A symlinked snapshot file is never followed: the link stays a link and
+#     the file it points to (outside the dir) is unchanged.
+t_symlink_file() {
+  local d="$WORK/t11" out before
+  mkdir -p "$d/.playwright-mcp" "$d/outside"
+  _snapshot >"$d/outside/victim.yml"
+  before=$(sha256sum <"$d/outside/victim.yml")
+  ln -s "$d/outside/victim.yml" "$d/.playwright-mcp/link.yml"
+  _snapshot >"$d/.playwright-mcp/real.yml"
+  out=$(cd "$d" && UAT_TEST_PASSWORD="$FAKE_PW" bash "$SCRUB") || return 1
+  [ "$out" = "PLAYWRIGHT_SCRUB files=1 redacted=1" ] &&
+    [ -L "$d/.playwright-mcp/link.yml" ] &&
+    [ "$(sha256sum <"$d/outside/victim.yml")" = "$before" ] &&
+    ! grep -qF "$FAKE_PW" "$d/.playwright-mcp/real.yml" &&
+    [ -z "$(find "$d" -name '*.scrub.*')" ]
+}
+
+# 12. A .playwright-mcp dir that is itself a symlink is refused, both as the
+#     default dir and when named; its target's files are unchanged.
+t_symlink_dir() {
+  local d="$WORK/t12" out before
+  mkdir -p "$d/elsewhere"
+  _snapshot >"$d/elsewhere/s.yml"
+  before=$(sha256sum <"$d/elsewhere/s.yml")
+  ln -s "$d/elsewhere" "$d/.playwright-mcp"
+  out=$(cd "$d" && bash "$SCRUB") || return 1
+  [ "$out" = "PLAYWRIGHT_SCRUB files=0 redacted=0" ] || return 1
+  out=$(cd "$d" && bash "$SCRUB" .playwright-mcp/) || return 1
+  [ "$out" = "PLAYWRIGHT_SCRUB files=0 redacted=0" ] &&
+    [ "$(sha256sum <"$d/elsewhere/s.yml")" = "$before" ]
+}
+
+# 13. The hook does nothing outside a tickets root (no .ticket-auto/ marker,
+#     no REPOS_ROOT), even with a snapshot dir present.
+t_sweep_needs_tickets_root() {
+  local d="$WORK/t13" o before
+  mkdir -p "$d/.playwright-mcp"
+  _snapshot >"$d/.playwright-mcp/p.yml"
+  before=$(sha256sum <"$d/.playwright-mcp/p.yml")
+  o=$(cd "$WORK" && CLAUDE_PROJECT_DIR="$d" bash "$SWEEP" </dev/null 2>&1) || return 1
+  [ -z "$o" ] || return 1
+  o=$(cd "$d" && env -u CLAUDE_PROJECT_DIR bash "$SWEEP" </dev/null 2>&1) || return 1
+  [ -z "$o" ] && [ "$(sha256sum <"$d/.playwright-mcp/p.yml")" = "$before" ]
 }
 
 _run "password-named textbox values are redacted" t_label_redaction
@@ -185,6 +230,9 @@ _run "SessionStart sweep hook is registered and executable" t_sweep_registered
 _run "sweep scrubs the project dir, stdout empty, log untouched, idempotent" t_sweep_project_dir
 _run "sweep scrubs REPOS_ROOT's snapshot dir" t_sweep_repos_root
 _run "sweep is silent with no snapshot dir or no scrub script" t_sweep_noop_paths
+_run "symlinked snapshot file is not followed, target unchanged" t_symlink_file
+_run "symlinked .playwright-mcp dir is refused" t_symlink_dir
+_run "sweep is a no-op outside a tickets root" t_sweep_needs_tickets_root
 
 echo "test-playwright-scrub: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
