@@ -2518,6 +2518,52 @@ code before the fix. Builds on Step 20 B (QA persona, on for bugs since #813). B
 Measure before widening: per-ticket count of QA findings that turned into real defects vs noise, and
 added run time. Each item is its own openspec change.
 
+## Step 25 — GitHub issue batch 2026-11-26 + follow-ups — code MERGED 2026-11-27; live checks, decisions and gate-hold notify tracking open
+
+Issues #816–#827 and #667, one background agent per issue, PRs #828–#847 merged (ticket-auto-pipeline
+0.143.0 → 0.159.0, fleet-controller 0.57.0 → 0.62.0). #773 needs no more code: its status table is on the
+issue (promote DoR codes after a rehearsal, `VERIFY_AC_TAGS` default after one live run). Per-PR notes:
+memory `project_issue-batch-2026-11-26.md`.
+
+**Open — decisions for the user (agents chose; reverse if wrong):**
+- [ ] #831 (#820): reapprove now HOLDS a complex / manual / `[needs-human]` ticket whose approval is
+      pr-iterate's `policy` one. This reverses the documented "reapprove accepts either provenance" rule.
+- [ ] #836 (#826): `reversibility:auth-new` weight 3 → 2 (chosen over an "auth always needs a person" rule).
+- [ ] #835 (#823): ADJACENT never needs an ack, even across epics; a same-epic sibling counts as a
+      dependency even before it merges into the epic branch.
+- [ ] #829 (#818): `approve.sh` refuses a ticket with no manifest (no more `_adhoc` create).
+- [ ] #844: `TICKET_ROUTER_PLAN_REVIEW` default is now `complex`; `true` now means every ticket (it used
+      to review complex tickets only).
+
+**Open — live checks on the tickets host** (none of #828–#847 has run on a real ticket): Playwright scrub
+(router step, fleetd reap, SessionStart sweep #843), `REPOS_ROOT` refusals in approve/reject/regression-ack,
+reapprove holds + fleetd hold rows (#831, #840), regression guard (#835), outcome floor (#837), plan review
+default (#844), the appraise/implement agent fallbacks logged by #833/#838.
+
+**Open — gate-hold comment / Slack consistency (track on every related change):**
+Three senders can post for one gate hold: fleetd's intake (`_gate_hold_intake_pass`), the phase-dispatch
+path, and `fleet-reconcile.sh`'s `fleet_notify_gate_held` for a `held: gate` outcome. #845 (fleet 0.61.0)
+made the intake post one comment + one Slack message on first row creation, keyed on the hold's
+`gate-held` outbox record in the shared Slack sidecar (`FLEET_GATE_HOLD_NOTIFY`, default on).
+- [x] Phase-dispatch-created gate holds post nothing — DONE 2026-11-27, #847 (fleet 0.62.0): one helper,
+      `supervisor._announce_gate_hold_created`, called by both row creators only on a fresh `set_hold`.
+- [x] Reconcile could key the Slack message differently → DONE, #847: the key is built in one place,
+      `fleet_gate_held_key` in `fleet-notify.sh` (latest `gate-held` outbox record, else the
+      `held: gate` outcome timestamp, else empty), and fleetd calls it. Root cause: reconcile looked for the
+      outbox beside the log in the state dir; it now reads `FLEET_PIPELINE_LOG_DIR`.
+- [ ] Known limit (#847): a phase-dispatch hold with no outbox record is keyed `hold:{hold_id}`; a later
+      `held: gate` outcome line for the same hold (only from a manual router run on that ticket) could send
+      a second Slack message.
+- [ ] Live check: the first real gate hold shows exactly one tracker comment and one Slack message, and
+      nothing on release. Repeat after any change to `fleet-notify.sh`, `fleet-reconcile.sh`, or fleetd's
+      hold intake / phase dispatch.
+
+**Open — other:**
+- [ ] #838: the claim check and delegated investigation are now self-checks inside the phase agent; a
+      router step like STEP_2_2 could make them independent.
+- [ ] fleetd phase-dispatch support for STEP_2_2 (still `manual-pickup`).
+- [ ] Clean up merged agent worktrees/branches (`.claude/worktrees/agent-*`, `worktree-agent-*`).
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -2571,6 +2617,11 @@ added run time. Each item is its own openspec change.
 14. **Step 24 is quality improvement, not harm reduction**, so it queues behind Step 21 and the Step 20
    B live check (the bug-default QA persona must show value first). Item 1 is deterministic and
    self-contained, so it can go earlier if the operator wants. The operator decides the final slot.
+
+15. **Step 25's open items are checks and decisions, not new work.** The decisions should be answered
+   before the next live run on the tickets host, so that run checks the behaviour the operator wants. The
+   gate-hold notify item is tracked on every change to its three senders until a live hold shows one
+   comment and one Slack message.
 
 ### Parallel track
 
