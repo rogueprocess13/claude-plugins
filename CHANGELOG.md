@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## fleet-controller 0.58.0 (2026-11-27) — fleetd scrubs Playwright snapshots when post-spawn did not
+## fleet-controller 0.59.0 (2026-11-27) — fleetd scrubs Playwright snapshots when post-spawn did not
 
 Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright-scrub.sh`, but fleetd's phase dispatch calls post-spawn only while `FLEET_ROUTER_STEP_SHELL=true` (read per call, so phase dispatch keeps running after the flag is unset), and a post-spawn call that times out or cannot find its script may never reach the scrub. On those paths a typed test password stayed in clear text under `.playwright-mcp/`.
 
