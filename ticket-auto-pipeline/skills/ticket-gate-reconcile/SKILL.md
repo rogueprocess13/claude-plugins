@@ -24,9 +24,9 @@ and prints the `reconcile-comments.sh` output (`LAST_RECONCILE_AT`, `APPRAISAL_C
 appraisal/amendment comment) and the unstruck `- [needs-human]` bullets of `## Open Questions`
 (`[agent-resolvable]` ones are closed by ticket-appraise Step 3.5). Exit 1: no unique openspec
 change, already logged; stop and report it, and never amend another change's `tasks.md`. Exit 4:
-`LINEAR_API_KEY` is unset; save `mcp__linear-server__list_comments` output to a file, re-run with
-`--comments-file <file>`, and write the issue description to
-`{ticket-dir}/artifacts/tracker-description.md` yourself.
+no `LINEAR_API_KEY`, and no agent holds a Linear tool (#667): stop, report it. Interactive:
+re-run with `--comments-file <JSON>`, write the description to
+`{ticket-dir}/artifacts/tracker-description.md`.
 
 If the open questions are empty or only placeholder text ("None", "—"), skip the
 unanswered-questions check in Step 5.
