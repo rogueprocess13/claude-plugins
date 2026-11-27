@@ -557,6 +557,35 @@ test_gate_held_failed_send_is_retried_on_a_later_pass() {
   [ -f "$capture" ] && grep -q '"notify_state": "sent"' "$state_dir/TST-45-gate-held-notify.json"
 }
 
+test_gate_held_uses_given_reason_sentence() {
+  # gate-hold-notify: fleetd passes a plain sentence for the hold reason.
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-47" "$state_dir" \
+    "3@2026-09-11T07:35:16Z" "The pipeline runs in manual mode." >/dev/null 2>&1
+  grep -q "The pipeline runs in manual mode." "$capture" &&
+    ! grep -q "Complex ticket held" "$capture" &&
+    grep -q "approve.sh TST-47" "$capture"
+}
+
+test_gate_held_key_is_latest_gate_held_record() {
+  local state_dir outbox key
+  state_dir=$(_mktemp_test_dir)
+  outbox="$state_dir/TST-48-outbox.jsonl"
+  {
+    echo '{"seq":1,"ts":"2026-09-11T07:00:00Z","event":"gate-held","data":{}}'
+    echo 'not json'
+    echo '{"seq":2,"ts":"2026-09-11T07:05:00Z","event":"gate-released","data":{}}'
+    echo '{"seq":3,"ts":"2026-09-11T07:10:00Z","event":"gate-held","data":{}}'
+  } >"$outbox"
+  key=$(_fleet_gate_held_key "$outbox")
+  [ "$key" = "3@2026-09-11T07:10:00Z" ] &&
+    [ -z "$(_fleet_gate_held_key "$state_dir/missing.jsonl")" ]
+}
+
 test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds() {
   local rc out state_dir
   state_dir=$(_mktemp_test_dir)
@@ -788,6 +817,8 @@ for fn in \
   test_gate_held_transport_failure_marks_failed_and_completes \
   test_gate_held_failed_send_is_retried_on_a_later_pass \
   test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds \
+  test_gate_held_uses_given_reason_sentence \
+  test_gate_held_key_is_latest_gate_held_record \
   test_readiness_stale_sends_one_notification \
   test_readiness_stale_writes_sent_sidecar \
   test_readiness_stale_twice_sends_once \

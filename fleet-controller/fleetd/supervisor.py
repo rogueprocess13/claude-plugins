@@ -2027,6 +2027,44 @@ def _notify_hold(fleet_lib_dir, state_dir, tid, transition):
         pass
 
 
+def _notify_gate_held(fleet_lib_dir, state_dir, tid, hold_key, why):
+    """Fire `fleet_notify_gate_held <tid> <state_dir> <hold_key> <why>`.
+
+    Same shell-out shape as `_notify_hold` just above, and the same bash
+    notifier `fleet-reconcile.sh` already calls for a `held: gate` outcome,
+    so both callers share one sidecar (`{tid}-gate-held-notify.json`) and
+    one key (`gate_hold_notify_key`): a hold notified by one is not
+    notified again by the other. Fail-soft.
+    """
+    notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
+    if not notify_script.is_file():
+        return
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f'source {shlex.quote(str(notify_script))} && '
+             f'fleet_notify_gate_held {shlex.quote(tid)} '
+             f'{shlex.quote(str(state_dir))} {shlex.quote(hold_key)} '
+             f'{shlex.quote(why)}'],
+            timeout=15, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def gate_hold_notify_key(record):
+    """`{seq}@{ts}` of one `gate-held` outbox record: the identity of one
+    gate hold, shared with `fleet-reconcile.sh`'s own call to
+    `fleet_notify_gate_held`, which reads the same record from the outbox."""
+    return f"{record.get('seq', '')}@{record.get('ts', '')}"
+
+
+def gate_hold_notify_enabled():
+    """`FLEET_GATE_HOLD_NOTIFY` (default on): post a comment and send a
+    notification when a gate hold row is first created."""
+    return os.environ.get('FLEET_GATE_HOLD_NOTIFY', 'true') != 'false'
+
+
 def _sweep_stale_generation_files(state_dir, tid, current_generation,
                                   retention=None, phase='',
                                   phase_retention=None):
@@ -5717,9 +5755,8 @@ class Supervisor:
         in the first place, so the release pass, `_store_ticket_is_held`'s
         spawn guard, and `post_human_hold_comment`/`fleet_notify_hold` all
         shipped fully tested with zero live traffic. This is the missing
-        creation half — closes the gap for `'human'` only; the identical
-        gap for `'gate'` (`_create_phase_dispatch_hold` has its own caller
-        already, task 10.1.4) is out of scope here.
+        creation half for `'human'`; `_gate_hold_intake_pass` below is the
+        one for `'gate'`.
 
         For every ticket with a pipeline log in this state dir, skips one
         already held (`_store_ticket_is_held`) or genuinely terminal
@@ -5833,12 +5870,17 @@ class Supervisor:
         re-run, not an approval decision, and get no row from this pass
         (design.md Non-Goals).
 
-        Unlike `_human_hold_intake_pass`, this pass calls neither
-        `post_human_hold_comment` nor `_notify_hold` — a gate hold carries
-        no free-form question, and the operator's existing signal (the
-        pipeline-log `held:` line, the dashboard's hold-reason column,
-        `hb_gate`'s heartbeat entry) already covers it (design.md
-        Non-Goals: "no new Slack/comment notifier for gate holds").
+        Like `_human_hold_intake_pass`, the pass tells a person once, when
+        it creates the row: `gate_hold.post_gate_hold_comment` (the same
+        `save_comment` path `post_human_hold_comment` uses, with the reason
+        as a plain sentence and the exact `approve.sh` command) and
+        `_notify_gate_held` (Slack through `fleet-notify.sh`). Only a
+        `set_hold` that returned a rowcount reaches them, the same
+        idempotency proof the human path relies on: a second pass, a
+        restart, or a repeated `gate-held` event while the row is still
+        held posts nothing. `FLEET_GATE_HOLD_NOTIFY=false` turns both off.
+        The router posts no gate-hold comment of its own (it only prints
+        the command to its terminal), so nothing is posted twice.
 
         Same fail-soft, idempotent shape as `_human_hold_intake_pass`:
         every store call goes through the `_store_*` fail-soft wrappers, so
@@ -5887,7 +5929,13 @@ class Supervisor:
                 # path (idempotent), or the store went away between mint
                 # and set — either way, no duplicate row.
                 continue
-            # No comment/notification — see docstring above.
+            if not gate_hold_notify_enabled():
+                continue
+            _gate_hold_mod.post_gate_hold_comment(tid, hold_id, reason)
+            _notify_gate_held(
+                self._fleet_lib_dir, self._state_dir, tid,
+                gate_hold_notify_key(record),
+                _gate_hold_mod.gate_hold_reason_text(reason))
 
     # ── run ─────────────────────────────────────────────────────────────────
 

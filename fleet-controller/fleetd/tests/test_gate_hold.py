@@ -1318,5 +1318,319 @@ class TestReapproveHoldIntakeToRelease(unittest.TestCase):
         self.assertEqual(log.read_text(), before)
 
 
+# ── gate-hold-notify ───────────────────────────────────────────────────────
+
+FLEET_LIB = REPO_ROOT / 'fleet-controller' / 'lib'
+APPROVE_CMD = 'bash ~/.claude/skills/ticket-approve/approve.sh {tid}'
+
+
+class TestGateHoldReasonText(unittest.TestCase):
+    """Each approval-type reason maps to its own plain sentence, and the
+    comment always names the exact command a person runs."""
+
+    def test_table_covers_every_intake_reason(self):
+        from fleetd import supervisor
+        self.assertEqual(set(gate_hold.GATE_HOLD_REASON_TEXT),
+                         set(supervisor._GATE_HOLD_APPROVAL_REASONS))
+
+    def test_each_reason_has_its_own_sentence_in_the_comment(self):
+        seen = set()
+        for reason, sentence in gate_hold.GATE_HOLD_REASON_TEXT.items():
+            with self.subTest(reason=reason):
+                body = gate_hold.gate_hold_comment_body(
+                    'TST-9', 'hold:TST-9:g0:a0', reason)
+                self.assertIn(f'**Why:** {sentence}', body)
+                self.assertIn(APPROVE_CMD.format(tid='TST-9'), body)
+                self.assertIn('own terminal, from the tickets root', body)
+                self.assertIn('`hold:TST-9:g0:a0`', body)
+                # The raw reason id is never what a person reads.
+                self.assertNotIn(reason, body)
+                seen.add(sentence)
+        self.assertEqual(len(seen), len(gate_hold.GATE_HOLD_REASON_TEXT))
+
+    def test_specific_sentences(self):
+        text = gate_hold.gate_hold_reason_text
+        self.assertIn('complex ticket', text('complex-ticket'))
+        self.assertIn('manual mode', text('manual-mode'))
+        self.assertIn('could not approve', text('default-fallback'))
+        self.assertIn('changed after it was approved',
+                      text('plan-changed-since-approval'))
+        self.assertIn('amended', text('reapprove-needs-human'))
+        self.assertIn('changed after a person approved',
+                      text('reapprove-plan-changed'))
+
+    def test_unknown_reason_gets_fallback_not_raw_value(self):
+        body = gate_hold.gate_hold_comment_body('TST-9', 'h', 'sk-secret-xyz')
+        self.assertNotIn('sk-secret-xyz', body)
+        self.assertIn(gate_hold._GATE_HOLD_REASON_FALLBACK, body)
+
+
+_FAKE_LINEAR_API_SH = r"""
+save_comment() {
+  printf '%s\n---\n%s\n' "$1" "$2" >>"$FAKE_COMMENT_LOG"
+  return "${FAKE_COMMENT_RC:-0}"
+}
+"""
+
+
+class TestPostGateHoldComment(unittest.TestCase):
+    """post_gate_hold_comment: the `save_comment` path, fail-soft."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='fleetd-gh-comment-'))
+        self.lib = self.dir / 'lib'
+        self.lib.mkdir()
+        (self.lib / 'linear-api.sh').write_text(_FAKE_LINEAR_API_SH)
+        self.log = self.dir / 'comments.txt'
+        self._saved = {k: os.environ.get(k)
+                       for k in ('FAKE_COMMENT_LOG', 'FAKE_COMMENT_RC')}
+        os.environ['FAKE_COMMENT_LOG'] = str(self.log)
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_posts_the_body(self):
+        ok = gate_hold.post_gate_hold_comment(
+            'TST-7', 'hold:TST-7:g0:a0', 'complex-ticket', lib_dir=self.lib)
+        self.assertTrue(ok)
+        text = self.log.read_text()
+        self.assertTrue(text.startswith('TST-7\n'))
+        self.assertIn(gate_hold.GATE_HOLD_REASON_TEXT['complex-ticket'], text)
+        self.assertIn(APPROVE_CMD.format(tid='TST-7'), text)
+
+    def test_failed_post_returns_false(self):
+        os.environ['FAKE_COMMENT_RC'] = '1'
+        self.assertFalse(gate_hold.post_gate_hold_comment(
+            'TST-7', 'h', 'manual-mode', lib_dir=self.lib))
+
+    def test_missing_client_returns_false(self):
+        self.assertFalse(gate_hold.post_gate_hold_comment(
+            'TST-7', 'h', 'manual-mode', lib_dir=self.dir / 'nope'))
+
+
+class _IntakeBase(unittest.TestCase):
+    """A real store and supervisor; the comment and notify are recorded."""
+
+    def setUp(self):
+        from fleetd import supervisor
+        self.supervisor_mod = supervisor
+        self.workspace = Path(tempfile.mkdtemp(prefix='fleetd-gh-notify-'))
+        self._saved = {k: os.environ.get(k) for k in (
+            'FLEET_PIPELINE_LOG_DIR', 'FLEET_GATE_HOLD_NOTIFY')}
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = str(self.workspace)
+        os.environ.pop('FLEET_GATE_HOLD_NOTIFY', None)
+        self.comments = []
+        self.notifies = []
+        self.human = []
+        self._real = (gate_hold.post_gate_hold_comment,
+                      supervisor._notify_gate_held,
+                      gate_hold.post_human_hold_comment,
+                      supervisor._notify_hold)
+        gate_hold.post_gate_hold_comment = (
+            lambda *a, **k: self.comments.append(a) or True)
+        supervisor._notify_gate_held = (
+            lambda *a, **k: self.notifies.append(a))
+        gate_hold.post_human_hold_comment = (
+            lambda *a, **k: self.human.append(('comment', a)) or (True, True))
+        supervisor._notify_hold = (
+            lambda *a, **k: self.human.append(('notify', a)))
+        self.sups = []
+
+    def tearDown(self):
+        (gate_hold.post_gate_hold_comment,
+         self.supervisor_mod._notify_gate_held,
+         gate_hold.post_human_hold_comment,
+         self.supervisor_mod._notify_hold) = self._real
+        for sup in self.sups:
+            sup.release_lock()
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.workspace, ignore_errors=True)
+
+    def _sup(self):
+        """A fresh Supervisor: a second one is a fleetd restart."""
+        for sup in self.sups:
+            sup.release_lock()
+        sup = self.supervisor_mod.Supervisor(
+            state_dir=str(self.workspace),
+            pidfile=str(self.workspace / 'test.pid'), spawn_enabled=False)
+        sup.acquire_lock()
+        self.sups = [sup]
+        return sup
+
+    def _seed_gate(self, tid, reason):
+        (self.workspace / f'{tid}-pipeline.log').write_text(
+            '2026-09-23T00:00:00Z|META|schema|info|1\n'
+            '2026-09-23T00:01:00Z|GATE|gate|fail|held: complex ticket\n')
+        self._append_event(tid, 1, 'gate-held', {'reason': reason})
+
+    def _append_event(self, tid, seq, event, data):
+        with open(self.workspace / f'{tid}-outbox.jsonl', 'a') as fh:
+            fh.write(json.dumps({
+                'seq': seq, 'tid': tid, 'ts': '2026-09-23T00:01:00Z',
+                'gen': 0, 'event': event, 'data': data}) + '\n')
+
+    def _row(self, tid):
+        from fleetd import store
+        with store.open_store(self.workspace) as st:
+            return st.get_ticket(tid) or {}
+
+
+class TestGateHoldIntakeNotify(_IntakeBase):
+
+    def test_first_intake_posts_and_notifies_once(self):
+        self._seed_gate('TST-N1', 'complex-ticket')
+        self._sup()._gate_hold_intake_pass()
+        row = self._row('TST-N1')
+        self.assertEqual(row.get('held'), 1)
+        self.assertEqual(len(self.comments), 1)
+        tid, hold_id, reason = self.comments[0]
+        self.assertEqual((tid, reason), ('TST-N1', 'complex-ticket'))
+        self.assertEqual(hold_id, row['hold_id'])
+        self.assertEqual(len(self.notifies), 1)
+        _lib, state_dir, ntid, key, why = self.notifies[0]
+        self.assertEqual(ntid, 'TST-N1')
+        self.assertEqual(Path(state_dir), self.workspace)
+        self.assertEqual(key, '1@2026-09-23T00:01:00Z')
+        self.assertEqual(why, gate_hold.GATE_HOLD_REASON_TEXT['complex-ticket'])
+        self.assertEqual(self.human, [])
+
+    def test_second_pass_restart_and_repeated_event_post_nothing(self):
+        self._seed_gate('TST-N2', 'manual-mode')
+        self._sup()._gate_hold_intake_pass()
+        self._sup()._gate_hold_intake_pass()  # second pass
+        self._sup()._gate_hold_intake_pass()  # fleetd restart
+        # The gate holds again while the row is still held.
+        self._append_event('TST-N2', 2, 'gate-held', {'reason': 'manual-mode'})
+        self._sup()._gate_hold_intake_pass()
+        self.assertEqual(len(self.comments), 1)
+        self.assertEqual(len(self.notifies), 1)
+
+    def test_each_reason_is_passed_through(self):
+        for i, reason in enumerate(sorted(gate_hold.GATE_HOLD_REASON_TEXT)):
+            self._seed_gate(f'TST-R{i}', reason)
+        self._sup()._gate_hold_intake_pass()
+        got = {c[0]: c[2] for c in self.comments}
+        want = {f'TST-R{i}': r for i, r in
+                enumerate(sorted(gate_hold.GATE_HOLD_REASON_TEXT))}
+        self.assertEqual(got, want)
+        whys = {n[2]: n[4] for n in self.notifies}
+        self.assertEqual(
+            whys, {t: gate_hold.GATE_HOLD_REASON_TEXT[r]
+                   for t, r in want.items()})
+
+    def test_content_hold_posts_nothing(self):
+        self._seed_gate('TST-N3', 'linear-fetch-failed')
+        self._sup()._gate_hold_intake_pass()
+        self.assertEqual((self.comments, self.notifies), ([], []))
+
+    def test_flag_off_creates_row_but_posts_nothing(self):
+        os.environ['FLEET_GATE_HOLD_NOTIFY'] = 'false'
+        self._seed_gate('TST-N4', 'complex-ticket')
+        self._sup()._gate_hold_intake_pass()
+        self.assertEqual(self._row('TST-N4').get('held'), 1)
+        self.assertEqual((self.comments, self.notifies), ([], []))
+
+    def test_human_hold_unchanged(self):
+        record = {'schema_version': 1, 'phase': 'IMPLEMENT',
+                  'reason': 'CREDENTIALS_MISSING', 'blocks': 'AC1',
+                  'supersedes': '', 'parse_status': 'ok', 'parse_error': '',
+                  'questions': [{'id': 1, 'text': 'Which user?'}]}
+        (self.workspace / 'TST-H1-pipeline.log').write_text(
+            '2026-09-08T00:00:00Z|META|schema|info|1\n'
+            f'2026-09-08T00:01:00Z|META|human-hold|waiting|'
+            f'{json.dumps(record)}\n')
+        sup = self._sup()
+        sup._human_hold_intake_pass()
+        sup._gate_hold_intake_pass()
+        sup._human_hold_intake_pass()
+        self.assertEqual(self._row('TST-H1').get('hold_kind'), 'human')
+        self.assertEqual([k for k, _ in self.human], ['comment', 'notify'])
+        self.assertEqual((self.comments, self.notifies), ([], []))
+
+
+_STUB_CURL = r"""#!/usr/bin/env bash
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "-d" ] && printf '%s\n' "$arg" >>"$FAKE_CURL_LOG"
+  prev="$arg"
+done
+printf '{"ok": true, "ts": "1700000000.000100"}'
+"""
+
+
+class TestGateHoldNotifySharedSidecar(unittest.TestCase):
+    """The real `fleet_notify_gate_held`: fleetd's call sends once, and the
+    reconcile path's key for the same outbox record matches, so it does not
+    send a second message for the same hold."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='fleetd-gh-slack-'))
+        bindir = self.dir / 'bin'
+        bindir.mkdir()
+        (bindir / 'curl').write_text(_STUB_CURL)
+        (bindir / 'curl').chmod(0o755)
+        self.curl_log = self.dir / 'curl.log'
+        self._saved = {k: os.environ.get(k) for k in (
+            'PATH', 'SLACK_BOT_TOKEN', 'SLACK_CHANNEL', 'FAKE_CURL_LOG')}
+        os.environ.update({
+            'PATH': f"{bindir}:{os.environ.get('PATH', '')}",
+            'SLACK_BOT_TOKEN': 'xoxb-test', 'SLACK_CHANNEL': '#t',
+            'FAKE_CURL_LOG': str(self.curl_log)})
+        (self.dir / 'TST-S1-outbox.jsonl').write_text(
+            'not json\n' + json.dumps({
+                'seq': 4, 'tid': 'TST-S1', 'ts': '2026-09-23T00:01:00Z',
+                'event': 'gate-held',
+                'data': {'reason': 'reapprove-needs-human'}}) + '\n')
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _sends(self):
+        if not self.curl_log.exists():
+            return []
+        return self.curl_log.read_text().splitlines()
+
+    def test_one_message_per_hold_across_both_callers(self):
+        import subprocess
+        from fleetd import supervisor
+        rec = {'seq': 4, 'ts': '2026-09-23T00:01:00Z'}
+        why = gate_hold.GATE_HOLD_REASON_TEXT['reapprove-needs-human']
+        for _ in range(2):
+            supervisor._notify_gate_held(
+                FLEET_LIB, self.dir, 'TST-S1',
+                supervisor.gate_hold_notify_key(rec), why)
+        sends = self._sends()
+        self.assertEqual(len(sends), 1)
+        text = json.loads(sends[0])['text']
+        self.assertIn(why, text)
+        self.assertIn(APPROVE_CMD.format(tid='TST-S1'), text)
+
+        # The reconcile path: same key from the outbox, so no second send.
+        proc = subprocess.run(
+            ['bash', '-c',
+             'source "$1/fleet-notify.sh"; '
+             'key=$(_fleet_gate_held_key "$2/TST-S1-outbox.jsonl"); '
+             'echo "$key"; fleet_notify_gate_held TST-S1 "$2" "$key"',
+             '_', str(FLEET_LIB), str(self.dir)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.stdout.splitlines()[0],
+                         supervisor.gate_hold_notify_key(rec))
+        self.assertEqual(len(self._sends()), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
