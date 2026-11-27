@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.159.0 (2026-11-27) — stale preamble, heartbeat and ticket-flow doc text
+
+Follow-up to PR #842. Text only; no behaviour change.
+
+- **`lib/skill-preamble.md` § 2.** The MCP column of the Linear access table is now labelled interactive-only: since #838 a phase agent without `LINEAR_API_KEY` stops or reports instead (gate-reconcile prep exit 4, reproduce puts its comment in its report). The column stays because interactive skill runs still name the MCP fallback. The section is shorter.
+- **`pipeline-heartbeat-format.md`.** The `assertion` and `idempotent-skip` decision events are marked retired (nothing emits them: flow.sh's post-trigger assertion is gone, and every transition now writes `rev`/`pending_event`). They stay listed so old heartbeat files still parse.
+- **`docs/skills/ticket-flow.md`.** `LINEAR_API_KEY` is optional, used only by the outbox drain's board projection, matching `skills/ticket-flow/SKILL.md`. Its Outputs table now lists the manifest transition, the one outbox event and the best-effort board projection, not direct Linear writes; the opening line of `skills/ticket-flow/SKILL.md`, which `/skill-docs` reads, says the same.
+- **next.md** Step 15 note: the ticket-flow doc's exit-7 text is marked done (#842).
+
 ## fleet-controller 0.61.0 (2026-11-27) — fleetd tells a person when a ticket is held for approval
 
 Follow-up to #820 (PRs #831, #840). fleetd's gate-hold intake created a `hold_kind='gate'` row for an approval-type `gate-held` event (entry-gate reasons, plus `reapprove-needs-human`/`reapprove-plan-changed`), but posted no comment and sent no notification, so a ticket waiting for `approve.sh` was visible only on the dashboard. Human holds already told a person.

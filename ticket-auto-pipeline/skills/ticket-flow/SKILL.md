@@ -5,7 +5,7 @@ description: ticket-flow
 
 # ticket-flow
 
-Centralized Linear state/label executor for the ticket workflow. Every ticket skill delegates state transitions and label changes here — no skill calls Linear for state or labels directly.
+Local state machine for the ticket workflow: writes the manifest and one outbox event, which a board driver projects to Linear later. Every ticket skill delegates transitions here.
 
 ## Usage
 
