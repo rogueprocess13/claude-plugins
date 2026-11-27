@@ -5,7 +5,10 @@
 #   bash ~/.claude/skills/ticket-reject/reject.sh <TICKET-ID>
 #
 # Run it from the tickets root. REPOS_ROOT comes from the environment, else
-# the ticket's env file, else ./CLAUDE.md.
+# the ticket's env file, else ./CLAUDE.md. When ./CLAUDE.md declares one and
+# the root came from elsewhere, the two must name the same directory, and the
+# ticket's manifest must already exist under it (lib/operator-root.sh, the
+# same check as approve.sh); otherwise it exits 3 and records nothing.
 #
 # It asks on the controlling terminal for the ticket id to be typed back,
 # then runs `flow.sh <TID> human-reject` and clears the approval fact
@@ -22,8 +25,9 @@
 # with its own pseudo-terminal, or one that writes the manifest directly, is
 # not stopped.
 #
-# Exit: 0 rejected, 1 usage, 2 flow.sh or a library not found, 3 manifest
-#       not addressable, 4 agent context or no terminal, 5 the manifest still
+# Exit: 0 rejected, 1 usage, 2 flow.sh or a library not found, 3 REPOS_ROOT
+#       unresolved, disagreeing with ./CLAUDE.md or not plain text, or no
+#       manifest under it, 4 agent context or no terminal, 5 the manifest still
 #       shows an approval, 6 the typed id did not match (nothing recorded),
 #       else flow.sh's code.
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
@@ -54,18 +58,17 @@ human_terminal_require "ticket-reject" "reject $TICKET_ID" || exit 4
 
 source "$LIB_DIR/manifest-write.sh"
 
-if [ -z "${REPOS_ROOT:-}" ] && [ -f "$LIB_DIR/ticket-env.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$LIB_DIR/ticket-env.sh" "$TICKET_ID" 2>/dev/null || true
-fi
-if [ -z "${REPOS_ROOT:-}" ] && [ -f ./CLAUDE.md ]; then
-  source "$LIB_DIR/claude-md-field.sh" 2>/dev/null ||
-    source "$SCRIPT_DIR/../../lib/claude-md-field.sh" 2>/dev/null || true
-  if declare -f claude_md_field >/dev/null 2>&1; then
-    REPOS_ROOT=$(claude_md_field ./CLAUDE.md REPOS_ROOT 2>/dev/null) || REPOS_ROOT=""
-  fi
-fi
-[ -z "${REPOS_ROOT:-}" ] || export REPOS_ROOT
+# REPOS_ROOT in a person's own shell: the environment, else the ticket's env
+# file, else the project CLAUDE.md in the current directory. A root that
+# disagrees with ./CLAUDE.md is refused (lib/operator-root.sh, GitHub #818):
+# a REPOS_ROOT left exported from another project would record the rejection
+# there while this project's ticket stays approved.
+source "$LIB_DIR/operator-root.sh" 2>/dev/null ||
+  source "$SCRIPT_DIR/../../lib/operator-root.sh" 2>/dev/null || {
+  echo "ticket-reject: lib/operator-root.sh not found — reinstall the plugin" >&2
+  exit 2
+}
+operator_resolve_repos_root "ticket-reject" "$TICKET_ID" || exit 3
 
 # ── Resolve flow.sh (standard _flow_sh pattern, lib/skill-preamble-auto.md) ─
 # FLOW_SH, if already set by the caller (tests), is respected as-is.
@@ -83,16 +86,17 @@ if [ -z "$FLOW_SH" ] || [ ! -f "$FLOW_SH" ]; then
   exit 2
 fi
 
-ensure_ticket_manifest "$TICKET_ID" || {
-  echo "ticket-reject: could not make $TICKET_ID manifest-addressable" >&2
-  exit 3
-}
+# The manifest must already exist under the resolved root (GitHub #818): a
+# ticket with a plan to reject has been through flow.sh, which wrote it. A
+# missing one means the wrong root, so it is an error here, never a create.
+MANIFEST_PATH=$(operator_require_manifest "ticket-reject" "$TICKET_ID") || exit 3
 
 _stage=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null || true)
 [[ "$_stage" =~ ^[A-Za-z]+$ ]] || _stage="unknown"
 _c_rc=0
 human_terminal_confirm "$TICKET_ID" \
   "Reject the plan of $TICKET_ID — current stage: $_stage." \
+  "Recording in: $MANIFEST_PATH (REPOS_ROOT from the $OPERATOR_ROOT_SOURCE)" \
   "This clears any approval and returns it to Todo for re-appraisal." || _c_rc=$?
 if [ "$_c_rc" -eq 4 ]; then
   echo "ticket-reject: no terminal. Nothing was recorded." >&2
