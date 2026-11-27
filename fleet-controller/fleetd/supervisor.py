@@ -5038,12 +5038,16 @@ class Supervisor:
 
         router_steps = (_router_step_on() and (phase_token or '').upper()
                         in _router_step_mod.INSPECTED_PHASES)
+        post = None
         if router_steps:
             # The router's post-spawn tail: capture, META|phase-result,
             # verdict recompute, return completeness. It writes the record
             # classify_phase's rung 2 reads, so re-read the log after it.
-            self._router_step_post_spawn_locked(
+            post = self._router_step_post_spawn_locked(
                 tid, entry, phase_token, log_file, env_file, counters)
+        scrubbed = self._playwright_scrub_locked(tid, phase_token, log_file,
+                                                 post)
+        if router_steps or scrubbed:
             all_lines = _read_lines()
             counters = _phase_mod.resolve_loop_counters(
                 all_lines, _phase_mod.read_verify_ctl(log_file))
@@ -5102,6 +5106,35 @@ class Supervisor:
         return _router_step_mod.post_spawn(
             phase, tid, log_file, text, attempt=attempt,
             ticket_dir=ticket_dir, repos_root=repos_root)
+
+    def _playwright_scrub_locked(self, tid, phase_token, log_file, post):
+        """Redact typed passwords after a VERIFY worker when post-spawn
+        did not (GitHub #819 follow-up). Returns True when a log line was
+        written.
+
+        `router-step.sh post-spawn VERIFY` runs `playwright-scrub.sh` itself
+        (step 2b). It does not run when `FLEET_ROUTER_STEP_SHELL` is off (it
+        is read per call, so phase dispatch keeps going after an unset), and
+        may not have reached step 2b when the call failed (`post.ok` False:
+        timeout, missing script). Then the scrub runs here on its own, with
+        the shell step's cwd, environment, log line and error handling. It
+        is idempotent, so a repeat after a partial post-spawn is harmless.
+        Never blocks or changes the phase transition.
+        """
+        if (phase_token or '').upper() != 'VERIFY':
+            return False
+        if _router_step_mod is None or (post is not None and post.ok):
+            return False
+        try:
+            res = _router_step_mod.playwright_scrub(log_file)
+        except Exception as exc:  # advisory only, never fails the phase
+            print(f"fleetd[{os.getpid()}]: {tid} playwright-scrub raised "
+                  f"{type(exc).__name__}; skipped", file=sys.stderr)
+            return False
+        if not res.ok:
+            print(f"fleetd[{os.getpid()}]: {tid} playwright-scrub did not "
+                  f"run: {res.detail}", file=sys.stderr)
+        return res.logged
 
     def _router_step_inspect_locked(self, tid, phase_token, decision,
                                     log_file, hb_log_file, env_file, reason,

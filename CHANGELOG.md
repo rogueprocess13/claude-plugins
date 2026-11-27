@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.59.0 (2026-11-27) — fleetd scrubs Playwright snapshots when post-spawn did not
+
+Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright-scrub.sh`, but fleetd's phase dispatch calls post-spawn only while `FLEET_ROUTER_STEP_SHELL=true` (read per call, so phase dispatch keeps running after the flag is unset), and a post-spawn call that times out or cannot find its script may never reach the scrub. On those paths a typed test password stayed in clear text under `.playwright-mcp/`.
+
+- **`router_step.playwright_scrub(log_file)`.** Runs the same `playwright-scrub.sh` the way the shell step does: cwd from `project_dir_for`, fleetd's environment (so the same `$REPOS_ROOT`), stderr discarded, any exit code accepted, and the same `META|playwright-scrub|info|files=N redacted=M` line through `plog.sh`, written only when the output does not end in ` redacted=0`. A missing script, OSError or timeout returns `ok=False` and never raises.
+- **Supervisor.** After a phase-dispatch VERIFY worker is reaped, the scrub runs on its own when post-spawn did not run or returned `ok=False`. It never changes the phase transition; an exception is logged and ignored.
+- **Tests.** `tests/test_router_step_parity.py` `PlaywrightScrubParityTest` runs `router-step.sh post-spawn VERIFY` and the Python call over the same fixtures (real script, and stubbed outputs: non-zero exit, empty, `redacted=0`, no prefix, stderr only) and asserts the same files and log line. `tests/test_router_step.py` `PlaywrightScrubTest` and `tests/test_router_step_supervisor.py` `PlaywrightScrubWiringTest` cover the call and the wiring. Fake credentials only.
+
 ## 0.155.0 (2026-11-27) — reject.sh checks REPOS_ROOT the way approve.sh does
 
 Follow-up to GitHub #818 and #820.

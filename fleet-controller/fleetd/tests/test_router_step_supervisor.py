@@ -290,9 +290,80 @@ class FlagOffTest(_Base):
             sup._dispatch_step_locked('T-1', 'STEP_6', self._table(),
                                       str(self.log_file), '', '', 'd')
             sup._advance_phase_dispatch_locked(
-                'T-1', self._entry('STEP_4_5', 'VERIFY'), 1, 'exit')
+                'T-1', self._entry('STEP_4_6', 'PR-REVIEW'), 1, 'exit')
         port.assert_called_once()
         run.assert_not_called()
+
+    def test_flag_off_verify_runs_only_the_playwright_scrub(self):
+        # #819 follow-up: post-spawn (which scrubs) does not run with the
+        # flag off, so the scrub runs on its own; nothing else does.
+        sup = self._sup()
+        with mock.patch.object(router_step, 'post_spawn') as ps, \
+                mock.patch.object(router_step, 'inspector') as insp, \
+                mock.patch.object(
+                    router_step, 'playwright_scrub',
+                    return_value=router_step.PlaywrightScrub(True, False, '')
+                ) as scrub, \
+                mock.patch.object(sup, 'spawn_phase'):
+            sup._advance_phase_dispatch_locked(
+                'T-1', self._entry('STEP_4_5', 'VERIFY'), 1, 'exit')
+        scrub.assert_called_once_with(str(self.log_file))
+        ps.assert_not_called()
+        insp.assert_not_called()
+
+
+class PlaywrightScrubWiringTest(_Base):
+    """The supervisor runs `playwright-scrub.sh` after a VERIFY worker
+    exactly when `router-step.sh post-spawn` did not (#819 follow-up)."""
+
+    def _reap(self, phase, step_id, post):
+        sup = self._sup()
+        with mock.patch.object(router_step, 'post_spawn',
+                               return_value=post), \
+                mock.patch.object(router_step, 'inspector',
+                                  return_value=_SKIP), \
+                mock.patch.object(
+                    router_step, 'playwright_scrub',
+                    return_value=router_step.PlaywrightScrub(True, False, '')
+                ) as scrub, \
+                mock.patch.object(sup, 'spawn_phase') as spawn_phase:
+            sup._advance_phase_dispatch_locked(
+                'T-1', self._entry(step_id, phase), 1, 'exit')
+        return scrub, spawn_phase
+
+    def test_post_spawn_ok_already_scrubbed(self):
+        scrub, _ = self._reap('VERIFY', 'STEP_4_5',
+                              router_step.PostSpawn(True, '', ''))
+        scrub.assert_not_called()
+
+    def test_post_spawn_failure_scrubs_on_its_own(self):
+        scrub, spawn_phase = self._reap(
+            'VERIFY', 'STEP_4_5', router_step.PostSpawn(False, '', 'timed out'))
+        scrub.assert_called_once_with(str(self.log_file))
+        # The transition is unchanged: no verdict, exit 1 → retry implement.
+        self.assertEqual(spawn_phase.call_args[0][1], 'STEP_4')
+
+    def test_other_phases_never_scrub(self):
+        for phase, step in (('IMPLEMENT', 'STEP_4'),
+                            ('PR-REVIEW', 'STEP_4_6')):
+            with self.subTest(phase=phase):
+                scrub, _ = self._reap(
+                    phase, step, router_step.PostSpawn(False, '', 'x'))
+                scrub.assert_not_called()
+
+    def test_a_raising_scrub_never_fails_the_phase(self):
+        sup = self._sup()
+        with mock.patch.object(
+                router_step, 'post_spawn',
+                return_value=router_step.PostSpawn(False, '', 'x')), \
+                mock.patch.object(router_step, 'inspector',
+                                  return_value=_SKIP), \
+                mock.patch.object(router_step, 'playwright_scrub',
+                                  side_effect=RuntimeError('boom')), \
+                mock.patch.object(sup, 'spawn_phase') as spawn_phase:
+            sup._advance_phase_dispatch_locked(
+                'T-1', self._entry('STEP_4_5', 'VERIFY'), 1, 'exit')
+        self.assertEqual(spawn_phase.call_args[0][1], 'STEP_4')
 
 
 if __name__ == '__main__':

@@ -309,6 +309,65 @@ def post_spawn(phase, tid, log_file, return_text, attempt=None,
     return PostSpawn(True, fields.get('RETURN_COMPLETENESS_STATUS', ''), '')
 
 
+# ── playwright scrub ────────────────────────────────────────────────────────
+
+TIMEOUT_PLAYWRIGHT_SCRUB = 30
+
+PlaywrightScrub = namedtuple('PlaywrightScrub', 'ok logged detail')
+PlaywrightScrub.__doc__ = """`playwright-scrub.sh`'s run, outside post-spawn.
+
+ok     — the script ran to an exit (any exit code, as `|| true` allows).
+logged — a `META|playwright-scrub|info|` line was written.
+"""
+
+
+def playwright_scrub(log_file, lib_dir=None, timeout=None):
+    """Step 2b of `router-step.sh post-spawn VERIFY`, on its own (#819).
+
+    For a VERIFY reap whose post-spawn did not run (flag off) or did not
+    finish (`ok=False`), so the typed test password in `./.playwright-mcp`
+    snapshots is redacted either way. Mirrors the shell step exactly:
+
+    * same cwd (`project_dir_for(log_file)`) and environment, so the
+      script's own `./.playwright-mcp` and `$REPOS_ROOT/.playwright-mcp`
+      resolve to the same directories;
+    * stderr is discarded (`2>/dev/null`) and never echoed;
+    * any exit code is accepted (`|| true`): the captured stdout, trailing
+      newlines stripped, decides;
+    * empty output or output ending in ` redacted=0` logs nothing, anything
+      else logs `META|playwright-scrub|info|<output minus PLAYWRIGHT_SCRUB >`
+      through the same `plog.sh` call.
+
+    Never raises; a missing script, OSError or timeout returns `ok=False`.
+    """
+    lib = lib_dir_path(lib_dir)
+    script = lib / 'playwright-scrub.sh'
+    if not script.is_file():
+        return PlaywrightScrub(False, False,
+                               f'playwright-scrub.sh not found at {script}')
+    cwd = project_dir_for(log_file)
+    try:
+        run = _run(['bash', str(script)],
+                   timeout or _timeout(TIMEOUT_PLAYWRIGHT_SCRUB), cwd=cwd,
+                   lib_dir=lib_dir)
+    except RouterStepError as exc:
+        return PlaywrightScrub(False, False, str(exc))
+    out = run.stdout.rstrip('\n')
+    if not out or out.endswith(' redacted=0'):
+        return PlaywrightScrub(True, False, '')
+    msg = out[len('PLAYWRIGHT_SCRUB '):] if out.startswith(
+        'PLAYWRIGHT_SCRUB ') else out
+    plog = lib / 'plog.sh'
+    try:
+        _run(['bash', str(plog), '--log-file', str(log_file or ''), 'META',
+              'playwright-scrub', 'info', msg],
+             timeout or _timeout(TIMEOUT_PLAYWRIGHT_SCRUB), cwd=cwd,
+             lib_dir=lib_dir)
+    except RouterStepError as exc:
+        return PlaywrightScrub(True, False, str(exc))
+    return PlaywrightScrub(True, True, '')
+
+
 # ── inspector ───────────────────────────────────────────────────────────────
 
 def inspector(phase, tid, log_file, hb_log_file='', out=None, lib_dir=None,

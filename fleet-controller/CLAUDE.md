@@ -119,7 +119,12 @@ turning phase dispatch off as well. With it on, under phase-level dispatch:
   phase-result record, and rung 5 sees the independent checks
   (`phase_dispatch.verifier_overrides`: a VERIFY `META|claim-delta` with
   `direction: optimistic`, an IMPLEMENT `RETURN_INCOMPLETE` gate-warn). With
-  the flag off nothing writes those records on the phase-dispatch path.
+  the flag off nothing writes those records on the phase-dispatch path. One
+  exception: after a VERIFY worker whose post-spawn did not run (flag off) or
+  returned `ok=False`, fleetd runs `playwright-scrub.sh` on its own
+  (`router_step.playwright_scrub`, same cwd, env and `META|playwright-scrub`
+  line as post-spawn's step 2b), so a typed test password is never left in
+  `.playwright-mcp/` snapshots (#819).
   **Fail closed (Track 0.5):** a loop-bearing phase that exits 0 with no
   usable verdict (no record, or `UNKNOWN`) classifies `fail`, never `done`, so
   a VERIFY whose agent forgot its PHASE_RESULT block retries implement against
