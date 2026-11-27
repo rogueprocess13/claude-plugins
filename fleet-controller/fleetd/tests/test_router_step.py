@@ -259,5 +259,144 @@ class ProcessGroupKillTest(unittest.TestCase):
             self.assertFalse(alive, 'grandchild outlived the timeout')
 
 
+_REAL_LIB = (Path(__file__).resolve().parents[3] / 'ticket-auto-pipeline'
+             / 'lib')
+_FAKE_PW = 'Fake-Pw-1234!'
+_SNAPSHOT = (
+    '- generic [ref=e1]:\n'
+    '  - textbox "Email" [ref=e5]: tester@example.test\n'
+    f'  - textbox "Password" [ref=f6e26]: {_FAKE_PW}\n'
+    '  - textbox "Search" [ref=e9]: password reset help\n'
+)
+
+
+class PlaywrightScrubTest(unittest.TestCase):
+    """`router_step.playwright_scrub` (#819 follow-up). The real
+    `playwright-scrub.sh` where it matters, stubs for the odd outputs. Fake
+    credentials only; REPOS_ROOT points at a temp dir and the cwd is a temp
+    project, so no real `.playwright-mcp` directory is ever read."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.project = self.root / 'project'
+        (self.project / 'logs').mkdir(parents=True)
+        self.log = self.project / 'logs' / 'S-1-pipeline.log'
+        self.log.write_text('')
+        self.repos_root = self.root / 'repos'
+        self.repos_root.mkdir()
+        env = mock.patch.dict(os.environ, {'REPOS_ROOT': str(self.repos_root)})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop('UAT_TEST_PASSWORD', None)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _snap(self, base):
+        d = base / '.playwright-mcp'
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / 'page-1.yml'
+        f.write_text(_SNAPSHOT)
+        return f
+
+    def _scrub_lines(self):
+        return [line for line in self.log.read_text().splitlines()
+                if '|META|playwright-scrub|' in line]
+
+    def _call(self, **kw):
+        with tempfile.TemporaryFile('w+') as err:
+            with mock.patch.object(sys, 'stderr', err):
+                res = router_step.playwright_scrub(str(self.log), **kw)
+            err.seek(0)
+            return res, err.read()
+
+    @unittest.skipUnless(_REAL_LIB.is_dir(), 'ticket-auto-pipeline lib')
+    def test_redacts_both_dirs_and_logs_the_routers_line(self):
+        cwd_snap = self._snap(self.project)
+        root_snap = self._snap(self.repos_root)
+        res, err = self._call(lib_dir=_REAL_LIB)
+        self.assertEqual((res.ok, res.logged), (True, True), res.detail)
+        for f in (cwd_snap, root_snap):
+            text = f.read_text()
+            self.assertNotIn(_FAKE_PW, text)
+            self.assertIn('textbox "Password" [ref=f6e26]: [REDACTED]', text)
+            self.assertIn('password reset help', text)
+        lines = self._scrub_lines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].endswith(
+            '|META|playwright-scrub|info|files=2 redacted=2'), lines[0])
+        self.assertNotIn(_FAKE_PW, self.log.read_text())
+        self.assertNotIn(_FAKE_PW, err)
+
+    @unittest.skipUnless(_REAL_LIB.is_dir(), 'ticket-auto-pipeline lib')
+    def test_literal_password_from_env_is_redacted_and_never_printed(self):
+        f = self.project / '.playwright-mcp' / 'page-2.yml'
+        f.parent.mkdir()
+        f.write_text(f'  - paragraph [ref=e11]: was {_FAKE_PW}\n')
+        with mock.patch.dict(os.environ, {'UAT_TEST_PASSWORD': _FAKE_PW}):
+            res, err = self._call(lib_dir=_REAL_LIB)
+        self.assertTrue(res.logged, res.detail)
+        self.assertNotIn(_FAKE_PW, f.read_text())
+        self.assertNotIn(_FAKE_PW, self.log.read_text())
+        self.assertNotIn(_FAKE_PW, err)
+
+    @unittest.skipUnless(_REAL_LIB.is_dir(), 'ticket-auto-pipeline lib')
+    def test_nothing_to_redact_logs_nothing_and_a_repeat_is_silent(self):
+        res, _err = self._call(lib_dir=_REAL_LIB)
+        self.assertEqual((res.ok, res.logged), (True, False))
+        self.assertEqual(self._scrub_lines(), [])
+        self._snap(self.project)
+        self._call(lib_dir=_REAL_LIB)
+        res, _err = self._call(lib_dir=_REAL_LIB)
+        self.assertEqual((res.ok, res.logged), (True, False))
+        self.assertEqual(len(self._scrub_lines()), 1)
+
+    def _stub_lib(self, body):
+        lib = self.root / 'stub-lib'
+        lib.mkdir(exist_ok=True)
+        (lib / 'playwright-scrub.sh').write_text('#!/usr/bin/env bash\n' + body)
+        (lib / 'plog.sh').write_text(
+            '#!/usr/bin/env bash\n'
+            '[ "$1" = --log-file ] && { f=$2; shift 2; }\n'
+            'printf "2026-01-01T00:00:00Z|%s|%s|%s|%s\\n" "$@" >>"$f"\n')
+        return lib
+
+    def test_non_zero_exit_still_uses_the_output_and_hides_stderr(self):
+        # The shell step's `2>/dev/null || true`.
+        lib = self._stub_lib(
+            f'echo "{_FAKE_PW}" >&2\n'
+            'echo "PLAYWRIGHT_SCRUB files=3 redacted=1"\nexit 1\n')
+        res, err = self._call(lib_dir=lib)
+        self.assertEqual((res.ok, res.logged), (True, True))
+        self.assertEqual(self._scrub_lines(), [
+            '2026-01-01T00:00:00Z|META|playwright-scrub|info|'
+            'files=3 redacted=1'])
+        self.assertNotIn(_FAKE_PW, err)
+
+    def test_empty_output_logs_nothing(self):
+        res, _err = self._call(lib_dir=self._stub_lib('exit 3\n'))
+        self.assertEqual((res.ok, res.logged), (True, False))
+        self.assertEqual(self._scrub_lines(), [])
+
+    def test_missing_script_and_timeout_are_not_ok_and_never_raise(self):
+        res, _err = self._call(lib_dir=self.root / 'nowhere')
+        self.assertEqual((res.ok, res.logged), (False, False))
+        lib = self._stub_lib('exit 0\n')
+        with mock.patch.object(router_step, '_run',
+                               side_effect=RouterStepError('timed out')):
+            res, _err = self._call(lib_dir=lib)
+        self.assertEqual((res.ok, res.logged), (False, False))
+
+    def test_runs_from_the_project_dir(self):
+        lib = self._stub_lib('exit 0\n')
+        with mock.patch.object(router_step, '_run',
+                               return_value=StepRun(0, '', '')) as run:
+            router_step.playwright_scrub(str(self.log), lib_dir=lib)
+        self.assertEqual(run.call_args[1]['cwd'], str(self.project))
+        self.assertEqual(run.call_args[0][0],
+                         ['bash', str(lib / 'playwright-scrub.sh')])
+
+
 if __name__ == '__main__':
     unittest.main()

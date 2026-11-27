@@ -15,6 +15,10 @@ prints both sides. Delete this file together with the port (task 6.1).
   byte-identical to `capture_phase_return`'s, and (b) `classify_phase` over
   the line the script wrote gives the same outcome as over the hand-built
   record the port's own tests use.
+* playwright scrub (#819 follow-up): post-spawn VERIFY step 2b against
+  `router_step.playwright_scrub`, which fleetd runs when post-spawn did not.
+  Same redacted files, same `META|playwright-scrub` line. Both sides are
+  live code, so move this class out before deleting the file with the port.
 """
 
 import json
@@ -25,6 +29,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -237,6 +242,130 @@ class PostSpawnParityTest(unittest.TestCase):
                 self.assertEqual(
                     (py_dir / 'logs' / 'C-1-verify-agent.log').read_bytes(),
                     (sh_dir / 'logs' / 'C-1-verify-agent.log').read_bytes())
+
+
+_FAKE_PW = 'Fake-Pw-1234!'
+_SNAPSHOT = (
+    '- generic [ref=e1]:\n'
+    '  - textbox "Email" [ref=e5]: tester@example.test\n'
+    f'  - textbox "Password" [ref=f6e26]: {_FAKE_PW}\n'
+    f'  - paragraph [ref=e11]: was {_FAKE_PW}\n'
+)
+
+# (name, snapshot files under ./.playwright-mcp, under $REPOS_ROOT/..., env)
+SCRUB_FIXTURES = [
+    ('nothing', 0, 0, {}),
+    ('cwd-only', 1, 0, {}),
+    ('both-dirs', 2, 1, {}),
+    ('literal-env', 1, 1, {'UAT_TEST_PASSWORD': _FAKE_PW}),
+]
+
+# Stubbed playwright-scrub.sh bodies: the shell step's output handling
+# (`2>/dev/null || true`, `*" redacted=0" | ""`, `#PLAYWRIGHT_SCRUB `).
+SCRUB_STUBS = [
+    ('exit-1-with-output',
+     'echo "PLAYWRIGHT_SCRUB files=3 redacted=1"; exit 1', True),
+    ('empty-exit-2', 'exit 2', False),
+    ('redacted-0', 'echo "PLAYWRIGHT_SCRUB files=4 redacted=0"', False),
+    ('no-prefix', 'echo "files=1 redacted=1"', True),
+    ('stderr-only', f'echo "{_FAKE_PW}" >&2', False),
+    ('trailing-newlines',
+     'printf "PLAYWRIGHT_SCRUB files=1 redacted=1\\n\\n\\n"', True),
+]
+
+
+@unittest.skipUnless(shutil.which('bash'), 'bash required')
+class PlaywrightScrubParityTest(unittest.TestCase):
+    """#819 follow-up: `router-step.sh post-spawn VERIFY` step 2b against
+    `router_step.playwright_scrub`, which fleetd runs when post-spawn did
+    not. Same redacted files, same `META|playwright-scrub` line. Fake
+    credentials only; REPOS_ROOT is a temp dir."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._lib_tmp = tempfile.TemporaryDirectory()
+        cls.stub_lib = Path(cls._lib_tmp.name) / 'lib'
+        shutil.copytree(LIB, cls.stub_lib, symlinks=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._lib_tmp.cleanup()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        env = mock.patch.dict(os.environ, {})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop('UAT_TEST_PASSWORD', None)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _side(self, label, n_cwd, n_root):
+        project = self.root / label / 'project'
+        (project / 'logs').mkdir(parents=True)
+        repos = self.root / label / 'repos'
+        repos.mkdir()
+        for base, n in ((project, n_cwd), (repos, n_root)):
+            for i in range(n):
+                d = base / '.playwright-mcp'
+                d.mkdir(exist_ok=True)
+                (d / f'page-{i}.yml').write_text(_SNAPSHOT)
+        log = project / 'logs' / 'W-1-pipeline.log'
+        log.write_text('')
+        return project, repos, log
+
+    def _run_both(self, n_cwd, n_root, env, lib):
+        self._n = getattr(self, '_n', 0) + 1
+        results = {}
+        for label in (f'sh{self._n}', f'py{self._n}'):
+            project, repos, log = self._side(label, n_cwd, n_root)
+            with mock.patch.dict(os.environ,
+                                 {'REPOS_ROOT': str(repos), **env}):
+                if label == 'sh':
+                    self.assertTrue(router_step.post_spawn(
+                        'VERIFY', 'W-1', str(log), 'no block\n', attempt=1,
+                        lib_dir=lib).ok)
+                else:
+                    router_step.playwright_scrub(str(log), lib_dir=lib)
+            lines = [line for line in log.read_text().splitlines()
+                     if '|playwright-scrub|' in line]
+            files = sorted(
+                (str(p.relative_to(self.root / label)), p.read_bytes())
+                for p in (self.root / label).rglob('.playwright-mcp/*'))
+            results[label[:2]] = (_norm(lines), files, log.read_text())
+        return results
+
+    def test_real_script_parity(self):
+        for name, n_cwd, n_root, env in SCRUB_FIXTURES:
+            with self.subTest(fixture=name):
+                r = self._run_both(n_cwd, n_root, env, LIB)
+                self.assertEqual(r['sh'][0], r['py'][0],
+                                 f'{name}: log lines diverged')
+                self.assertEqual(r['sh'][1], r['py'][1],
+                                 f'{name}: snapshot files diverged')
+                for side in ('sh', 'py'):
+                    self.assertNotIn(_FAKE_PW, r[side][2])
+                    for _path, data in r[side][1]:
+                        self.assertIn(b'[ref=f6e26]: [REDACTED]', data)
+                        if 'UAT_TEST_PASSWORD' in env:
+                            # The literal rule needs the configured value.
+                            self.assertNotIn(_FAKE_PW.encode(), data)
+                if n_cwd + n_root:
+                    self.assertEqual(len(r['py'][0]), 1, r['py'][0])
+
+    def test_stubbed_output_parity(self):
+        script = self.stub_lib / 'playwright-scrub.sh'
+        for name, body, logs in SCRUB_STUBS:
+            with self.subTest(stub=name):
+                script.write_text(f'#!/usr/bin/env bash\n{body}\n')
+                r = self._run_both(0, 0, {}, self.stub_lib)
+                self.assertEqual(r['sh'][0], r['py'][0],
+                                 f'{name}: log lines diverged')
+                self.assertEqual(len(r['py'][0]), 1 if logs else 0,
+                                 f'{name}: {r["py"][0]}')
+                self.assertNotIn(_FAKE_PW, r['py'][2])
 
 
 if __name__ == '__main__':
