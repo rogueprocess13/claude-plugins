@@ -102,7 +102,7 @@
       "table_action": "Independent plan review (`plan-review.sh`; see `references/plan-review.md`)",
       "action": "agent",
       "aliases": [],
-      "condition": "TICKET_ROUTER_PLAN_REVIEW=true (META|plan-review|info|router) and a complex ticket",
+      "condition": "TICKET_ROUTER_PLAN_REVIEW=complex (default; META|plan-review|info|router) and a complex ticket, or =true (router — every ticket) and any ticket",
       "phase_dispatch": "manual-pickup",
       "revise_loop": {
         "counter": "consecutive EXEC|adversarial-review|done|BLOCKED verdicts since the last pass or ADVERSARIAL_BLOCKED gate-stop",

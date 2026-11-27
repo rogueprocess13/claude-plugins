@@ -535,30 +535,42 @@ test_dashboard_fields_only_in_new_run_mode() {
   return $ok
 }
 
-# Independent plan review (#667): the flag is read once and recorded. Off
-# writes nothing; the router (NEW_RUN=true) records `router`; fleetd's phase
-# dispatch (no NEW_RUN) records `inline`, because it does not run STEP_2_2.
+# Independent plan review (#667): the flag is read once and recorded.
+# `false` writes nothing; unset is `complex` (the default) and the router
+# (NEW_RUN=true) records `router`; `true` records `router — every ticket`; an
+# invalid value warns and counts as `complex`; fleetd's phase dispatch (no
+# NEW_RUN) records `inline`, because it does not run STEP_2_2.
 test_plan_review_marker_off_router_and_fleetd() {
   _sandbox_new
   local log
-  (unset TICKET_ROUTER_PLAN_REVIEW && _preamble TEST-PRE-30 NEW_RUN=true >/dev/null)
+  TICKET_ROUTER_PLAN_REVIEW=false _preamble TEST-PRE-30 NEW_RUN=true >/dev/null
   log="$_SANDBOX/logs/TEST-PRE-30-pipeline.log"
   local off_n
   off_n=$(grep -c '|META|plan-review|' "$log" || true)
-  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-31 NEW_RUN=true >/dev/null
-  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-31 NEW_RUN=true >/dev/null
+  (unset TICKET_ROUTER_PLAN_REVIEW && _preamble TEST-PRE-31 NEW_RUN=true >/dev/null)
+  (unset TICKET_ROUTER_PLAN_REVIEW && _preamble TEST-PRE-31 NEW_RUN=true >/dev/null)
   local rlog="$_SANDBOX/logs/TEST-PRE-31-pipeline.log"
   TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-32 >/dev/null
   # A later router run does not change a recorded decision.
   TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-32 NEW_RUN=true >/dev/null
   local flog="$_SANDBOX/logs/TEST-PRE-32-pipeline.log"
+  TICKET_ROUTER_PLAN_REVIEW=true _preamble TEST-PRE-33 NEW_RUN=true >/dev/null
+  local alog="$_SANDBOX/logs/TEST-PRE-33-pipeline.log"
+  local err="$_SANDBOX/prv-invalid.err"
+  TICKET_ROUTER_PLAN_REVIEW=yes _preamble TEST-PRE-34 NEW_RUN=true >/dev/null 2>"$err"
+  local ilog="$_SANDBOX/logs/TEST-PRE-34-pipeline.log"
   [ "$off_n" -eq 0 ] &&
     [ "$(grep -c '|META|plan-review|info|router$' "$rlog")" -eq 1 ] &&
+    [ "$(grep -c '|META|plan-review|' "$rlog")" -eq 1 ] &&
     [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$rlog")" = router ] &&
     [ "$(grep -c '|META|plan-review|info|' "$flog")" -eq 1 ] &&
     grep -q '|META|plan-review|info|inline — fleetd phase dispatch does not run STEP_2_2' "$flog" &&
     [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$flog")" = inline ] &&
-    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$log")" = inline ]
+    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$log")" = inline ] &&
+    [ "$(grep -c '|META|plan-review|info|router — every ticket$' "$alog")" -eq 1 ] &&
+    [ "$(bash "$_SANDBOX/lib/plan-review.sh" mode --log-file "$alog")" = router ] &&
+    [ "$(grep -c '|META|plan-review|info|router$' "$ilog")" -eq 1 ] &&
+    grep -q 'TICKET_ROUTER_PLAN_REVIEW must be complex, true or false; using complex' "$err"
   local ok=$?
   _sandbox_rm
   return $ok
@@ -690,7 +702,7 @@ _run "explicit args win over TICKET_ARG" test_explicit_args_win_over_ticket_arg
 _run "TICKET_ARG usage errors" test_ticket_arg_usage_errors
 _run "ANNOUNCE_START is written once" test_announce_start_is_written_once
 _run "dashboard fields only in NEW_RUN mode" test_dashboard_fields_only_in_new_run_mode
-_run "plan review marker: off, router, fleetd phase dispatch" test_plan_review_marker_off_router_and_fleetd
+_run "plan review marker: false, default complex, true, invalid, fleetd phase dispatch" test_plan_review_marker_off_router_and_fleetd
 _run "manual mode: schema line precedes branch context" test_manual_mode_schema_line_precedes_branch_context
 _run "detect-resume routes a manual preamble log like a legacy one" test_detect_resume_routes_a_manual_preamble_log_like_a_legacy_one
 _run "preflight: teams query failure has its own message" test_preflight_teams_query_failure_has_its_own_message

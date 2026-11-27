@@ -542,11 +542,23 @@ ticket_preamble_run() {
   # (NEW_RUN=true, which is also a ticket-level fleetd worker) will run
   # STEP_2_2, `inline …` when the flag is on but this caller is fleetd's phase
   # dispatch, which does not run that step, so ticket-appraise-exec keeps its
-  # inline Step 3.6. Flag off: no line, nothing changes.
-  if [ "${TICKET_ROUTER_PLAN_REVIEW:-false}" = "true" ] &&
+  # inline Step 3.6. TICKET_ROUTER_PLAN_REVIEW: `complex` (the default) reviews
+  # complex tickets (`router`; plan-review.sh prepare skips a simple one),
+  # `true` every ticket (`router — every ticket`), `false` none (no line). Any
+  # other value warns and counts as `complex`.
+  local _tp_prv="${TICKET_ROUTER_PLAN_REVIEW:-complex}" _tp_prv_mark="router"
+  case "$_tp_prv" in
+  complex | false) ;;
+  true) _tp_prv_mark="router — every ticket" ;;
+  *)
+    echo "ticket_preamble_run: warning: TICKET_ROUTER_PLAN_REVIEW must be complex, true or false; using complex" >&2
+    _tp_prv="complex"
+    ;;
+  esac
+  if [ "$_tp_prv" != "false" ] &&
     ! grep -q '^[^|]*|META|plan-review|info|' "$LOG_FILE" 2>/dev/null; then
     if [ "$NEW_RUN" = "true" ]; then
-      _plog "$LOG_FILE" "META" "plan-review" "info" "router"
+      _plog "$LOG_FILE" "META" "plan-review" "info" "$_tp_prv_mark"
     else
       _plog "$LOG_FILE" "META" "plan-review" "info" "inline — fleetd phase dispatch does not run STEP_2_2; the review stays in ticket-appraise-exec Step 3.6"
     fi

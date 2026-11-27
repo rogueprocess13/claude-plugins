@@ -40,7 +40,7 @@ ticket-implement	145344
 # allow-growth: adr-gate/references/gate.md (the ADR gate, moved out of adr-gate/SKILL.md) listed so the fingerprint covers the gate a phase follows inline from preamble § 8; read only when the phase composes an ADR request (+11,566 bytes, 0.137.1)
 # allow-growth: pre-fix-fails-gate — references/pre-fix-fails.md, read only on a bug ticket with PRE_FIX_FAILS not off (+2,484 bytes, 0.143.0)
 ticket-implement:conditional	23999
-ticket-plan-review	5473
+ticket-plan-review	5459
 # allow-growth: cancel transition (#770) — the Cancel entries section in pipeline-log-format.md and the exit-14 row in ticket-flow/SKILL.md (+659 bytes, 0.129.0)
 # allow-growth: Regression Risk gate (#771) — the REGRESSION_RISK_UNACKNOWLEDGED gate-stop row in pipeline-log-format.md (+220 bytes, 0.132.0)
 # allow-growth: pre-fix-fails-gate — the META|pre-fix-fails entry in pipeline-log-format.md, less SKILL.md trims (+389 bytes, 0.143.0)

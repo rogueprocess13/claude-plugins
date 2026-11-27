@@ -1,6 +1,6 @@
 ---
 name: ticket-plan-review
-description: Independent, read-only review of a complex ticket's implementation plan. Spawned by the ticket-auto router at STEP_2_2, after ticket-appraise-exec, as a fresh agent that did not write the plan. Writes severity-ranked findings to plan-review.md in the ticket workspace and returns one line. Not for direct use; the router runs it when TICKET_ROUTER_PLAN_REVIEW=true.
+description: Independent, read-only review of a ticket's implementation plan. Spawned by the ticket-auto router at STEP_2_2, after ticket-appraise-exec, as a fresh agent that did not write the plan. Writes severity-ranked findings to plan-review.md in the ticket workspace and returns one line. Not for direct use; the router runs it per TICKET_ROUTER_PLAN_REVIEW.
 ---
 
 # Ticket Plan Review

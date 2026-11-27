@@ -26,7 +26,17 @@ Follow-up to PR #842. Text only; no behaviour change.
 - **`docs/skills/ticket-flow.md`.** `LINEAR_API_KEY` is optional, used only by the outbox drain's board projection, matching `skills/ticket-flow/SKILL.md`.
 - **next.md** Step 15 note: the ticket-flow doc's exit-7 text is marked done (#842).
 
-## 0.156.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
+## 0.158.0 (2026-11-27) — independent plan review on by default for complex tickets
+
+fleet-controller 0.60.0 (catalog entry and parity case). Follow-up to #816 (PR #833) and #667 (PR #838). Since those PRs ticket-appraise-exec Step 3.6 can only review a plan inside the phase agent that wrote it (logged `ADVERSARIAL_SELF_REVIEW`); the independent reviewer at STEP_2_2 ran only with `TICKET_ROUTER_PLAN_REVIEW=true`.
+
+- **New value `complex`, now the default.** `TICKET_ROUTER_PLAN_REVIEW` takes `complex` (default, also when unset: complex tickets get the independent review), `true` (every ticket, simple ones included) or `false` (never; Step 3.6's inline self-review as before). Any other value warns on stderr and counts as `complex`. Cost: one extra read-only agent spawn per review round on each complex ticket, plus at most one EXEC re-run after a blocker.
+- **Same deterministic complexity source.** "Complex" is the notes.md `## Complexity` score through `notes-parse.sh` `get_complexity`, the value the entry gate reads; nothing is re-scored. The preamble records the scope once (`META|plan-review|info|router` for `complex`, `router — every ticket` for `true`, no line for `false`), and `plan-review.sh prepare` applies it after EXEC. New `plan-review.sh scope <LOG>` (`complex`\|`every`). fleetd's `plan_review_router` needs no change: it already treats any `router …` line as router mode; `fleetd/tests/test_plan_review.py` gains the `router — every ticket` parity case.
+- **Note on `true`.** Before this release `true` reviewed complex tickets only (prepare skipped simple ones). It now means every ticket; `complex` is the old `true` behaviour. A ticket keeps whatever line its log already has.
+- **Step 3.6 unchanged.** STEP_2_2 runs after EXEC, so Step 3.6 cannot report a finished independent review; in router mode it already skips itself, and `ADVERSARIAL_SELF_REVIEW` is logged only when no independent review follows (`false`, or fleetd phase dispatch). Documented in docs/plan-review.md.
+- **Tests.** `test-ticket-preamble.sh` (false, unset, true, invalid, fleetd phase dispatch), `test-plan-review.sh` (every-ticket scope reviews a simple ticket; scope reader), `fleetd/tests/test_plan_review.py`.
+
+## 0.157.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
 
 Follow-up to #819 (PRs #828, #841). `playwright-scrub.sh` ran after a VERIFY agent (router post-spawn, ticket-verify, fleetd's phase-dispatch reap). A worker killed in the middle of VERIFY (fleetd KILL or KILL+RESTART, `fleet-stop.sh`, the watchdog, a crash, a person's Ctrl-C) reached none of them, so its snapshots kept the typed password in clear text until a later VERIFY ran.
 

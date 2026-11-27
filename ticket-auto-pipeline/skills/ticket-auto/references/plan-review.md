@@ -1,6 +1,6 @@
 # ticket-auto — independent plan review (STEP_2_2)
 
-Read only under the condition in SKILL.md "STEP_2_2 — Plan review": `{PLAN_REVIEW}` is `review` or `revise`. That happens only when `TICKET_ROUTER_PLAN_REVIEW=true` was set when the ticket's preamble first ran (`META|plan-review|info|router`). `lib/plan-review.sh` makes every decision here; you only spawn the agent and act on what the script prints.
+Read only under the condition in SKILL.md "STEP_2_2 — Plan review": `{PLAN_REVIEW}` is `review` or `revise`. That happens when `TICKET_ROUTER_PLAN_REVIEW` was not `false` when the ticket's preamble first ran (`META|plan-review|info|router`). `lib/plan-review.sh` makes every decision here; you only spawn the agent and act on what the script prints.
 
 ## STEP_2 with `{PLAN_REVIEW}` = `revise`
 
@@ -18,7 +18,7 @@ Pass `INSTRUCTIONS="$(cat <PLAN_REVISE_INSTRUCTIONS_FILE>)"`. After the agent re
 bash ~/.claude/skills/lib/plan-review.sh prepare {TICKET_ID} --log-file "{LOG_FILE}" --ticket-dir "{TICKET_DIR}" --repos-root "{REPOS_ROOT}"
 ```
 
-If it prints `PLAN_REVIEW_READY=skip`, there is nothing to review (a simple ticket, no plan artifact, or already reviewed): spawn nothing and re-run `detect-resume.sh`. Otherwise spawn the reviewer with the standard pattern (Agent spawn template):
+If it prints `PLAN_REVIEW_READY=skip`, there is nothing to review (a simple ticket under the default, no plan, or already reviewed): spawn nothing and re-run `detect-resume.sh`. Otherwise spawn the reviewer with the standard pattern (Agent spawn template):
 
 ```
 STEP=plan-review PHASE=EXEC SKILL=/ticket-auto-pipeline:ticket-plan-review
