@@ -27,6 +27,15 @@ Follow-up to #820 (PRs #831, #840). fleetd's gate-hold intake created a `hold_ki
 - **Flag.** `FLEET_GATE_HOLD_NOTIFY` (default `true`, catalogued in `features.json`); `false` keeps the row and posts nothing.
 - **Tests.** `fleetd/tests/test_gate_hold.py`: `TestGateHoldReasonText`, `TestPostGateHoldComment`, `TestGateHoldIntakeNotify` (first intake posts and notifies once; second pass, restart and repeated event post nothing; each reason; content holds and the flag off post nothing; human holds unchanged) and `TestGateHoldNotifySharedSidecar` (real `fleet-notify.sh` with a stub `curl`). `test_supervisor.py`'s gate intake test now expects one gate comment and notification and no human ones. `lib/tests/test-fleet-notify.sh` and `test-fleet-reconcile.sh` cover the reason sentence, the key, and the reconcile path skipping a hold fleetd already notified. The fleetd test harness (`_hermetic.isolate`) now also clears `SLACK_BOT_TOKEN`/`SLACK_CHANNEL`.
 
+## 0.156.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
+
+Follow-up to #819 (PRs #828, #841). `playwright-scrub.sh` ran after a VERIFY agent (router post-spawn, ticket-verify, fleetd's phase-dispatch reap). A worker killed in the middle of VERIFY (fleetd KILL or KILL+RESTART, `fleet-stop.sh`, the watchdog, a crash, a person's Ctrl-C) reached none of them, so its snapshots kept the typed password in clear text until a later VERIFY ran.
+
+- **`hooks/playwright-scrub-sweep.sh`, a new `SessionStart` hook.** Runs the same scrub from a tickets root only: the session's project dir (`CLAUDE_PROJECT_DIR`, else the cwd) when it holds the `.ticket-auto/` marker, else `$REPOS_ROOT`. In any other dir it does nothing. Every later session in the tickets root starts here: the restarted worker, the next fleetd phase worker, a person's next session. A crash or Ctrl-C cannot be hooked when it happens, so a start-time sweep is the one path that covers every kill.
+- **No pipeline-log line.** A kill path has already written `META|outcome`, which must stay the log's last line. The hook prints one stderr line only when it rewrote a file, never a secret, and nothing on stdout (SessionStart stdout goes into the session context). Not started when neither dir exists; bounded by `PLAYWRIGHT_SCRUB_SWEEP_TIMEOUT` (default 12 s; hook timeout 15 s); exit 0 on every path.
+- **`playwright-scrub.sh` no longer follows symlinks.** It rewrites only a regular, non-symlink file this user owns, refuses a `.playwright-mcp` dir that is itself a symlink, and writes through `mktemp "<dir>/.scrub.XXXXXX"` (was the predictable `<file>.scrub.<pid>`) before the atomic rename. Now that the scrub runs at every session start, a planted link must not get another file overwritten.
+- **Tests.** `lib/tests/test-playwright-scrub.sh`: the hook is registered; it redacts a killed run's snapshot in a tickets root and in `$REPOS_ROOT`, leaves the pipeline log's last line alone, keeps the secret out of stdout and stderr, is silent on a second run, exits 0 silently with no snapshot dir or no scrub script, and does nothing outside a tickets root. A symlinked snapshot file is left a link with its target unchanged, and a symlinked `.playwright-mcp` dir is refused. Fake credentials only.
+
 ## fleet-controller 0.59.0 (2026-11-27) — fleetd scrubs Playwright snapshots when post-spawn did not
 
 Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright-scrub.sh`, but fleetd's phase dispatch calls post-spawn only while `FLEET_ROUTER_STEP_SHELL=true` (read per call, so phase dispatch keeps running after the flag is unset), and a post-spawn call that times out or cannot find its script may never reach the scrub. On those paths a typed test password stayed in clear text under `.playwright-mcp/`.
@@ -34,6 +43,15 @@ Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright
 - **`router_step.playwright_scrub(log_file)`.** Runs the same `playwright-scrub.sh` the way the shell step does: cwd from `project_dir_for`, fleetd's environment (so the same `$REPOS_ROOT`), stderr discarded, any exit code accepted, and the same `META|playwright-scrub|info|files=N redacted=M` line through `plog.sh`, written only when the output does not end in ` redacted=0`. A missing script, OSError or timeout returns `ok=False` and never raises.
 - **Supervisor.** After a phase-dispatch VERIFY worker is reaped, the scrub runs on its own when post-spawn did not run or returned `ok=False`. It never changes the phase transition; an exception is logged and ignored.
 - **Tests.** `tests/test_router_step_parity.py` `PlaywrightScrubParityTest` runs `router-step.sh post-spawn VERIFY` and the Python call over the same fixtures (real script, and stubbed outputs: non-zero exit, empty, `redacted=0`, no prefix, stderr only) and asserts the same files and log line. `tests/test_router_step.py` `PlaywrightScrubTest` and `tests/test_router_step_supervisor.py` `PlaywrightScrubWiringTest` cover the call and the wiring. Fake credentials only.
+
+## 0.156.0 (2026-11-27) — stale flow.sh, approval and gate-reconcile text corrected
+
+Follow-up to #667, #818 and #820. Text only, plus one stderr message.
+
+- **`flow.sh` description.** README's Determinism Boundary, `plugin-overview.md`'s debugging tips and `docs/skills/ticket-flow.md` still said `flow.sh` re-fetches the issue after a mutation and exits 7 on a mismatch. `flow.sh` does no tracker I/O; the board driver projects the outbox to Linear best-effort, and exit 7 (`STATE_ASSERTION_FAILED`) is retired. A stale comment in `gate-check.sh` is removed.
+- **`APPROVAL_REVOKED` retro template.** Rewritten to the manifest approval model: `approval_provenance` human/policy, `approve.sh` as the only human actuator, the reapprove gate in STEP_4_6, held (exit 1, since #831) versus `APPROVAL_REVOKED` (exit 2). The Linear `approved` label check and the nonexistent "Step 5d" are gone.
+- **`gate-reconcile-prep.sh` exit 4.** The message pointed at `mcp__linear-server__list_comments`, removed in #838. It now says the comments cannot be fetched, that an agent stops there, and that an operator sets `LINEAR_API_KEY` or passes `--comments-file`.
+- **Tests.** `lib/tests/test-gate-reconcile.sh` asserts the exit-4 message names no MCP tool.
 
 ## 0.155.0 (2026-11-27) — reject.sh checks REPOS_ROOT the way approve.sh does
 

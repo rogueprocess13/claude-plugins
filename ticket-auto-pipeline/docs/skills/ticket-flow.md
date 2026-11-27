@@ -6,7 +6,7 @@
 
 ## What it does
 
-Centralized Linear state and label executor. Wraps the deterministic `flow.sh` bash script which reads the state machine definition from `workflow.json`, computes the desired end state from current state plus requested additions and removals, and calls the Linear API only when a mutation is needed. Provides idempotency (no-op if nothing would change) and post-trigger assertions (re-fetches issue, exits 7 on mismatch). Every pipeline skill delegates state transitions and label changes here -- no skill calls Linear mutation endpoints directly.
+Centralized Linear state and label executor. Wraps the deterministic `flow.sh` bash script which reads the state machine definition from `workflow.json`, computes the desired end state from the ticket's local manifest plus requested additions and removals, writes it to the manifest and emits one outbox event. `flow.sh` does no tracker I/O: a board driver (`lib/board-drivers/linear.sh`) projects the outbox to Linear later, best-effort. There is no post-trigger assertion any more (exit 7, `STATE_ASSERTION_FAILED`, is retired). Every pipeline skill delegates state transitions and label changes here -- no skill calls Linear mutation endpoints directly.
 
 ## Trigger
 
