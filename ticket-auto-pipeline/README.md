@@ -47,7 +47,7 @@ LOCAL_URL: http://localhost:5173
 UAT_URL: https://staging.example.com
 ```
 
-`REPOS_ROOT` must **also** be set as an environment variable (e.g. in the `env` block of `~/.claude/settings.local.json`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its phases, but the standalone `approve.sh` / `reject.sh` scripts and the local manifest layer (`lib/manifest-read.sh`) read only the environment and fail with "could not make … manifest-addressable" when it is missing — `/ticket-env-check` does not catch this.
+`REPOS_ROOT` must **also** be set as an environment variable (e.g. in the `env` block of `~/.claude/settings.local.json`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its phases, but the local manifest layer (`lib/manifest-read.sh`) reads only the environment — `/ticket-env-check` does not catch this. The standalone `approve.sh` / `reject.sh` scripts also fall back to `./CLAUDE.md`, so run them from the tickets root.
 
 **4. Validate the full setup** from within Claude Code:
 
@@ -113,7 +113,7 @@ Optional:
 | `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` etc. | Model overrides |
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | Commit authorship |
 | `UAT_URL` | UAT environment URL for verification |
-| `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for `approve.sh`, `reject.sh` and anything else that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
+| `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for anything that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
 | `TICKET_AUTONOMY` | Default autonomy mode — `manual` (default), `auto`, or `semi-auto` |
 | `TICKET_RECORD` | `true` records every ticket as if `--record` were passed (only warns when `RECORD_ALLOWED` is unset) |
 | `RECORD_DISABLE` | `true` turns recording off for a ticket whose log already has it on |
@@ -434,7 +434,7 @@ Skills plan, reason, and navigate code. `flow.sh` executes mutations with idempo
 | `fleet-detect.sh` | 6 detection engines (phase failures, stalls, zombies, loops, abandonment, flow failures). Aggregator `fleet_detect_all` outputs JSON. |
 | `fleet-intervene.sh` | Intervention executor: `fleet_kill_pipeline`, `fleet_restart_pipeline`, `fleet_can_restart`. flow.sh mutex-aware, `FLEET_DRY_RUN` guard. |
 | `fleet-dashboard.sh` | Dashboard renderer: `fleet_render_dashboard` (terminal) and `fleet_write_report` (markdown). |
-| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` checks live Linear state. `--mode implement` is ticket-implement Step 1's read-only approval guard: the entry gate's provenance rule, so a `policy` approval never starts a complex or manual-mode ticket. `--mode planned` runs the planned-ticket body/readiness checks before APPRAISE (fail fast). Replaces inline LLM reasoning. |
+| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` reads the local manifest (no tracker fetch) and applies the entry gate's approval rule: a ticket that needs a person (complex, manual mode or an open `[needs-human]` question) holds on `pr-iterate`'s `policy` approval until a person runs `approve.sh`. `--mode implement` is ticket-implement Step 1's read-only approval guard: the entry gate's provenance rule, so a `policy` approval never starts a complex or manual-mode ticket. `--mode planned` runs the planned-ticket body/readiness checks before APPRAISE (fail fast). Replaces inline LLM reasoning. |
 | `outcome-label-check.sh` | Bash-only post-implement guard for Smooth/Rough/Hard outcome label. |
 | `detect-resume.sh` | Pipeline log state parser. Called directly as bash by the thin router — outputs 21 routing variables including counters (VERIFY_ATTEMPTS, VERIFY_LAST, ITERATION, RECONCILE_CYCLE, PR_FEEDBACK_CYCLE). |
 
@@ -529,7 +529,7 @@ Each gate-stop emits a `|META|gate-stop|fail|<CODE>` line into the pipeline log.
 - **`GITHUB_PERSONAL_ACCESS_TOKEN` missing**: Add to same `env` block. Generate from GitHub → Settings → Developer settings → Personal access tokens. Needs `repo` and `pull_requests` scopes.
 - **CLAUDE.md fields missing**: Add `REPOS_ROOT`, `LOCAL_URL`, `UAT_URL` to your project's `CLAUDE.md`. These are project-specific, not global.
 - **Run-readiness rows (`VERIFY_ENV_START`, `PLAYWRIGHT_MCP`, `PLAYWRIGHT_BROWSER`, `GITNEXUS_INDEX`, `PRESCAN_DOCS`)**: warnings, never a FAIL. Each note says which tickets need the item and gives the command to run. The check starts, installs, indexes and scans nothing, and it cannot see whether an MCP server is connected in the agent session; the row says so. The browser revision is checked only for an exactly pinned `npx @playwright/mcp@X.Y.Z` that is already in the npx cache.
-- **`approve.sh` fails with exit 3**: `REPOS_ROOT` could not be resolved, disagrees with `./CLAUDE.md`, or names a root with no manifest for the ticket. `approve.sh`, `reject.sh` and `regression-ack.sh` read it from the environment, else the ticket's env file, else `./CLAUDE.md`: run them from the tickets root. When `./CLAUDE.md` declares a `REPOS_ROOT`, `approve.sh` and `regression-ack.sh` refuse a different one from the environment and print both, because a root left exported from another project would record the decision there. Unset it (`unset REPOS_ROOT`) or set it to this project's root. The prompt shows `Recording in: <manifest path>` before you type the id.
+- **`approve.sh` or `reject.sh` fails with exit 3**: `REPOS_ROOT` could not be resolved, disagrees with `./CLAUDE.md`, or names a root with no manifest for the ticket. `approve.sh`, `reject.sh` and `regression-ack.sh` read it from the environment, else the ticket's env file, else `./CLAUDE.md`: run them from the tickets root. When `./CLAUDE.md` declares a `REPOS_ROOT`, all three refuse a different one from the environment and print both, because a root left exported from another project would record the decision there. Unset it (`unset REPOS_ROOT`) or set it to this project's root. The prompt shows `Recording in: <manifest path>` before you type the id.
 
 ### State machine drift
 

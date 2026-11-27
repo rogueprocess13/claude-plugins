@@ -288,6 +288,111 @@ test_approve_prompt_names_target_manifest() {
   fi
 }
 
+# ── reject: the same REPOS_ROOT checks as approve.sh (lib/operator-root.sh) ──
+# A rejection recorded in another project's manifest leaves this project's
+# ticket approved. reject.sh resolves the root the way approve.sh does.
+
+_reject_seed='{"approved":true,"approval_provenance":"human","stage":"Ready"}'
+
+test_reject_refused_without_manifest() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/repos"
+
+  local rc=0 out
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty NOPE-1 bash "$REJECT_SH" NOPE-1 2>&1) || rc=$?
+  local created=false
+  [ ! -e "$tmpdir/repos/.ticket-auto" ] || created=true
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ "$created" = "false" ] && grep -q "no manifest under REPOS_ROOT=" <<<"$out" &&
+    ! grep -q "approved=false" <<<"$out"; then
+    _pass "reject.sh: a ticket with no manifest under REPOS_ROOT is refused, nothing created"
+  else
+    _fail "reject.sh: should refuse a ticket with no manifest (rc=$rc created=$created out=$out)"
+  fi
+}
+
+test_reject_refused_on_repos_root_mismatch() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/A/tickets/logs" "$tmpdir/A/repos" "$tmpdir/B/repos"
+  _seed_manifest "$tmpdir/A/repos" WIL-1 INIT-1 "$_reject_seed"
+  _seed_manifest "$tmpdir/B/repos" WIL-1 INIT-1 "$_reject_seed"
+  printf '# Project A\n\n`REPOS_ROOT` = `%s`\n' "$tmpdir/A/repos" >"$tmpdir/A/tickets/CLAUDE.md"
+  local before_a before_b
+  before_a=$(cat "$tmpdir/A/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  before_b=$(cat "$tmpdir/B/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+
+  local rc=0 out
+  out=$(cd "$tmpdir/A/tickets" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/A/tickets/logs" REPOS_ROOT="$tmpdir/B/repos" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$REJECT_SH" WIL-1 2>&1) || rc=$?
+  local after_a after_b
+  after_a=$(cat "$tmpdir/A/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  after_b=$(cat "$tmpdir/B/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json")
+  local a_root="$tmpdir/A/repos" b_root="$tmpdir/B/repos"
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ "$before_a" = "$after_a" ] && [ "$before_b" = "$after_b" ] &&
+    grep -qF "environment: $b_root" <<<"$out" && grep -qF "CLAUDE.md: $a_root" <<<"$out" &&
+    ! grep -q "approved=false" <<<"$out"; then
+    _pass "reject.sh: an exported REPOS_ROOT that disagrees with ./CLAUDE.md is refused, both named"
+  else
+    _fail "reject.sh: should refuse a REPOS_ROOT mismatch (rc=$rc out=$out)"
+  fi
+}
+
+test_reject_refused_on_non_plain_repos_root() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  local root="$tmpdir/r"$'\e[2J\e[H'"Reject WIL-1"
+  mkdir -p "$root"
+  _seed_manifest "$root" WIL-1 INIT-1 "$_reject_seed"
+
+  local rc=0 out
+  out=$(cd "$tmpdir" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$root" FLOW_SH="$FLOW_SH_REAL" \
+    human_pty WIL-1 bash "$REJECT_SH" WIL-1 2>&1) || rc=$?
+  local approved
+  approved=$(jq -r '.approved // empty' "$root/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null)
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 3 ] && [ "$approved" = "true" ] && [[ "$out" != *$'\e'* ]] &&
+    grep -q "is not plain text" <<<"$out"; then
+    _pass "reject.sh: a REPOS_ROOT holding an escape sequence is refused and never printed"
+  else
+    _fail "reject.sh: should refuse a non-plain REPOS_ROOT (rc=$rc approved=$approved out=$(cat -v <<<"$out"))"
+  fi
+}
+
+test_reject_prompt_names_target_manifest() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/tickets/logs" "$tmpdir/repos"
+  _seed_manifest "$tmpdir/repos" WIL-1 INIT-1 "$_reject_seed"
+  printf 'REPOS_ROOT = %s\n' "$tmpdir/repos" >"$tmpdir/tickets/CLAUDE.md"
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json"
+
+  local rc=0 out
+  out=$(cd "$tmpdir/tickets" && FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/tickets/logs" FLOW_SH="$FLOW_SH_REAL" TICKET_TMP_DIR="$tmpdir/scratch" \
+    human_pty WIL-1 env -u REPOS_ROOT bash "$REJECT_SH" WIL-1 2>&1) || rc=$?
+  local approved
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 0 ] && [ -z "$approved" ] &&
+    grep -qF "Recording in: $manifest (REPOS_ROOT from the ./CLAUDE.md)" <<<"$out"; then
+    _pass "reject.sh: the prompt names the manifest; REPOS_ROOT from ./CLAUDE.md"
+  else
+    _fail "reject.sh: prompt should name the target manifest (rc=$rc approved=$approved out=$out)"
+  fi
+}
+
 # ── approve: clears a set needs-info flag (dor-readiness-gate-foundation 6.5) ─
 
 test_approve_clears_needs_info_flag() {
@@ -757,6 +862,10 @@ test_approve_refused_without_manifest
 test_approve_refused_on_repos_root_mismatch
 test_approve_prompt_names_target_manifest
 test_approve_refused_on_non_plain_repos_root
+test_reject_refused_without_manifest
+test_reject_refused_on_repos_root_mismatch
+test_reject_refused_on_non_plain_repos_root
+test_reject_prompt_names_target_manifest
 test_approve_clears_needs_info_flag
 test_approve_noop_when_needs_info_absent
 test_approve_usage_error_on_missing_arg

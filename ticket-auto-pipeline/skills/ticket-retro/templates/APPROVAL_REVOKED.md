@@ -2,13 +2,13 @@
 
 ## Pattern
 
-The pipeline halted because the `approved` label was removed from the Linear ticket between the PR iteration phase and the re-implement phase. The orchestrator's live Linear check (Step 5d) detected that either the state was not `Ready` or the `approved` label was missing.
+The pipeline halted because the manifest recorded no approval at the reapprove gate, between the PR iteration phase and the re-implement phase. `gate-check.sh --mode reapprove` reads the local manifest, not Linear: it gate-stops when the manifest shows no approval at stage `Ready`. Only re-claim or `reject.sh` clears an approval.
 
 ## What to Look For
 
 In `~/.claude/skills/ticket-auto/SKILL.md` Step 5d:
 
-1. **Re-approval gate logic**: The check reads live Linear state and asserts both `state=Ready` and `approved` label present. Is this check happening before every re-implement spawn?
+1. **Re-approval gate logic**: the check reads the local manifest and asserts `stage=Ready` with an approval recorded. Is this check happening before every re-implement spawn?
 2. **Label lifecycle**: What removes the `approved` label? Check `ticket-pr-iterate` — does it strip labels? Does `ticket-flow`'s state transitions clear labels unexpectedly?
 3. **Race condition**: Between `ticket-pr-iterate` posting findings and `ticket-auto` re-spawning implement, could a concurrent action (manual Linear edit, webhook) remove the label?
 
