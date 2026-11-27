@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.156.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
+
+Follow-up to #819 (PRs #828, #841). `playwright-scrub.sh` ran after a VERIFY agent (router post-spawn, ticket-verify, fleetd's phase-dispatch reap). A worker killed in the middle of VERIFY (fleetd KILL or KILL+RESTART, `fleet-stop.sh`, the watchdog, a crash, a person's Ctrl-C) reached none of them, so its snapshots kept the typed password in clear text until a later VERIFY ran.
+
+- **`hooks/playwright-scrub-sweep.sh`, a new `SessionStart` hook.** Runs the same scrub over `./.playwright-mcp` in the session's project dir (`CLAUDE_PROJECT_DIR`, else the cwd) and `$REPOS_ROOT/.playwright-mcp`. Every later session in the tickets root starts here: the restarted worker, the next fleetd phase worker, a person's next session. A crash or Ctrl-C cannot be hooked when it happens, so a start-time sweep is the one path that covers every kill.
+- **No pipeline-log line.** A kill path has already written `META|outcome`, which must stay the log's last line. The hook prints one stderr line only when it rewrote a file, never a secret, and nothing on stdout (SessionStart stdout goes into the session context). Not started when neither dir exists; bounded by `PLAYWRIGHT_SCRUB_SWEEP_TIMEOUT` (default 12 s; hook timeout 15 s); exit 0 on every path.
+- **Tests.** `lib/tests/test-playwright-scrub.sh`: the hook is registered; it redacts a killed run's snapshot in the project dir and in `$REPOS_ROOT`, leaves the pipeline log's last line alone, keeps the secret out of stdout and stderr, is silent on a second run, and exits 0 silently with no snapshot dir or no scrub script. Fake credentials only.
+
 ## fleet-controller 0.59.0 (2026-11-27) — fleetd scrubs Playwright snapshots when post-spawn did not
 
 Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright-scrub.sh`, but fleetd's phase dispatch calls post-spawn only while `FLEET_ROUTER_STEP_SHELL=true` (read per call, so phase dispatch keeps running after the flag is unset), and a post-spawn call that times out or cannot find its script may never reach the scrub. On those paths a typed test password stayed in clear text under `.playwright-mcp/`.
