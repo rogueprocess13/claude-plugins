@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.58.0 (2026-11-27) — fleetd tracks a reapprove-gate hold
+
+Follow-up to #820 (PR #831). `gate-check.sh --mode reapprove` now holds a ticket that needs a person (`gate-held` reason `reapprove-needs-human`, or `reapprove-plan-changed` when a person's approval is of a plan that changed since). fleetd's gate-hold intake left both reasons out, because its probe reran `gate-check.sh --mode entry`, which judges the wrong thing for such a hold. A held ticket was invisible to the fleet until a person ran `approve.sh` and re-ran `/ticket-auto`.
+
+- **Intake.** `_GATE_HOLD_APPROVAL_REASONS` lists both reasons, so `_gate_hold_intake_pass` creates a `hold_kind='gate'` row for them, like any other approval hold (no comment or notification, the same as the existing gate holds).
+- **Probe.** `gate_hold._reconcile_gate_hold` picks its probe by the row's `hold_reason`: a reason in `gate_hold.REAPPROVE_HOLD_REASONS` runs `gate-check.sh --mode reapprove` (`run_reapprove_gate`) against the scratch log, every other reason still runs `--mode entry`. The approval rule stays in bash. The exit codes mean the same things (0 released, 1 still held, 2 `APPROVAL_REVOKED`), so the hold releases once a person's approval of the current plan exists, and the gate's `GATE|reapprove|done|` line is appended, which `detect-resume.sh` reads to resume at STEP_4. `--mode reapprove` is safe to poll here: the hold exists only after the manifest recorded an approval at Ready, so `APPROVAL_REVOKED` fires only when that approval was withdrawn.
+- **Tests.** `fleetd/tests/test_gate_hold.py`: `TestReapproveHoldProbe` (probe selection, silent still-held poll, release, gate-stop, `--mode reapprove` argv, entry holds unchanged) and `TestReapproveHoldIntakeToRelease` (outbox `gate-held` → row → still held on a policy approval → released after a person's approval, not re-created; an entry-gate hold still probes `--mode entry`), against a stand-in `gate-check.sh`.
+
 ## 0.153.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.
