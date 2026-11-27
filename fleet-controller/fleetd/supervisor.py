@@ -2057,7 +2057,10 @@ def _notify_gate_held(fleet_lib_dir, state_dir, tid, hold_id, why):
     no outbox record and no `held: gate` line, reconcile sends nothing for
     the ticket, so that key cannot collide. The outbox is read from fleetd's
     resolved log dir, the same `FLEET_PIPELINE_LOG_DIR` fleetd hands to
-    reconcile. Fail-soft.
+    reconcile. `hold_id` is passed on as well: the sidecar records which
+    hold the message was for, and bash skips a later send under another
+    key (a `held: gate` line written after a `hold:{id}` send) while that
+    hold is still the ticket's open gate row. Fail-soft.
     """
     notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
     if not notify_script.is_file():
@@ -2070,7 +2073,7 @@ def _notify_gate_held(fleet_lib_dir, state_dir, tid, hold_id, why):
              'source "$1" && '
              'key=$(fleet_gate_held_key "$2" "$4" "$5"); '
              '[ -n "$key" ] || key="hold:$6"; '
-             'fleet_notify_gate_held "$2" "$3" "$key" "$7"',
+             'fleet_notify_gate_held "$2" "$3" "$key" "$7" "$6"',
              '_', str(notify_script), tid, str(state_dir), str(log_file),
              str(outbox), hold_id or '', why],
             timeout=15, capture_output=True,

@@ -1683,6 +1683,104 @@ class TestGateHoldNotifySharedSidecar(unittest.TestCase):
             hashlib.sha256(b'hold:hold:TST-S4:g0:a0').hexdigest())
 
 
+class TestGateHoldOneKeyPerHold(TestGateHoldNotifySharedSidecar):
+    """Follow-up to #847: a phase-dispatch hold announced with no outbox
+    record and no outcome line is keyed `hold:{hold_id}`. A `held: gate`
+    line (and a `gate-held` record) written later for the same hold, e.g.
+    by a person running the router by hand, moves the key. The sidecar
+    records the hold the message was for, so the same open hold still gets
+    exactly one Slack message, whichever caller runs first."""
+
+    HELD_LINE = '2026-09-23T00:05:00Z|META|outcome|info|held: gate\n'
+
+    def _create(self, tid, cycle=0):
+        """The real phase-dispatch creator, real store, real notify; only
+        the tracker comment is stubbed."""
+        from unittest import mock
+        from fleetd import supervisor
+        with mock.patch.object(gate_hold, 'post_gate_hold_comment',
+                               return_value=True):
+            return supervisor._create_phase_dispatch_hold(
+                str(self.dir), tid, 0, cycle,
+                reason='gate held for approval', fleet_lib_dir=FLEET_LIB)
+
+    def _write_manual_run(self, tid, seq=1):
+        """What a hand-run router leaves behind: the outcome line and a
+        `gate-held` outbox record."""
+        with open(self.dir / f'{tid}-pipeline.log', 'a') as f:
+            f.write(self.HELD_LINE)
+        with open(self.dir / f'{tid}-outbox.jsonl', 'a') as f:
+            f.write(json.dumps({
+                'seq': seq, 'tid': tid, 'ts': '2026-09-23T00:05:00Z',
+                'event': 'gate-held',
+                'data': {'reason': 'complex-ticket'}}) + '\n')
+
+    def _release(self, tid, hold_id):
+        from fleetd import supervisor
+        self.assertEqual(
+            supervisor._store_release_hold(str(self.dir), tid, hold_id), 1)
+
+    def test_phase_dispatch_first_then_outcome_line_then_reconcile(self):
+        hold_id = self._create('TST-K1')
+        self.assertTrue(hold_id)
+        self.assertEqual(len(self._sends()), 1)
+        sidecar = json.loads(
+            (self.dir / 'TST-K1-gate-held-notify.json').read_text())
+        self.assertEqual(sidecar['hold_id'], hold_id)
+        # Only the outcome line appears (no outbox record).
+        (self.dir / 'TST-K1-pipeline.log').write_text(self.HELD_LINE)
+        self.assertEqual(self._reconcile_key('TST-K1'),
+                         '2026-09-23T00:05:00Z')
+        self._reconcile_notify('TST-K1')
+        self.assertEqual(len(self._sends()), 1)
+        # Then an outbox record too: the key moves again, still one.
+        self._write_manual_run('TST-K1', seq=2)
+        self._reconcile_notify('TST-K1')
+        self.assertEqual(len(self._sends()), 1)
+
+    def test_reconcile_first_then_phase_dispatch(self):
+        (self.dir / 'TST-K2-pipeline.log').write_text(self.HELD_LINE)
+        self._reconcile_notify('TST-K2')
+        self.assertEqual(len(self._sends()), 1)
+        self._create('TST-K2')
+        self.assertEqual(len(self._sends()), 1)
+        # A later `gate-held` record for the same open hold: still one.
+        self._write_manual_run('TST-K2', seq=1)
+        self._reconcile_notify('TST-K2')
+        self.assertEqual(len(self._sends()), 1)
+
+    def test_a_new_hold_after_release_is_announced_again(self):
+        hold_id = self._create('TST-K3')
+        self._write_manual_run('TST-K3')
+        self._reconcile_notify('TST-K3')
+        self.assertEqual(len(self._sends()), 1)
+        self._release('TST-K3', hold_id)
+        # Released, then held again by a later router run: a new hold.
+        with open(self.dir / 'TST-K3-pipeline.log', 'a') as f:
+            f.write('2026-09-24T00:00:00Z|META|outcome|info|held: gate\n')
+        with open(self.dir / 'TST-K3-outbox.jsonl', 'a') as f:
+            f.write(json.dumps({
+                'seq': 9, 'tid': 'TST-K3', 'ts': '2026-09-24T00:00:00Z',
+                'event': 'gate-held', 'data': {}}) + '\n')
+        self._reconcile_notify('TST-K3')
+        self.assertEqual(len(self._sends()), 2)
+        # And the next fleetd-created hold is announced once more.
+        self._create('TST-K3', cycle=1)
+        self.assertEqual(len(self._sends()), 2)
+
+    def test_store_disabled_falls_back_to_the_key(self):
+        """No store to prove the hold is still open: the key decides, so
+        a moved key sends again (the pre-fix behaviour, never silent)."""
+        self._create('TST-K4')
+        os.environ['FLEET_STORE_ENABLE'] = 'false'
+        try:
+            (self.dir / 'TST-K4-pipeline.log').write_text(self.HELD_LINE)
+            self._reconcile_notify('TST-K4')
+        finally:
+            os.environ.pop('FLEET_STORE_ENABLE', None)
+        self.assertEqual(len(self._sends()), 2)
+
+
 class TestPhaseDispatchGateHoldNotify(_IntakeBase):
     """A gate row created by phase dispatch (`_create_phase_dispatch_hold`)
     is announced once through the same helper as the intake, and the two

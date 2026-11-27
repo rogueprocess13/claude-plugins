@@ -2551,9 +2551,10 @@ made the intake post one comment + one Slack message on first row creation, keye
       `fleet_gate_held_key` in `fleet-notify.sh` (latest `gate-held` outbox record, else the
       `held: gate` outcome timestamp, else empty), and fleetd calls it. Root cause: reconcile looked for the
       outbox beside the log in the state dir; it now reads `FLEET_PIPELINE_LOG_DIR`.
-- [ ] Known limit (#847): a phase-dispatch hold with no outbox record is keyed `hold:{hold_id}`; a later
+- [x] Known limit (#847): a phase-dispatch hold with no outbox record is keyed `hold:{hold_id}`; a later
       `held: gate` outcome line for the same hold (only from a manual router run on that ticket) could send
-      a second Slack message.
+      a second Slack message. → DONE 2026-11-27, #849: the sidecar records the hold it was sent for, and a
+      send under another key is skipped while that hold is still the open gate row (fleet-controller 0.63.0).
 - [ ] Live check: the first real gate hold shows exactly one tracker comment and one Slack message, and
       nothing on release. Repeat after any change to `fleet-notify.sh`, `fleet-reconcile.sh`, or fleetd's
       hold intake / phase dispatch.

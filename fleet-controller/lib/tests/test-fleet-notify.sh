@@ -586,6 +586,56 @@ test_gate_held_key_is_latest_gate_held_record() {
     [ -z "$(_fleet_gate_held_key "$state_dir/missing.jsonl")" ]
 }
 
+# A minimal fleetd store with one gate row (follow-up to #847).
+_gate_held_seed_store() {
+  python3 -c '
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("CREATE TABLE IF NOT EXISTS tickets (tid TEXT PRIMARY KEY, held INTEGER, hold_kind TEXT, hold_id TEXT)")
+c.execute("INSERT OR REPLACE INTO tickets VALUES (?, ?, ?, ?)", (sys.argv[2], int(sys.argv[3]), "gate", sys.argv[4]))
+c.commit()
+' "$1/fleet-state.db" "$2" "$3" "$4"
+}
+
+test_gate_held_same_open_hold_new_key_sends_once() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  _gate_held_seed_store "$state_dir" TST-49 1 "hold:TST-49:g0:a0"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-49" "$state_dir" \
+    "hold:hold:TST-49:g0:a0" "why" "hold:TST-49:g0:a0" >/dev/null 2>&1
+  [ -f "$capture" ] || return 1
+  grep -q '"hold_id": "hold:TST-49:g0:a0"' "$state_dir/TST-49-gate-held-notify.json" || return 1
+  rm -f "$capture"
+  # The reconcile path, later, under the outcome-line key: same open hold.
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-49" "$state_dir" \
+    "2026-09-23T00:05:00Z" >/dev/null 2>&1
+  [ ! -f "$capture" ] || return 1
+  # Released: a new key is a new hold and is sent.
+  _gate_held_seed_store "$state_dir" TST-49 0 ""
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-49" "$state_dir" \
+    "2026-09-24T00:00:00Z" >/dev/null 2>&1
+  [ -f "$capture" ]
+}
+
+test_gate_held_no_store_new_key_sends_again() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-50" "$state_dir" \
+    "hold:hold:TST-50:g0:a0" "why" "hold:TST-50:g0:a0" >/dev/null 2>&1
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-50" "$state_dir" \
+    "2026-09-23T00:05:00Z" >/dev/null 2>&1
+  [ -f "$capture" ]
+}
+
 test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds() {
   local rc out state_dir
   state_dir=$(_mktemp_test_dir)
@@ -819,6 +869,8 @@ for fn in \
   test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds \
   test_gate_held_uses_given_reason_sentence \
   test_gate_held_key_is_latest_gate_held_record \
+  test_gate_held_same_open_hold_new_key_sends_once \
+  test_gate_held_no_store_new_key_sends_again \
   test_readiness_stale_sends_one_notification \
   test_readiness_stale_writes_sent_sidecar \
   test_readiness_stale_twice_sends_once \
