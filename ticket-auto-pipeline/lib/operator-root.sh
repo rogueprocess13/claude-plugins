@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # operator-root.sh — REPOS_ROOT for an operator script a person runs in their
-# own shell (skills/ticket-approve/approve.sh, lib/regression-ack.sh).
+# own shell (skills/ticket-approve/approve.sh, skills/ticket-reject/reject.sh,
+# lib/regression-ack.sh).
 #
 # A person's shell can still hold an exported REPOS_ROOT from work on another
 # project. Taken on trust, it records the approval or the acknowledgement in

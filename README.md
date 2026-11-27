@@ -135,7 +135,7 @@ UAT_URL: https://staging.example.com
 
 `REPOS_ROOT` is where your source repos live. `UAT_URL` is the deployed environment the verify phase tests against.
 
-Also export `REPOS_ROOT` as an environment variable (for example in the `env` block of `~/.claude/settings.local.json`, next to `LINEAR_API_KEY`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its own phases, but the standalone `approve.sh` and `reject.sh` scripts — and every other entry into the local manifest layer (`lib/manifest-read.sh`) — read only the environment. Without it they exit with "could not make … manifest-addressable", even though `/ticket-env-check` reports `REPOS_ROOT` as OK.
+Also export `REPOS_ROOT` as an environment variable (for example in the `env` block of `~/.claude/settings.local.json`, next to `LINEAR_API_KEY`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its own phases, but the local manifest layer (`lib/manifest-read.sh`) reads only the environment, even though `/ticket-env-check` reports `REPOS_ROOT` as OK. The standalone `approve.sh` and `reject.sh` scripts also fall back to `./CLAUDE.md`, so run them from the tickets root.
 
 ### 5. Validate before your first run
 
