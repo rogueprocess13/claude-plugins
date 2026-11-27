@@ -1472,7 +1472,7 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
         verify) and retired dispatch labels in fleet-controller's Dispatch mode
       - fleet-controller engine count (16/12/19) and `FLEET_STALL_WARN_SECS` (README 300, code 600)
       - CRE-* IDs left in ticket-critique and ticket-verify; planner `--base-branch` missing from
-        the flags tables; docs/skills/ticket-flow.md still describes Linear calls and exit 7
+        the flags tables; docs/skills/ticket-flow.md exit-7 text DONE (#842)
       Original scope:
       Preconditions inside: move detection-logic/evidence strings into `phase-inspector.sh`
       injection before cutting guidance-extractor; app-knowledge → skeleton (CRE ticket IDs also in

@@ -18,7 +18,7 @@ ISO|CATEGORY|EVENT|STATUS|MSG|DETAIL
 | `fallback` | Primary path was unavailable, fallback activated | `fired` |
 | `heartbeat` | Periodic liveness signal during long operations | `ok` |
 | `api` | External API call made (Linear, GitHub, Playwright browser) | `ok`, `fail` |
-| `gate` | Gate evaluation: trigger dispatch, assertion, idempotency check | `ok`, `fail` |
+| `gate` | Gate evaluation: trigger dispatch (assertion and idempotency events are retired) | `ok`, `fail` |
 | `retry` | Error classification and retry decision | `info`, `fired` |
 | `source` | Configuration value provenance (UAT_URL resolution, etc.) | `info` |
 
@@ -160,8 +160,8 @@ namely *how far through* the step the agent has got.
 | `reverify-exhausted` | Re-verify retries reach max (3) | `{"retries":"<N>","iteration":"<N>"}` |
 | `combined-cap` | Combined retry cap (verify + iteration + reverify) reached | `{"total_retries":"<N>"}` |
 | `trigger-dispatch` | Flow trigger decision | `{"trigger":"<name>"}` |
-| `assertion` | Post-trigger state assertion result | `{"trigger":"<name>"}` |
-| `idempotent-skip` | Desired state already matches, no mutation | `{"trigger":"<name>"}` |
+| `assertion` | **Retired.** Nothing emits it: flow.sh no longer mutates the tracker, so its post-trigger state assertion (exit 7) is gone. Listed so old heartbeat files still parse. | `{"trigger":"<name>"}` |
+| `idempotent-skip` | **Retired.** Nothing emits it: flow.sh now writes every transition (`rev` advances, `pending_event` emits), so there is no skip path. Listed so old heartbeat files still parse. | `{"trigger":"<name>"}` |
 | `schema-check` | detect-resume validates heartbeat log or schema version | `{"file":"<path>"}` |
 | `resume-point` | detect-resume determines resume point | — |
 
