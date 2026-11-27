@@ -2520,8 +2520,8 @@ added run time. Each item is its own openspec change.
 
 ## Step 25 — GitHub issue batch 2026-11-26 + follow-ups — code MERGED 2026-11-27; live checks, decisions and gate-hold notify tracking open
 
-Issues #816–#827 and #667, one background agent per issue, PRs #828–#846 merged (ticket-auto-pipeline
-0.143.0 → 0.159.0, fleet-controller 0.57.0 → 0.61.0). #773 needs no more code: its status table is on the
+Issues #816–#827 and #667, one background agent per issue, PRs #828–#847 merged (ticket-auto-pipeline
+0.143.0 → 0.159.0, fleet-controller 0.57.0 → 0.62.0). #773 needs no more code: its status table is on the
 issue (promote DoR codes after a rehearsal, `VERIFY_AC_TAGS` default after one live run). Per-PR notes:
 memory `project_issue-batch-2026-11-26.md`.
 
@@ -2535,7 +2535,7 @@ memory `project_issue-batch-2026-11-26.md`.
 - [ ] #844: `TICKET_ROUTER_PLAN_REVIEW` default is now `complex`; `true` now means every ticket (it used
       to review complex tickets only).
 
-**Open — live checks on the tickets host** (none of #828–#846 has run on a real ticket): Playwright scrub
+**Open — live checks on the tickets host** (none of #828–#847 has run on a real ticket): Playwright scrub
 (router step, fleetd reap, SessionStart sweep #843), `REPOS_ROOT` refusals in approve/reject/regression-ack,
 reapprove holds + fleetd hold rows (#831, #840), regression guard (#835), outcome floor (#837), plan review
 default (#844), the appraise/implement agent fallbacks logged by #833/#838.
@@ -2545,9 +2545,15 @@ Three senders can post for one gate hold: fleetd's intake (`_gate_hold_intake_pa
 path, and `fleet-reconcile.sh`'s `fleet_notify_gate_held` for a `held: gate` outcome. #845 (fleet 0.61.0)
 made the intake post one comment + one Slack message on first row creation, keyed on the hold's
 `gate-held` outbox record in the shared Slack sidecar (`FLEET_GATE_HOLD_NOTIFY`, default on).
-- [ ] Phase-dispatch-created gate holds post nothing — follow-up PR in flight 2026-11-27 (fleet 0.62.0).
-- [ ] Reconcile falls back to its old sidecar key for a ticket with no outbox file → possible second Slack
-      message — same follow-up PR.
+- [x] Phase-dispatch-created gate holds post nothing — DONE 2026-11-27, #847 (fleet 0.62.0): one helper,
+      `supervisor._announce_gate_hold_created`, called by both row creators only on a fresh `set_hold`.
+- [x] Reconcile could key the Slack message differently → DONE, #847: the key is built in one place,
+      `fleet_gate_held_key` in `fleet-notify.sh` (latest `gate-held` outbox record, else the
+      `held: gate` outcome timestamp, else empty), and fleetd calls it. Root cause: reconcile looked for the
+      outbox beside the log in the state dir; it now reads `FLEET_PIPELINE_LOG_DIR`.
+- [ ] Known limit (#847): a phase-dispatch hold with no outbox record is keyed `hold:{hold_id}`; a later
+      `held: gate` outcome line for the same hold (only from a manual router run on that ticket) could send
+      a second Slack message.
 - [ ] Live check: the first real gate hold shows exactly one tracker comment and one Slack message, and
       nothing on release. Repeat after any change to `fleet-notify.sh`, `fleet-reconcile.sh`, or fleetd's
       hold intake / phase dispatch.
