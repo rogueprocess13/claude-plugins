@@ -40,12 +40,12 @@ Also: if `--from-step` is set, **suppress Resume Mode** in Step 1 — the worksp
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE setup-workspace start "Creating ticket workspace"
 
-Run `/ticket-setup {TICKET-ID}` and wait for it to complete.
+No phase agent holds the Skill tool (#667), so call ticket-setup's script, never the slash command: `bash ~/.claude/skills/ticket-setup/setup.sh "{TICKET-ID}"`. It prints JSON (`ticket_dir`, `title`, `status`, `epic`, `existing`). A non-zero exit, or no `notes.md`/`context.md` in `ticket_dir`, is a broken workspace: stop.
 
-- If ticket-setup reports **workspace already exists** → skip to **Resume mode** at the bottom of this skill.
-- If ticket-setup reports **workspace created** → continue to Step 2.
+- `existing: true` → skip to **Resume mode** at the bottom of this skill.
+- `existing: false` → continue to Step 2.
 
-The ticket-setup output provides: directory path, title, user, status, priority, labels, epic, environment. Use these values throughout the remaining steps — do not re-fetch from Linear.
+Use the JSON and `context.md` (priority, labels, assignee) throughout — do not re-fetch from Linear.
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE setup-workspace done "Workspace ready"
 
@@ -158,11 +158,7 @@ A `--from-step` resume and Resume mode both skip Step 1.3. A `complexity-sweep` 
 
 ## Step 1.5 — Create task tracker
 
-**Before proceeding further**, create a TaskCreate for every remaining step in this skill. Each task subject = the step heading (e.g. "Step 2: Expand notes.md for appraisal"). This ensures no step is skipped even when context scrolls.
-
-**If fast-path is active** (Step 1.3c), only create tasks for: Step 2.7 (Readiness critique), Step 2.8 (Blast Radius Analysis), Step 4 (Update ticket), Step 5 (Hand off). Skip Steps 2, 2.5, 2.6, and 3 — they are covered by planner metadata.
-
-After each step is fully done (including all sub-steps), mark it completed with TaskUpdate. At session end, write a trace file to the ticket directory:
+Interactive runs only (no phase agent holds a task tool): one tracker task per remaining step, completed as each step finishes. **If fast-path is active** (Step 1.3c), only Steps 2.7, 2.8, 4 and 5: Steps 2, 2.5, 2.6 and 3 are covered by planner metadata. Every run writes this trace file to the ticket directory at session end:
 
 ```bash
 cat > {ticket-dir}/appraise-session.md << 'TRACE'
@@ -357,9 +353,9 @@ Build one combined list of claims needing independent verification:
 
 If both are empty, skip straight to 3.5d (nothing to verify) and log `done|0 claims to verify`.
 
-### 3.5c — Spawn the claim-verifier agent
+### 3.5c — Run the claim check
 
-Spawn a read-only `Explore` subagent — no code changes, no branches, no Linear mutations:
+No phase agent holds the Agent tool (#667): run this prompt yourself, read-only, as a fresh pass that treats each claim as someone else's, and log `plog.sh META gate-warn warn "CLAIM_VERIFY_SELF_CHECK — no independent verifier"`:
 
 ```
 You are an independent fact-checker. Verify ONLY the claims below — do not evaluate anything else about the ticket, and do not propose fixes.
@@ -394,9 +390,9 @@ bash ~/.claude/skills/lib/plog.sh META claim-verify info "Claim ${N}: ${VERDICT}
 Then act on it:
 
 - **Negative existential, CONFIRMED** — leave the claim in Initial Investigation/Blast Radius as-is.
-- **Negative existential, REFUTED** — correct the claim in place using the agent's evidence, citing the refuting `file:line`. Do not just delete it — a wrong premise that's silently removed can resurface unexamined later.
+- **Negative existential, REFUTED** — correct the claim in place using the check's evidence, citing the refuting `file:line`. Do not just delete it — a wrong premise that's silently removed can resurface unexamined later.
 - **Negative existential, UNVERIFIABLE** — demote it: remove the assertion from Initial Investigation/Blast Radius and add it as a new `- [needs-human]` bullet in Open Questions instead. An unconfirmed negative existential must never stand as fact.
-- **`[agent-resolvable]` question, CONFIRMED** — close it now: `- ~~[agent-resolvable] {question}~~ **Resolved:** {answer} ({file:line citation(s) from the agent's evidence})`. A citation is mandatory — a resolution without one is a validation error (see 3.5e).
+- **`[agent-resolvable]` question, CONFIRMED** — close it now: `- ~~[agent-resolvable] {question}~~ **Resolved:** {answer} ({file:line citation(s) from the check's evidence})`. A citation is mandatory — a resolution without one is a validation error (see 3.5e).
 - **`[agent-resolvable]` question, REFUTED or UNVERIFIABLE** — it cannot be safely self-closed. Re-tag it `[needs-human]` and leave it open; do not strike it through.
 
 ### 3.5e — Validation gate

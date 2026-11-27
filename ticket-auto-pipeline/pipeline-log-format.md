@@ -658,7 +658,7 @@ Detection patterns (Phase 1, all WARN severity; the rules are `inspect_verifiers
 
 ### Claim-verifier entries (ticket-appraise Step 3.5)
 
-One entry per claim independently re-checked by the claim-verifier agent — negative-existential
+One entry per claim re-checked by the Step 3.5c claim check — negative-existential
 assertions in `## Initial Investigation`/`## Blast Radius`, and `[agent-resolvable]` open
 questions being closed inline. `MSG` carries the verdict and claim text (kept under 60 chars
 where possible; longer claims are truncated — the full text and evidence live in notes.md, not

@@ -187,7 +187,7 @@ Run `bash ~/.claude/skills/lib/verify-ac-tags.sh gate "{ticket-dir}" --env {env}
 
 ## Step 1.5 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 2 through 7). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file to the ticket directory:
+Interactive runs only (no phase agent holds a task tool): one tracker task per step, 2 to 7. Every run writes this trace file to the ticket directory at session end:
 
 ```bash
 cat > {ticket-dir}/verify-session.md << 'TRACE'

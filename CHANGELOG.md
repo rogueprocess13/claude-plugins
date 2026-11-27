@@ -25,6 +25,18 @@ Follow-up to #819 (PR #828). `router-step.sh post-spawn VERIFY` runs `playwright
 - **Supervisor.** After a phase-dispatch VERIFY worker is reaped, the scrub runs on its own when post-spawn did not run or returned `ok=False`. It never changes the phase transition; an exception is logged and ignored.
 - **Tests.** `tests/test_router_step_parity.py` `PlaywrightScrubParityTest` runs `router-step.sh post-spawn VERIFY` and the Python call over the same fixtures (real script, and stubbed outputs: non-zero exit, empty, `redacted=0`, no prefix, stderr only) and asserts the same files and log line. `tests/test_router_step.py` `PlaywrightScrubTest` and `tests/test_router_step_supervisor.py` `PlaywrightScrubWiringTest` cover the call and the wiring. Fake credentials only.
 
+## 0.154.0 (2026-11-27) — no phase skill asks for a tool its agent lacks
+
+GitHub #667. `lib/tests/test-agent-tool-coverage.sh` kept 17 tolerated (skill, tool) gaps in `KNOWN_GAPS`: steps that told a phase agent to spawn a subagent, run a slash command, use the task tools or call an MCP tool it does not hold. The agent then improvised or skipped the step. Every gap is now closed and `KNOWN_GAPS` is empty. No agent was granted a tool.
+
+- **`/ticket-setup` → its script.** `ticket-appraise` Step 1 and `ticket-reproduce` Step 1 call `~/.claude/skills/ticket-setup/setup.sh` (already synced by the SessionStart hook) and read its JSON (`ticket_dir`, `existing`) and `context.md`.
+- **`/opsx:propose` → the openspec CLI.** `ticket-appraise-exec` Step 3-Complex runs `openspec new change`, `openspec status --json` and `openspec instructions <id> --json` and writes each artifact itself.
+- **Subagent steps → inline, with a logged fallback.** `ticket-appraise` Step 3.5c (claim check) logs `META|gate-warn|warn|CLAIM_VERIFY_SELF_CHECK`; Step 3-Agent-b (delegated investigation) logs `META|gate-warn|info|INVESTIGATION_INLINE`; `ticket-appraise-exec` Step 3.6 keeps its `ADVERSARIAL_SELF_REVIEW` self-review (the independent review is the router's STEP_2_2).
+- **claude-mem → interactive only.** `ticket-appraise` Step 2.6 prior-art search and the Step 3a.2 corpus tier run only in an interactive session; a phase agent logs `META|gate-warn|info|PRIOR_ART_NO_CLAUDE_MEM` and goes on to the local-ticket search.
+- **Task tracker → interactive only.** `ticket-appraise`, `ticket-reproduce`, `ticket-verify` and `ticket-pr-review` create tracker tasks only in an interactive run; every run still writes its trace file.
+- **Linear MCP fallbacks removed.** `ticket-reproduce` with no `LINEAR_API_KEY` reports the blocked-reproduction comment instead of posting it; `ticket-gate-reconcile` stops on `gate-reconcile-prep.sh` exit 4.
+- **Tests.** `test-agent-tool-coverage.sh` requires `KNOWN_GAPS` to stay empty and pins each replacement (setup script, openspec CLI, the four logged fallbacks); `test-plan-review.sh` follows the Step 3.6 wording.
+
 ## 0.153.0 (2026-11-27) — verify reads a clean worktree path and can drive a second tab
 
 GitHub #822, #825.

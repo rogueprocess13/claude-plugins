@@ -17,7 +17,7 @@ Step 3.7 writes its own heartbeats inline; the Step 3.4 and 3.8 scripts write th
 - after writing the artifact: `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
 - after the regression guard: `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
 - MCP fallback used to post the comment (LINEAR_API_KEY unset): `hb-wrap.sh fallback "linear-api" "fired" "using MCP Linear tools" '{"reason":"LINEAR_API_KEY unset"}'`
-- after the adversarial agent: `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
+- after the adversarial review: `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
 - Step 4 skips Steps 5-6: `hb-wrap.sh decision "re-appraisal-skip" "info" "no changes detected, skipping Linear post"`
 
 ### Step dispatch
@@ -85,7 +85,7 @@ Branch on `{COMPLEXITY}` extracted from notes.md:
 
 ### Reference files (load condition)
 
-**If `{COMPLEXITY}` = simple**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/simple-fix-template.md` before Step 3-Simple writes `simple-fix.md`. **If `{COMPLEXITY}` = complex**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/adversarial-review.md` before Step 3.6 spawns the reviewer (not when Step 3.6 is skipped) and `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/verification-plan.md` before Step 3.7 derives the plan, including on a `--from-step` resume (`create-artifact`, `verify-plan-derived`) that skips this step. Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never write `simple-fix.md`, the reviewer prompt or the verification plan from memory. A simple ticket reads neither complex file; a complex ticket does not read the simple-fix template.
+**If `{COMPLEXITY}` = simple**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/simple-fix-template.md` before Step 3-Simple writes `simple-fix.md`. **If `{COMPLEXITY}` = complex**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/adversarial-review.md` before Step 3.6 runs the review (not when Step 3.6 is skipped) and `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/verification-plan.md` before Step 3.7 derives the plan, including on a `--from-step` resume (`create-artifact`, `verify-plan-derived`) that skips this step. Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never write `simple-fix.md`, the reviewer prompt or the verification plan from memory. A simple ticket reads neither complex file; a complex ticket does not read the simple-fix template.
 
 A `--from-step` resume skips Step 1, so take `{COMPLEXITY}` from notes.md `## Complexity` with the Step 3.4 `get_complexity` call. After a context compaction, read the reference again before continuing the step it covers.
 
@@ -93,7 +93,7 @@ A `--from-step` resume skips Step 1, so take `{COMPLEXITY}` from notes.md `## Co
 
 ### Step 3-Simple (complexity = simple)
 
-Create `simple-fix.md` in the ticket directory. Do not run `opsx:propose`.
+Create `simple-fix.md` in the ticket directory.
 
 Moved to `references/simple-fix-template.md` (the Completion Checklist requirement and the `simple-fix.md` template), read per the Step 3 condition.
 
@@ -101,25 +101,25 @@ Moved to `references/simple-fix-template.md` (the Completion Checklist requireme
 
 ### Step 3-Complex (complexity = complex)
 
-**Planner proposal reuse (planned tickets):** Before running `/opsx:propose`, check whether the ticket has a planner-authored proposal that can be adopted verbatim:
+**Planner proposal reuse (planned tickets):** First check whether the ticket has a planner-authored proposal that can be adopted verbatim:
 
 ```bash
 source ~/.claude/skills/lib/planner-artifacts.sh
 source ~/.claude/skills/lib/appraise-exec-planned.sh
 adopt_planner_proposal "{TICKET-ID}" "{change-name}" "$TAP_LOG"
 case $? in
-  0) echo "Planner proposal adopted — skipping /opsx:propose re-derivation" ;;
-  1) echo "No planner proposal found — running /opsx:propose to derive plan"
+  0) echo "Planner proposal adopted — skipping re-derivation" ;;
+  1) echo "No planner proposal found — deriving the plan"
      RUN_OPSX_PROPOSE=true ;;
   2) echo "ERROR: proposal copy failed — aborting" && exit 1 ;;
 esac
 ```
 
-**If RUN_OPSX_PROPOSE is true**, run the `/opsx:propose` skill to create the change artifacts for this ticket.
+**If RUN_OPSX_PROPOSE is true**, use the openspec CLI (no phase agent holds the Skill tool, #667): `openspec new change "{change-name}"`; while `openspec status --change "{change-name}" --json` lists an `applyRequires` artifact not `done`, run `openspec instructions <id> --change "{change-name}" --json` for a `ready` one and write its `outputPath` from `template` (`context`/`rules` constrain, never copy).
 
 **Derive the change name:** `{ticket-id-lowercase}-{title-slug}` (e.g. `wil-42-upload-page-scroll`).
 
-Pass the following to the propose skill as context:
+Use as context:
 
 - The ticket ID, title, and description
 - The affected repos and files from the investigation in notes.md
@@ -220,27 +220,27 @@ Map: clear → PASS, CONFLICT → WARN, ADJACENT → WARN, SUPERSEDES → PASS.
 
 **Only run this step if `{COMPLEXITY}` = complex.** If simple, skip to Step 4. If `bash ~/.claude/skills/lib/plan-review.sh mode` prints `router`, skip to Step 3.7 without reading `references/adversarial-review.md`: the router reviews the plan next (STEP_2_2).
 
-**Round awareness (GitHub #203).** Before spawning, count how many consecutive prior rounds of this review came back BLOCKED for this ticket. The count is deterministic bash — never estimate it yourself:
+**Round awareness (GitHub #203).** First count how many consecutive prior rounds of this review came back BLOCKED for this ticket. The count is deterministic bash — never estimate it yourself:
 
 ```bash
 source ~/.claude/skills/lib/adversarial-rounds.sh
 ADV_PRIOR_BLOCKS=$(adversarial_round_count "${TAP_LOG:-}")
 ADV_ROUND=$((ADV_PRIOR_BLOCKS + 1))
 echo "ADV_PRIOR_BLOCKS=${ADV_PRIOR_BLOCKS} ADV_ROUND=${ADV_ROUND}"
-bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning adversarial agent (round ${ADV_ROUND})"
+bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Adversarial review (round ${ADV_ROUND})"
 ```
 
 `ADV_PRIOR_BLOCKS` counts `ADVERSARIAL_BLOCKED` gate-stops since the last PASS/WARNINGS verdict (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls: note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
 
-Spawn a `general-purpose` agent with an adversarial framing: it finds what's wrong, missing or under-specified in the plan, it does not confirm it. **No Agent tool** (`ticket-appraise-agent`): run the prompt yourself, end the `done` line below with ` — self-review`, and log `plog.sh META gate-warn warn "ADVERSARIAL_SELF_REVIEW — no independent reviewer"`.
+No phase agent holds the Agent tool (#667): run the reviewer prompt yourself, to find what's wrong, missing or under-specified, not to confirm. End the `done` line below with ` — self-review`, and log `plog.sh META gate-warn warn "ADVERSARIAL_SELF_REVIEW — no independent reviewer"`.
 
-**⚠️ MANDATORY — read before spawning:** the `Task` call's return is not the end of this skill. Handle it per **"When the agent returns"**, then continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
+**⚠️ MANDATORY:** the review is not the end of this skill: continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
 
 Moved to `references/adversarial-review.md` (the reviewer prompt, plus the Approach review block appended from round 3 on, when `{ADV_PRIOR_BLOCKS}` ≥ 2), read per the Step 3 condition.
 
-**When the agent returns:**
+**When the review is done:**
 
-Append its output verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
+Append it verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
 
 **Then keep going — do not stop here.** Evaluate the verdict below and proceed: Steps 3.7, 3.8, 4, 5 and 6 still run in this session.
 
