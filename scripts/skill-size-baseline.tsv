@@ -18,7 +18,7 @@ ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
 # allow-growth: browser_tabs and browser_close grants for second-tab and fresh-context criteria (#825, +63 bytes, 0.153.0)
 ticket-auto-pipeline/agents/ticket-verify-agent.md	3024	12
 ticket-auto-pipeline/lib/skill-preamble-auto.md	17538	341
-ticket-auto-pipeline/lib/skill-preamble.md	11450	269
+ticket-auto-pipeline/lib/skill-preamble.md	11417	269
 # allow-growth: verify-qa-persona — changelog entry for the qa-engineer used-by correction and the --phase verify selection (0.122.0)
 ticket-auto-pipeline/personas/CHANGELOG.md	3621	71
 # allow-growth: verify-qa-persona — selection tables document --phase verify, --verify-mode and the verify overlay rule (0.122.0)

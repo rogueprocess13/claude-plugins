@@ -22,7 +22,7 @@ Centralized Linear state and label executor. Wraps the deterministic `flow.sh` b
 | Trigger name | CLI argument (e.g. appraise-start, implement-complete) | Yes |
 | --data | CLI (trigger-specific values like complexity=simple) | No |
 | --dry-run | CLI (preview without mutation) | No |
-| LINEAR_API_KEY | Environment variable | Yes |
+| LINEAR_API_KEY | Environment variable | Optional: used by the outbox drain's board projection to Linear; flow.sh itself does no tracker I/O |
 | workflow.json | Plugin directory | Yes |
 
 ## Outputs / Artifacts

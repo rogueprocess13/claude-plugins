@@ -17,6 +17,15 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.159.0 (2026-11-27) — stale preamble, heartbeat and ticket-flow doc text
+
+Follow-up to PR #842. Text only; no behaviour change.
+
+- **`lib/skill-preamble.md` § 2.** The MCP column of the Linear access table is now labelled interactive-only: since #838 a phase agent without `LINEAR_API_KEY` stops or reports instead (gate-reconcile prep exit 4, reproduce puts its comment in its report). The column stays because interactive skill runs still name the MCP fallback. The section is shorter.
+- **`pipeline-heartbeat-format.md`.** The `assertion` and `idempotent-skip` decision events are marked retired (nothing emits them: flow.sh's post-trigger assertion is gone, and every transition now writes `rev`/`pending_event`). They stay listed so old heartbeat files still parse.
+- **`docs/skills/ticket-flow.md`.** `LINEAR_API_KEY` is optional, used only by the outbox drain's board projection, matching `skills/ticket-flow/SKILL.md`.
+- **next.md** Step 15 note: the ticket-flow doc's exit-7 text is marked done (#842).
+
 ## 0.156.0 (2026-11-27) — scrub Playwright snapshots left by a worker killed mid-VERIFY
 
 Follow-up to #819 (PRs #828, #841). `playwright-scrub.sh` ran after a VERIFY agent (router post-spawn, ticket-verify, fleetd's phase-dispatch reap). A worker killed in the middle of VERIFY (fleetd KILL or KILL+RESTART, `fleet-stop.sh`, the watchdog, a crash, a person's Ctrl-C) reached none of them, so its snapshots kept the typed password in clear text until a later VERIFY ran.
