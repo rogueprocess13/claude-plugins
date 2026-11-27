@@ -550,6 +550,17 @@ with open(path, 'w') as f:
 # derivation, so the shared sidecar sends one message per hold, whichever
 # caller is first. `why` (optional, 4th arg) is fleetd's plain sentence for
 # the hold reason; without it the original complex-ticket line is used.
+#
+# One hold, one message, whatever the key (follow-up to #847): the key of
+# one hold can change after it was sent. fleetd announces a phase-dispatch
+# hold with no outbox record and no outcome line under `hold:{hold_id}`;
+# a later manual router run on that ticket writes a `held: gate` line (and
+# a `gate-held` record), and the key moves. So the sidecar also records the
+# hold the message was sent for (`hold_id`, the 5th arg, else the ticket's
+# open `hold_kind='gate'` row in fleetd's store). A send under a different
+# key is skipped while that same hold is still the open gate row. Once
+# fleetd releases it (or a new hold replaces it), the key decides again.
+# With no store (no fleetd, no row), only the key decides, as before.
 _fleet_gate_held_key() {
   # _fleet_gate_held_key <outbox_file> — `{seq}@{ts}` of the latest
   # `gate-held` record, or nothing. A malformed line is skipped.
@@ -586,8 +597,33 @@ fleet_gate_held_key() {
   return 0
 }
 
+# _fleet_open_gate_hold_id <tid> <state_dir> — hold_id of the ticket's open
+# `hold_kind='gate'` row in fleetd's store (`{state_dir}/fleet-state.db`),
+# or nothing. Read-only (sqlite `mode=ro`, parameterised query); prints
+# nothing when the store is off, absent or unreadable.
+_fleet_open_gate_hold_id() {
+  local tid="$1" state_dir="$2"
+  [ "${FLEET_STORE_ENABLE:-true}" = "true" ] || return 0
+  local db="${state_dir}/${FLEET_STORE_DB_NAME:-fleet-state.db}"
+  [ -s "$db" ] || return 0
+  python3 -c '
+import sqlite3, sys, urllib.request
+try:
+    conn = sqlite3.connect(
+        "file:" + urllib.request.pathname2url(sys.argv[1]) + "?mode=ro",
+        uri=True, timeout=2)
+    row = conn.execute(
+        "SELECT hold_id FROM tickets WHERE tid = ? AND held = 1 "
+        "AND hold_kind = ?", (sys.argv[2], "gate")).fetchone()
+    print(row[0] if row and row[0] else "", end="")
+except Exception:
+    pass
+' "$db" "$tid" 2>/dev/null || true
+  return 0
+}
+
 fleet_notify_gate_held() {
-  local tid="$1" state_dir="$2" held_at="${3:-}" why="${4:-}"
+  local tid="$1" state_dir="$2" held_at="${3:-}" why="${4:-}" hold_id="${5:-}"
 
   local content_key
   if command -v sha256sum >/dev/null 2>&1; then
@@ -597,15 +633,33 @@ fleet_notify_gate_held() {
   fi
 
   local sidecar="${state_dir}/${tid}-gate-held-notify.json"
-  local sidecar_key="" notify_state=""
+  local sidecar_key="" notify_state="" sidecar_hold=""
   if [ -f "$sidecar" ]; then
     sidecar_key=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('key',''))" "$sidecar" 2>/dev/null) || sidecar_key=""
     notify_state=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('notify_state',''))" "$sidecar" 2>/dev/null) || notify_state=""
+    sidecar_hold=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('hold_id',''))" "$sidecar" 2>/dev/null) || sidecar_hold=""
+  fi
+  # The hold this send is for: the caller's, else the open gate row's.
+  local open_hold
+  open_hold=$(_fleet_open_gate_hold_id "$tid" "$state_dir")
+  [ -n "$hold_id" ] || hold_id="$open_hold"
+  case "$hold_id" in *[!A-Za-z0-9:_.-]*) hold_id="" ;; esac
+  # Already sent for this hold under another key, and it is still the
+  # ticket's open gate row: the same hold, so nothing more is sent.
+  if [ "$notify_state" = "sent" ] && [ -n "$sidecar_hold" ] &&
+    [ "$sidecar_hold" = "$open_hold" ]; then
+    return 0
   fi
   if [ "$content_key" != "$sidecar_key" ]; then
     notify_state=""
   fi
   if [ "$notify_state" = "sent" ]; then
+    # Same key, already sent. A send made before the hold had a row (the
+    # reconcile path, first) learns its hold now, so a later key change
+    # for this same hold is still recognised.
+    if [ -z "$sidecar_hold" ] && [ -n "$hold_id" ]; then
+      printf '{"key": "%s", "notify_state": "sent", "hold_id": "%s"}' "$content_key" "$hold_id" >"$sidecar" 2>/dev/null || true
+    fi
     return 0
   fi
 
@@ -618,12 +672,12 @@ fleet_notify_gate_held() {
   out=$(fleet_slack_post "$tid" "$state_dir" "$text" 2>&1)
   if [[ "$out" == *"log-only"* ]] || [[ "$out" == *"transport failure"* ]] || [[ "$out" == *"rejected"* ]] || [[ "$out" == *"construction failed"* ]]; then
     if [[ "$out" == *"not configured"* ]]; then
-      printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+      printf '{"key": "%s", "notify_state": "sent", "hold_id": "%s"}' "$content_key" "$hold_id" >"$sidecar" 2>/dev/null || true
     else
-      printf '{"key": "%s", "notify_state": "failed"}' "$content_key" >"$sidecar" 2>/dev/null || true
+      printf '{"key": "%s", "notify_state": "failed", "hold_id": "%s"}' "$content_key" "$hold_id" >"$sidecar" 2>/dev/null || true
     fi
   else
-    printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+    printf '{"key": "%s", "notify_state": "sent", "hold_id": "%s"}' "$content_key" "$hold_id" >"$sidecar" 2>/dev/null || true
   fi
   echo "$out"
   return 0

@@ -17,6 +17,13 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.63.0 (2026-11-27) — gate-hold notifications: one Slack message per hold, whatever the key
+
+Follow-up to PR #847, which left one known limit: a phase-dispatch hold with no `gate-held` outbox record and no `held: gate` line was announced under the `hold:{hold_id}` key, and a `held: gate` line written later for that same hold (a person running the router by hand on the ticket) made reconcile derive another key and send a second message.
+
+- **The sidecar records the hold.** `fleet_notify_gate_held` takes the hold id as an optional 5th argument (fleetd passes it), else reads the ticket's open `hold_kind='gate'` row from fleetd's store (read-only, `{state_dir}/fleet-state.db`). The sidecar `{tid}-gate-held-notify.json` now stores `hold_id` with the key. A send under a different key is skipped while the hold it was sent for is still the ticket's open gate row; a same-key skip made before the row existed (reconcile first) records the hold then. Once fleetd releases the hold, or a new hold replaces it, the key decides again. With no store, only the key decides, as before (a possible second message, never a missed one). Key derivation is unchanged and stays in bash `fleet_gate_held_key`.
+- **Tests.** `fleetd/tests/test_gate_hold.py` `TestGateHoldOneKeyPerHold` (real `_create_phase_dispatch_hold`, real store, real `fleet-notify.sh`, stub `curl`): phase dispatch first, then a `held: gate` line, then a `gate-held` record, then reconcile → one message; reconcile first, then phase dispatch, then a later record → one; release and re-hold → announced again; store off → the key decides. `lib/tests/test-fleet-notify.sh`: same open hold under a new key sends once, a released hold sends again, no store sends again.
+
 ## fleet-controller 0.62.0 (2026-11-27) — gate-hold notifications: phase-dispatch holds and one shared key
 
 Follow-up to PR #845. Two edge cases it left open.
