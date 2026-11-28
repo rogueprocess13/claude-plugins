@@ -2518,21 +2518,21 @@ code before the fix. Builds on Step 20 B (QA persona, on for bugs since #813). B
 Measure before widening: per-ticket count of QA findings that turned into real defects vs noise, and
 added run time. Each item is its own openspec change.
 
-## Step 25 — GitHub issue batch 2026-11-26 + follow-ups — code MERGED 2026-11-27; live checks, decisions and gate-hold notify tracking open
+## Step 25 — GitHub issue batch 2026-11-26 + follow-ups — code MERGED 2026-11-27; live checks, decisions confirmed 2026-11-28; live checks and gate-hold notify tracking open
 
 Issues #816–#827 and #667, one background agent per issue, PRs #828–#847 merged (ticket-auto-pipeline
 0.143.0 → 0.159.0, fleet-controller 0.57.0 → 0.62.0). #773 needs no more code: its status table is on the
 issue (promote DoR codes after a rehearsal, `VERIFY_AC_TAGS` default after one live run). Per-PR notes:
 memory `project_issue-batch-2026-11-26.md`.
 
-**Open — decisions for the user (agents chose; reverse if wrong):**
-- [ ] #831 (#820): reapprove now HOLDS a complex / manual / `[needs-human]` ticket whose approval is
+**Decisions — all five CONFIRMED by the user 2026-11-28 (behaviour stays as merged):**
+- [x] #831 (#820): reapprove now HOLDS a complex / manual / `[needs-human]` ticket whose approval is
       pr-iterate's `policy` one. This reverses the documented "reapprove accepts either provenance" rule.
-- [ ] #836 (#826): `reversibility:auth-new` weight 3 → 2 (chosen over an "auth always needs a person" rule).
-- [ ] #835 (#823): ADJACENT never needs an ack, even across epics; a same-epic sibling counts as a
+- [x] #836 (#826): `reversibility:auth-new` weight 3 → 2 (chosen over an "auth always needs a person" rule).
+- [x] #835 (#823): ADJACENT never needs an ack, even across epics; a same-epic sibling counts as a
       dependency even before it merges into the epic branch.
-- [ ] #829 (#818): `approve.sh` refuses a ticket with no manifest (no more `_adhoc` create).
-- [ ] #844: `TICKET_ROUTER_PLAN_REVIEW` default is now `complex`; `true` now means every ticket (it used
+- [x] #829 (#818): `approve.sh` refuses a ticket with no manifest (no more `_adhoc` create).
+- [x] #844: `TICKET_ROUTER_PLAN_REVIEW` default is now `complex`; `true` now means every ticket (it used
       to review complex tickets only).
 
 **Open — live checks on the tickets host** (none of #828–#847 has run on a real ticket): Playwright scrub
@@ -2619,8 +2619,8 @@ made the intake post one comment + one Slack message on first row creation, keye
    B live check (the bug-default QA persona must show value first). Item 1 is deterministic and
    self-contained, so it can go earlier if the operator wants. The operator decides the final slot.
 
-15. **Step 25's open items are checks and decisions, not new work.** The decisions should be answered
-   before the next live run on the tickets host, so that run checks the behaviour the operator wants. The
+15. **Step 25's open items are checks, not new work.** The five decisions were confirmed on 2026-11-28,
+   so the next live run on the tickets host checks the behaviour as merged. The
    gate-hold notify item is tracked on every change to its three senders until a live hold shows one
    comment and one Slack message.
 
